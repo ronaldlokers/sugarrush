@@ -19,7 +19,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 
-use app::App;
+use app::{App, Screen};
 use config::Config;
 use nightscout::Client;
 
@@ -28,11 +28,11 @@ async fn main() -> Result<()> {
     let cfg = Config::load()?;
     let client = Client::new(&cfg)?;
     let alerts = cfg.alerts.resolve(cfg.units);
-    let mut app = App::new(cfg.units, alerts);
+    let mut app = App::new(&cfg, alerts);
 
     install_panic_hook();
     let mut terminal = setup_terminal()?;
-    let res = run(&mut terminal, &mut app, &client, cfg.refresh_secs).await;
+    let res = run(&mut terminal, &mut app, &client).await;
     restore_terminal(&mut terminal)?;
     res
 }
@@ -41,7 +41,6 @@ async fn run(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &mut App,
     client: &Client,
-    refresh_secs: u64,
 ) -> Result<()> {
     // Input on a blocking thread, forwarded over a channel.
     let (tx, mut rx) = mpsc::unbounded_channel::<KeyEvent>();
@@ -58,7 +57,7 @@ async fn run(
     refresh(app, client).await;
     terminal.draw(|f| ui::draw(f, app))?;
 
-    let mut ticker = tokio::time::interval(Duration::from_secs(refresh_secs.max(5)));
+    let mut ticker = tokio::time::interval(Duration::from_secs(app.refresh_secs.max(5)));
     ticker.tick().await; // consume the immediate first tick
 
     loop {
@@ -81,6 +80,12 @@ async fn run(
         if app.should_quit {
             break;
         }
+        // Rebuild the ticker if the refresh interval was changed in settings.
+        if app.refresh_dirty {
+            ticker = tokio::time::interval(Duration::from_secs(app.refresh_secs.max(5)));
+            ticker.tick().await;
+            app.refresh_dirty = false;
+        }
         terminal.draw(|f| ui::draw(f, app))?;
     }
     Ok(())
@@ -101,8 +106,14 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
         return;
     }
 
+    if app.screen == Screen::Settings {
+        handle_settings_key(app, key.code);
+        return;
+    }
+
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+        KeyCode::Char('s') => app.toggle_settings(),
         KeyCode::Char('u') => app.toggle_units(),
         KeyCode::Char('r') => refresh(app, client).await,
         KeyCode::Char('h') | KeyCode::Left => {
@@ -126,6 +137,22 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
             refresh(app, client).await;
         }
         KeyCode::Char('g') => app.begin_date_input(),
+        _ => {}
+    }
+}
+
+/// Handle keys on the settings screen. All edits apply live; `w` persists.
+fn handle_settings_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Char('s') | KeyCode::Esc => app.toggle_settings(),
+        KeyCode::Char('j') | KeyCode::Down => app.settings_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.settings_move(-1),
+        KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('-') => app.settings_adjust(-1),
+        KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('+') | KeyCode::Char('=') => {
+            app.settings_adjust(1)
+        }
+        KeyCode::Char('w') => app.save_config(),
         _ => {}
     }
 }
