@@ -193,6 +193,15 @@ pub struct App {
     /// `Cell` so the immutable draw pass can record it.
     pub minimap_rect: Cell<Option<Rect>>,
 
+    /// Whether the last fetch reached Nightscout.
+    pub online: bool,
+    /// Epoch ms of the last successful fetch.
+    pub last_ok_ms: Option<i64>,
+    /// Consecutive fetch failures, for backoff.
+    fetch_fails: u32,
+    /// Earliest epoch-ms to retry after a failure.
+    next_retry_at: Option<i64>,
+
     pub last_error: Option<String>,
     pub should_quit: bool,
 }
@@ -232,9 +241,36 @@ impl App {
             minimap_span_ms: cfg.minimap.span_hours.max(1) as i64 * MS_PER_HOUR,
             minimap_entries: Vec::new(),
             minimap_rect: Cell::new(None),
+            online: true,
+            last_ok_ms: None,
+            fetch_fails: 0,
+            next_retry_at: None,
             last_error: None,
             should_quit: false,
         }
+    }
+
+    /// Record a successful fetch.
+    pub fn mark_online(&mut self, now_ms: i64) {
+        self.online = true;
+        self.last_ok_ms = Some(now_ms);
+        self.fetch_fails = 0;
+        self.next_retry_at = None;
+        self.last_error = None;
+    }
+
+    /// Record a failed fetch and schedule a backoff retry (5s → 60s).
+    pub fn mark_offline(&mut self, now_ms: i64, err: String) {
+        self.online = false;
+        self.fetch_fails = self.fetch_fails.saturating_add(1);
+        let secs = (5u64 << (self.fetch_fails.min(4) - 1)).min(60);
+        self.next_retry_at = Some(now_ms + secs as i64 * 1000);
+        self.last_error = Some(err);
+    }
+
+    /// True when an offline connection is due for a backoff retry.
+    pub fn should_retry(&self, now_ms: i64) -> bool {
+        !self.online && self.view.is_live() && self.next_retry_at.is_some_and(|t| now_ms >= t)
     }
 
     /// Handle a mouse press/drag over the minimap at screen column `col`:

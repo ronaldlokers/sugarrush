@@ -309,6 +309,21 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::Blue),
         ));
     }
+    if !app.online {
+        let age = app
+            .last_ok_ms
+            .map(|t| {
+                format!(
+                    " (last {} ago)",
+                    fmt_age(chrono::Utc::now().timestamp_millis() - t)
+                )
+            })
+            .unwrap_or_default();
+        spans.push(Span::styled(
+            format!(" ⚠ offline — can't reach Nightscout{age} "),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ));
+    }
     let title = Line::from(spans);
     let p = Paragraph::new(title).block(Block::default().borders(Borders::ALL));
     f.render_widget(p, area);

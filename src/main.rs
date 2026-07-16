@@ -170,8 +170,13 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                 }
             }
             _ = alarm_ticker.tick() => {
-                if app.alarm_active(now_ms()) {
+                let now = now_ms();
+                if app.alarm_active(now) {
                     sound::alarm(app.alarm_tone());
+                }
+                // Retry the connection sooner than the normal interval when down.
+                if app.should_retry(now) {
+                    refresh(app, &client).await;
                 }
             }
         }
@@ -320,9 +325,10 @@ async fn refresh(app: &mut App, client: &Client) {
     {
         Ok(entries) => {
             app.entries = entries;
-            app.last_error = None;
+            app.mark_online(now);
         }
-        Err(e) => app.last_error = Some(e.to_string()),
+        // Keep the last-known readings on screen; just flag the outage.
+        Err(e) => app.mark_offline(now, e.to_string()),
     }
 
     app.evaluate_alert(now);
