@@ -18,6 +18,13 @@ units = "mmol"
 # Graph marker style: "dots" (default), "blocks", or "line".
 graph_style = "dots"
 
+# Minimap navigator: a trailing overview strip under the graph. Click or drag
+# it to move the main window. Enabling it turns on terminal mouse capture
+# (hold Shift to select text while the app runs).
+[minimap]
+enabled = true
+span_hours = 24
+
 # Auto-refresh interval in seconds.
 refresh_secs = 30
 

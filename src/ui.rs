@@ -21,6 +21,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     // A one-line alert banner appears above the header only while alerting.
     let banner = app.alert.is_alerting();
+    let minimap = app.minimap_enabled;
     let mut constraints = Vec::new();
     if banner {
         constraints.push(Constraint::Length(1)); // banner
@@ -30,8 +31,12 @@ pub fn draw(f: &mut Frame, app: &App) {
         Constraint::Length(7), // current reading
         Constraint::Length(5), // stats
         Constraint::Min(8),    // graph
-        Constraint::Length(1), // footer
     ]);
+    if minimap {
+        constraints.push(Constraint::Length(4)); // minimap
+    }
+    constraints.push(Constraint::Length(1)); // footer
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
@@ -46,7 +51,72 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_current(f, chunks[i + 1], app);
     draw_stats(f, chunks[i + 2], app);
     draw_graph(f, chunks[i + 3], app);
-    draw_footer(f, chunks[i + 4], app);
+    i += 4;
+    if minimap {
+        draw_minimap(f, chunks[i], app);
+        i += 1;
+    }
+    draw_footer(f, chunks[i], app);
+}
+
+fn draw_minimap(f: &mut Frame, area: Rect, app: &App) {
+    let hours = app.minimap_span_ms / 3_600_000;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {hours}h overview "));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    // Record the inner rect so mouse events can map columns back to time.
+    app.minimap_rect.set(Some(inner));
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let start = now - app.minimap_span_ms;
+
+    if app.minimap_entries.is_empty() {
+        return;
+    }
+
+    let points: Vec<(f64, f64)> = app
+        .minimap_entries
+        .iter()
+        .rev()
+        .map(|e| (e.date as f64, app.units.from_mgdl(e.sgv)))
+        .collect();
+    let (min_y, max_y) = points
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(lo, hi), (_, y)| {
+            (lo.min(*y), hi.max(*y))
+        });
+    let bounds_y = [min_y, max_y.max(min_y + 1.0)];
+
+    // Bracket the currently-visible window with two vertical rules.
+    let vs = (app.view_start.max(start)) as f64;
+    let ve = (app.view_end.min(now)) as f64;
+    let start_rule = [(vs, bounds_y[0]), (vs, bounds_y[1])];
+    let end_rule = [(ve, bounds_y[0]), (ve, bounds_y[1])];
+
+    let datasets = vec![
+        Dataset::default()
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::DarkGray))
+            .data(&points),
+        Dataset::default()
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(app.theme.graph))
+            .data(&start_rule),
+        Dataset::default()
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(app.theme.graph))
+            .data(&end_rule),
+    ];
+
+    let chart = Chart::new(datasets)
+        .x_axis(Axis::default().bounds([start as f64, now as f64]))
+        .y_axis(Axis::default().bounds(bounds_y));
+    f.render_widget(chart, inner);
 }
 
 fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
@@ -387,6 +457,9 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             );
             if app.sites.len() > 1 {
                 s.push_str(" · n site");
+            }
+            if app.minimap_enabled {
+                s.push_str(" · drag overview");
             }
             s.push(' ');
             Span::raw(s)

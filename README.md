@@ -23,6 +23,8 @@ A terminal UI for viewing [Nightscout](https://nightscout.github.io/) CGM
   device/uploader status (battery, sensor age, last seen)
 - Configurable display colors (`[theme]`) and multiple sites (`[[sites]]`,
   switch with `n`)
+- Minimap navigator: a 24h overview strip you click/drag to move the main
+  window (`[minimap]`, uses mouse capture)
 
 Planned work is tracked in [GitHub issues](https://github.com/ronaldlokers/sugarrush/issues)
 (predictions, alerts, IOB/COB, graph scrolling, settings screen, and more).

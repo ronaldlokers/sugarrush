@@ -14,7 +14,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseEvent, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -33,22 +36,31 @@ async fn main() -> Result<()> {
     let mut app = App::new(&cfg, alerts, sites);
 
     install_panic_hook();
-    let mut terminal = setup_terminal()?;
+    let mut terminal = setup_terminal(app.minimap_enabled)?;
     let res = run(&mut terminal, &mut app).await;
     restore_terminal(&mut terminal)?;
     res
 }
 
+/// One input event forwarded from the reader thread.
+enum Input {
+    Key(KeyEvent),
+    Mouse(MouseEvent),
+}
+
 async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
     let mut client = Client::for_site(app.active_site())?;
     // Input on a blocking thread, forwarded over a channel.
-    let (tx, mut rx) = mpsc::unbounded_channel::<KeyEvent>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<Input>();
     std::thread::spawn(move || loop {
         if event::poll(Duration::from_millis(200)).unwrap_or(false) {
-            if let Ok(Event::Key(k)) = event::read() {
-                if k.kind == KeyEventKind::Press && tx.send(k).is_err() {
-                    break;
-                }
+            let forwarded = match event::read() {
+                Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => tx.send(Input::Key(k)),
+                Ok(Event::Mouse(m)) => tx.send(Input::Mouse(m)),
+                _ => continue,
+            };
+            if forwarded.is_err() {
+                break;
             }
         }
     });
@@ -61,9 +73,10 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
 
     loop {
         tokio::select! {
-            maybe_key = rx.recv() => {
-                match maybe_key {
-                    Some(key) => handle_key(app, &client, key).await,
+            maybe_input = rx.recv() => {
+                match maybe_input {
+                    Some(Input::Key(key)) => handle_key(app, &client, key).await,
+                    Some(Input::Mouse(m)) => handle_mouse(app, &client, m).await,
                     None => break,
                 }
             }
@@ -152,6 +165,18 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
     }
 }
 
+/// Handle a mouse event: a press or drag over the minimap seeks the main
+/// window to that time.
+async fn handle_mouse(app: &mut App, client: &Client, m: MouseEvent) {
+    if !app.minimap_enabled || app.screen != Screen::Dashboard {
+        return;
+    }
+    let seeking = matches!(m.kind, MouseEventKind::Down(_) | MouseEventKind::Drag(_));
+    if seeking && app.minimap_seek(m.column, m.row, now_ms()) {
+        refresh(app, client).await;
+    }
+}
+
 /// Handle keys on the settings screen. All edits apply live; `w` persists.
 fn handle_settings_key(app: &mut App, code: KeyCode) {
     match code {
@@ -232,6 +257,22 @@ async fn refresh(app: &mut App, client: &Client) {
     } else {
         app.predictions.clear();
     }
+
+    // Refresh the trailing overview only at the live edge; while dragging into
+    // history it stays put (it's a now-anchored strip, so refetching on each
+    // drag frame would be wasteful).
+    if app.minimap_enabled && (app.view.is_live() || app.minimap_entries.is_empty()) {
+        if let Ok(entries) = client
+            .entries_range(
+                now - app.minimap_span_ms,
+                now,
+                2 * app.minimap_span_ms as usize / 60_000,
+            )
+            .await
+        {
+            app.minimap_entries = entries;
+        }
+    }
 }
 
 /// Fire a best-effort desktop notification via `notify-send`. Silently does
@@ -251,10 +292,13 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+fn setup_terminal(mouse: bool) -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode().context("failed to enable raw mode")?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen).context("failed to enter alternate screen")?;
+    if mouse {
+        execute!(stdout, EnableMouseCapture).context("failed to enable mouse capture")?;
+    }
     Terminal::new(CrosstermBackend::new(stdout)).context("failed to create terminal")
 }
 
@@ -268,7 +312,8 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
 /// as it operates on `stdout` directly rather than the `Terminal`.
 fn restore() {
     disable_raw_mode().ok();
-    execute!(io::stdout(), LeaveAlternateScreen).ok();
+    // DisableMouseCapture is harmless if capture was never enabled.
+    execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen).ok();
 }
 
 /// Restore the terminal before the default panic handler prints, so a panic
