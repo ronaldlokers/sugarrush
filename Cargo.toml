@@ -1,0 +1,24 @@
+[package]
+name = "sugarrush"
+version = "0.1.0"
+edition = "2021"
+description = "A terminal UI for viewing Nightscout CGM (blood glucose sensor) data"
+license = "MIT"
+repository = "https://github.com/ronaldlokers/sugarrush"
+readme = "README.md"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+anyhow = "1"
+dirs = "5"
+chrono = { version = "0.4", features = ["serde"] }
+
+[profile.release]
+strip = true
+lto = true

@@ -1,0 +1,22 @@
+# sugarrush config
+# Copy to ~/.config/sugarrush/config.toml and set perms 600:
+#   mkdir -p ~/.config/sugarrush
+#   cp config.example.toml ~/.config/sugarrush/config.toml
+#   chmod 600 ~/.config/sugarrush/config.toml
+
+# Base URL of your Nightscout instance (no trailing slash).
+url = "https://nightscout.example.com"
+
+# Read-only access token.
+# Create it in Nightscout Admin Tools: add a Subject with the `readable` role,
+# then copy its access token here. Do NOT use API_SECRET (admin-level).
+token = "readonly-subject-token"
+
+# Display units: "mgdl" or "mmol". Toggle live in-app with `u`.
+units = "mmol"
+
+# How many recent sensor readings to fetch for the graph.
+count = 48
+
+# Auto-refresh interval in seconds.
+refresh_secs = 30
