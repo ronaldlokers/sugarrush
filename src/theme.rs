@@ -67,6 +67,17 @@ fn pick(name: &Option<String>, fallback: Color) -> Color {
 /// [`theme_from_names`] / [`ThemeConfig`].
 pub const DEFAULT_NAMES: [&str; 6] = ["red", "green", "yellow", "red", "magenta", "cyan"];
 
+/// A colorblind-safe palette (Okabe–Ito) as hex, same role order as
+/// [`DEFAULT_NAMES`]: low / in-range / high / urgent / forecast / graph.
+pub const COLORBLIND_NAMES: [&str; 6] = [
+    "#0072b2", // low — blue
+    "#009e73", // in range — bluish green
+    "#e69f00", // high — orange
+    "#d55e00", // urgent — vermillion
+    "#cc79a7", // forecast — pink
+    "#56b4e9", // graph — sky blue
+];
+
 /// Named colors the settings screen cycles through.
 pub const PALETTE: [&str; 12] = [
     "red",

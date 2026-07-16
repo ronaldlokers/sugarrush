@@ -73,6 +73,22 @@ impl Alert {
     }
 }
 
+/// Classify a reading by value alone (ignoring staleness). Used for the
+/// range label shown next to the current value.
+pub fn from_value(sgv: f64, a: &Alerts) -> Alert {
+    if sgv <= a.urgent_low {
+        Alert::UrgentLow
+    } else if sgv < a.low {
+        Alert::Low
+    } else if sgv >= a.urgent_high {
+        Alert::UrgentHigh
+    } else if sgv > a.high {
+        Alert::High
+    } else {
+        Alert::InRange
+    }
+}
+
 /// Classify a reading. Staleness takes precedence — a stale reading's value
 /// can't be trusted as the current level.
 pub fn evaluate(sgv: f64, age_ms: i64, a: &Alerts) -> Alert {

@@ -388,10 +388,16 @@ fn current_info<'a>(app: &App, e: &crate::nightscout::Entry) -> Vec<Line<'a>> {
         format!("window end · {stamp}")
     };
 
+    // Textual range label — legible without relying on color.
+    let range = crate::alert::from_value(e.sgv, &app.alerts).label();
     let mut lines = vec![
         Line::from(Span::styled(
             format!(" {}  {}", app.units.label(), e.arrow()),
             Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            format!(" {range}"),
+            Style::default().fg(color_for(e.sgv, app)),
         )),
         Line::from(format!(" Δ {} {}", delta, app.units.label())),
     ];
