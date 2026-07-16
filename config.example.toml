@@ -45,6 +45,9 @@ snooze_minutes = 15   # how long the `a` key silences the audible alarm
 # quiet_start = "23:00"
 # quiet_end = "07:00"
 # quiet_urgent_low = true   # keep urgent-low audible overnight (safety)
+# Escalation: re-notify (and push) if an urgent alert isn't cleared in time.
+# escalate_minutes = 20     # 0 disables
+# push_url = "https://ntfy.sh/your-topic"  # POST urgent alerts here (ntfy/webhook)
 
 # Display colors (optional). Each is a color name (red, green, cyan, yellow,
 # blue, magenta, gray, white, light*) or a #rrggbb hex value.

@@ -142,6 +142,13 @@ pub struct AlertsConfig {
     /// Whether urgent-low still sounds during quiet hours (safety override).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quiet_urgent_low: Option<bool>,
+    /// Escalate an unacknowledged urgent alert after this many minutes
+    /// (0 disables escalation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub escalate_minutes: Option<i64>,
+    /// Optional webhook / ntfy topic URL to POST urgent alerts to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub push_url: Option<String>,
 }
 
 impl AlertsConfig {
@@ -161,6 +168,8 @@ impl AlertsConfig {
             quiet_start: self.quiet_start.as_deref().and_then(parse_hhmm),
             quiet_end: self.quiet_end.as_deref().and_then(parse_hhmm),
             quiet_urgent_low: self.quiet_urgent_low.unwrap_or(d.quiet_urgent_low),
+            escalate_minutes: self.escalate_minutes.unwrap_or(d.escalate_minutes),
+            push_url: self.push_url.clone(),
         }
     }
 }
@@ -184,7 +193,7 @@ pub fn fmt_hhmm(min: i32) -> String {
 }
 
 /// Resolved alert thresholds and behaviour, always in mg/dL.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Alerts {
     pub urgent_low: f64,
     pub low: f64,
@@ -198,6 +207,8 @@ pub struct Alerts {
     pub quiet_start: Option<i32>,
     pub quiet_end: Option<i32>,
     pub quiet_urgent_low: bool,
+    pub escalate_minutes: i64,
+    pub push_url: Option<String>,
 }
 
 impl Default for Alerts {
@@ -214,6 +225,8 @@ impl Default for Alerts {
             quiet_start: None,
             quiet_end: None,
             quiet_urgent_low: true,
+            escalate_minutes: 0,
+            push_url: None,
         }
     }
 }
