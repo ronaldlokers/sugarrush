@@ -27,6 +27,22 @@ pub struct Config {
     pub alerts: AlertsConfig,
     #[serde(default, skip_serializing_if = "is_default_theme")]
     pub theme: ThemeConfig,
+    /// How the graph draws readings.
+    #[serde(default)]
+    pub graph_style: GraphStyle,
+}
+
+/// Marker style for the graph's readings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GraphStyle {
+    /// Thin connected braille line.
+    Line,
+    /// Discrete medium dots (default).
+    #[default]
+    Dots,
+    /// Discrete chunky blocks.
+    Blocks,
 }
 
 /// A named Nightscout site.

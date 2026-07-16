@@ -11,6 +11,7 @@ use ratatui::{
 };
 
 use crate::app::{App, Field, Screen};
+use crate::config::GraphStyle;
 use crate::stats;
 
 pub fn draw(f: &mut Frame, app: &App) {
@@ -329,9 +330,14 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
     let bounds_x = [app.view_start as f64, right as f64];
     let mid_x = (app.view_start + right) / 2;
 
+    let (marker, gtype) = match app.graph_style {
+        GraphStyle::Line => (symbols::Marker::Braille, GraphType::Line),
+        GraphStyle::Dots => (symbols::Marker::Dot, GraphType::Scatter),
+        GraphStyle::Blocks => (symbols::Marker::Block, GraphType::Scatter),
+    };
     let mut datasets = vec![Dataset::default()
-        .marker(symbols::Marker::Braille)
-        .graph_type(GraphType::Line)
+        .marker(marker)
+        .graph_type(gtype)
         .style(Style::default().fg(app.theme.graph))
         .data(&points)];
     if !pred.is_empty() {

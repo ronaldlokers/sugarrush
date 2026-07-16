@@ -3,7 +3,7 @@
 use anyhow::Context;
 
 use crate::alert::{self, Alert};
-use crate::config::{Alerts, AlertsConfig, Config, Site};
+use crate::config::{Alerts, AlertsConfig, Config, GraphStyle, Site};
 use crate::nightscout::{DeviceStatus, Entry};
 use crate::theme::{Theme, ThemeConfig};
 use crate::units::Units;
@@ -98,6 +98,8 @@ pub struct App {
     pub site_idx: usize,
     /// Set when the active site changed so the run loop rebuilds its client.
     pub site_dirty: bool,
+    /// How the graph draws readings.
+    pub graph_style: GraphStyle,
 
     pub last_error: Option<String>,
     pub should_quit: bool,
@@ -128,6 +130,7 @@ impl App {
             sites,
             site_idx: 0,
             site_dirty: false,
+            graph_style: cfg.graph_style,
             last_error: None,
             should_quit: false,
         }
@@ -299,6 +302,7 @@ impl App {
                 desktop: Some(self.alerts.desktop),
             },
             theme: self.theme_config.clone(),
+            graph_style: self.graph_style,
         }
     }
 
