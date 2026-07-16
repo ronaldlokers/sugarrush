@@ -75,6 +75,23 @@ pub enum GraphStyle {
     Blocks,
 }
 
+impl GraphStyle {
+    /// Cycle to the next/previous style.
+    pub fn cycle(self, dir: i32) -> Self {
+        let order = [GraphStyle::Line, GraphStyle::Dots, GraphStyle::Blocks];
+        let idx = order.iter().position(|&s| s == self).unwrap_or(0) as i32;
+        order[(idx + dir).rem_euclid(order.len() as i32) as usize]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GraphStyle::Line => "line",
+            GraphStyle::Dots => "dots",
+            GraphStyle::Blocks => "blocks",
+        }
+    }
+}
+
 /// A named Nightscout site.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Site {
@@ -229,6 +246,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(raw.resolve(Units::Mgdl).low, 70.0);
+    }
+
+    #[test]
+    fn graph_style_cycles() {
+        assert_eq!(GraphStyle::Line.cycle(1), GraphStyle::Dots);
+        assert_eq!(GraphStyle::Dots.cycle(1), GraphStyle::Blocks);
+        assert_eq!(GraphStyle::Blocks.cycle(1), GraphStyle::Line); // wraps
+        assert_eq!(GraphStyle::Line.cycle(-1), GraphStyle::Blocks); // wraps back
     }
 
     #[test]

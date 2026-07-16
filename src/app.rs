@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 use crate::alert::{self, Alert};
 use crate::config::{Alerts, AlertsConfig, Config, GraphStyle, MinimapConfig, Site};
 use crate::nightscout::{DeviceStatus, Entry};
-use crate::theme::{Theme, ThemeConfig};
+use crate::theme::{self, Theme, ThemeConfig};
 use crate::units::Units;
 use crate::view::View;
 
@@ -32,10 +32,19 @@ pub enum Field {
     High,
     UrgentHigh,
     Stale,
+    GraphStyle,
+    MinimapEnabled,
+    MinimapSpan,
+    ThemeLow,
+    ThemeInRange,
+    ThemeHigh,
+    ThemeUrgent,
+    ThemePrediction,
+    ThemeGraph,
 }
 
 impl Field {
-    pub const ALL: [Field; 8] = [
+    pub const ALL: [Field; 17] = [
         Field::Units,
         Field::Refresh,
         Field::Desktop,
@@ -44,6 +53,15 @@ impl Field {
         Field::High,
         Field::UrgentHigh,
         Field::Stale,
+        Field::GraphStyle,
+        Field::MinimapEnabled,
+        Field::MinimapSpan,
+        Field::ThemeLow,
+        Field::ThemeInRange,
+        Field::ThemeHigh,
+        Field::ThemeUrgent,
+        Field::ThemePrediction,
+        Field::ThemeGraph,
     ];
 
     pub fn label(self) -> &'static str {
@@ -56,6 +74,28 @@ impl Field {
             Field::High => "High",
             Field::UrgentHigh => "Urgent high",
             Field::Stale => "Stale after",
+            Field::GraphStyle => "Graph style",
+            Field::MinimapEnabled => "Minimap",
+            Field::MinimapSpan => "Minimap span",
+            Field::ThemeLow => "Color: low",
+            Field::ThemeInRange => "Color: in range",
+            Field::ThemeHigh => "Color: high",
+            Field::ThemeUrgent => "Color: urgent",
+            Field::ThemePrediction => "Color: forecast",
+            Field::ThemeGraph => "Color: graph",
+        }
+    }
+
+    /// For theme rows, the palette index (0..6) into the color roles.
+    fn theme_index(self) -> Option<usize> {
+        match self {
+            Field::ThemeLow => Some(0),
+            Field::ThemeInRange => Some(1),
+            Field::ThemeHigh => Some(2),
+            Field::ThemeUrgent => Some(3),
+            Field::ThemePrediction => Some(4),
+            Field::ThemeGraph => Some(5),
+            _ => None,
         }
     }
 }
@@ -96,8 +136,9 @@ pub struct App {
     pub status: Option<String>,
     /// Display colors.
     pub theme: Theme,
-    /// Raw theme config, kept so it round-trips through a settings save.
-    theme_config: ThemeConfig,
+    /// Color name per role (low/in_range/high/urgent/prediction/graph), edited
+    /// on the settings screen and the source for theme persistence.
+    theme_names: [String; 6],
     /// Configured sites, and which one is active.
     pub sites: Vec<Site>,
     pub site_idx: usize,
@@ -141,7 +182,7 @@ impl App {
             refresh_dirty: false,
             status: None,
             theme: cfg.theme.resolve(),
-            theme_config: cfg.theme.clone(),
+            theme_names: names_from_config(&cfg.theme),
             sites,
             site_idx: 0,
             site_dirty: false,
@@ -294,6 +335,18 @@ impl App {
             Field::UrgentHigh => {
                 self.alerts.urgent_high = clamp_bg(self.alerts.urgent_high + d * step_mgdl)
             }
+            Field::GraphStyle => self.graph_style = self.graph_style.cycle(dir),
+            Field::MinimapEnabled => self.minimap_enabled = !self.minimap_enabled,
+            Field::MinimapSpan => {
+                let next = self.minimap_span_ms / MS_PER_HOUR + dir as i64 * 6;
+                self.minimap_span_ms = next.clamp(6, 72) * MS_PER_HOUR;
+            }
+            f => {
+                if let Some(i) = f.theme_index() {
+                    self.theme_names[i] = theme::cycle_color(&self.theme_names[i], dir).to_string();
+                    self.theme = theme::theme_from_names(&self.theme_names);
+                }
+            }
         }
         self.status = None;
     }
@@ -341,7 +394,14 @@ impl App {
                 stale_minutes: Some(self.alerts.stale_minutes),
                 desktop: Some(self.alerts.desktop),
             },
-            theme: self.theme_config.clone(),
+            theme: ThemeConfig {
+                low: Some(self.theme_names[0].clone()),
+                in_range: Some(self.theme_names[1].clone()),
+                high: Some(self.theme_names[2].clone()),
+                urgent: Some(self.theme_names[3].clone()),
+                prediction: Some(self.theme_names[4].clone()),
+                graph: Some(self.theme_names[5].clone()),
+            },
             graph_style: self.graph_style,
             minimap: MinimapConfig {
                 enabled: self.minimap_enabled,
@@ -361,12 +421,32 @@ impl App {
             Field::Low => self.threshold(self.alerts.low),
             Field::High => self.threshold(self.alerts.high),
             Field::UrgentHigh => self.threshold(self.alerts.urgent_high),
+            Field::GraphStyle => self.graph_style.label().to_string(),
+            Field::MinimapEnabled => if self.minimap_enabled { "on" } else { "off" }.to_string(),
+            Field::MinimapSpan => format!("{}h", self.minimap_span_ms / MS_PER_HOUR),
+            f => f
+                .theme_index()
+                .map(|i| self.theme_names[i].clone())
+                .unwrap_or_default(),
         }
     }
 
     fn threshold(&self, mgdl: f64) -> String {
         format!("{} {}", self.units.format(mgdl), self.units.label())
     }
+}
+
+/// Six color names from the theme config, defaulting per role where unset.
+fn names_from_config(tc: &ThemeConfig) -> [String; 6] {
+    let d = theme::DEFAULT_NAMES;
+    [
+        tc.low.clone().unwrap_or_else(|| d[0].to_string()),
+        tc.in_range.clone().unwrap_or_else(|| d[1].to_string()),
+        tc.high.clone().unwrap_or_else(|| d[2].to_string()),
+        tc.urgent.clone().unwrap_or_else(|| d[3].to_string()),
+        tc.prediction.clone().unwrap_or_else(|| d[4].to_string()),
+        tc.graph.clone().unwrap_or_else(|| d[5].to_string()),
+    ]
 }
 
 fn clamp_bg(mgdl: f64) -> f64 {
