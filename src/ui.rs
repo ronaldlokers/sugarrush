@@ -11,6 +11,7 @@ use ratatui::{
 };
 
 use crate::app::{App, Field, Screen};
+use crate::bigfont;
 use crate::config::GraphStyle;
 use crate::stats;
 
@@ -334,53 +335,82 @@ fn draw_current(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let text = match app.latest() {
-        Some(e) => {
-            let value = app.units.format(e.sgv);
-            let delta = app
-                .delta_mgdl()
-                .map(|d| {
-                    let sign = if d >= 0.0 { "+" } else { "-" };
-                    format!("{}{}", sign, app.units.format(d.abs()))
-                })
-                .unwrap_or_else(|| "--".into());
-            let stamp = fmt_time(e.date);
-            let when = if app.view.is_live() {
-                format!("  as of {stamp}")
-            } else {
-                format!("  window end · {stamp}")
-            };
-            let mut lines = vec![
-                Line::from(Span::styled(
-                    format!("  {}  {}", value, e.arrow()),
-                    Style::default()
-                        .fg(color_for(e.sgv, app))
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(format!("  Δ {} {}", delta, app.units.label())),
-            ];
-            // Forecast ETA to the next threshold, if the trend points at one.
-            if let Some((rising, mins)) = app.prediction_eta(chrono::Utc::now().timestamp_millis())
-            {
-                let (arrow, word, color) = if rising {
-                    ("↗", "high", app.theme.high)
-                } else {
-                    ("↘", "low", app.theme.low)
-                };
-                lines.push(Line::from(Span::styled(
-                    format!("  {arrow} {word} in ~{mins} min"),
-                    Style::default().fg(color),
-                )));
-            }
-            lines.push(Line::from(Span::styled(
-                when,
-                Style::default().fg(Color::DarkGray),
-            )));
-            lines
-        }
-        None => vec![Line::from("  no data in this window…")],
+    let Some(e) = app.latest() else {
+        f.render_widget(Paragraph::new("  no data in this window…"), inner);
+        return;
     };
-    f.render_widget(Paragraph::new(text), inner);
+    let value = app.units.format(e.sgv);
+    let color = color_for(e.sgv, app);
+    let info = current_info(app, e);
+    let big_w = bigfont::width(&value);
+
+    // Big number when there's room; compact single line otherwise.
+    if inner.height as usize >= bigfont::ROWS && inner.width >= big_w + 24 {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(big_w + 3), Constraint::Min(0)])
+            .split(inner);
+        let big: Vec<Line> = bigfont::render(&value)
+            .into_iter()
+            .map(|l| {
+                Line::from(Span::styled(
+                    format!(" {l}"),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ))
+            })
+            .collect();
+        f.render_widget(Paragraph::new(big), cols[0]);
+        f.render_widget(Paragraph::new(info), cols[1]);
+    } else {
+        let mut lines = vec![Line::from(Span::styled(
+            format!("  {}  {}", value, e.arrow()),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ))];
+        lines.extend(info.into_iter().skip(1)); // drop the unit/arrow line (already shown)
+        f.render_widget(Paragraph::new(lines), inner);
+    }
+}
+
+/// The secondary info lines beside/below the current value: unit + arrow,
+/// delta, forecast ETA, and the timestamp.
+fn current_info<'a>(app: &App, e: &crate::nightscout::Entry) -> Vec<Line<'a>> {
+    let delta = app
+        .delta_mgdl()
+        .map(|d| {
+            let sign = if d >= 0.0 { "+" } else { "-" };
+            format!("{}{}", sign, app.units.format(d.abs()))
+        })
+        .unwrap_or_else(|| "--".into());
+    let stamp = fmt_time(e.date);
+    let when = if app.view.is_live() {
+        format!("as of {stamp}")
+    } else {
+        format!("window end · {stamp}")
+    };
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!(" {}  {}", app.units.label(), e.arrow()),
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(format!(" Δ {} {}", delta, app.units.label())),
+    ];
+    if let Some((rising, mins)) = app.prediction_eta(chrono::Utc::now().timestamp_millis()) {
+        let (arrow, word, c) = if rising {
+            ("↗", "high", app.theme.high)
+        } else {
+            ("↘", "low", app.theme.low)
+        };
+        lines.push(Line::from(Span::styled(
+            format!(" {arrow} {word} in ~{mins} min"),
+            Style::default().fg(c),
+        )));
+    }
+    lines.push(Line::from(Span::styled(
+        format!(" {when}"),
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines
 }
 
 fn draw_graph(f: &mut Frame, area: Rect, app: &App) {

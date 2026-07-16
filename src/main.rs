@@ -1,5 +1,6 @@
 mod alert;
 mod app;
+mod bigfont;
 mod config;
 mod nightscout;
 mod predict;
