@@ -26,7 +26,8 @@ use nightscout::Client;
 async fn main() -> Result<()> {
     let cfg = Config::load()?;
     let client = Client::new(&cfg)?;
-    let mut app = App::new(cfg.units, cfg.alerts);
+    let alerts = cfg.alerts.resolve(cfg.units);
+    let mut app = App::new(cfg.units, alerts);
 
     install_panic_hook();
     let mut terminal = setup_terminal()?;

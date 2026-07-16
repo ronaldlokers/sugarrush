@@ -18,13 +18,13 @@ units = "mmol"
 # Auto-refresh interval in seconds.
 refresh_secs = 30
 
-# Alert thresholds and behaviour. Glucose bounds are always in mg/dL,
-# regardless of the display unit above. This whole section is optional; the
-# values below are the defaults.
+# Alert thresholds and behaviour. Glucose bounds are in the same unit as
+# `units` above (mmol/L here). This whole section is optional, as is each key;
+# the values shown are the mmol equivalents of the defaults.
 [alerts]
-urgent_low = 55      # red banner + critical notification at or below
-low = 70             # yellow banner below
-high = 180           # yellow banner above
-urgent_high = 250    # red banner + critical notification at or above
-stale_minutes = 15   # warn when the newest reading is older than this
-desktop = true       # fire desktop notifications via notify-send
+urgent_low = 3.0      # red banner + critical notification at or below
+low = 3.9             # yellow banner below
+high = 10.0           # yellow banner above
+urgent_high = 13.9    # red banner + critical notification at or above
+stale_minutes = 15    # warn when the newest reading is older than this
+desktop = true        # fire desktop notifications via notify-send

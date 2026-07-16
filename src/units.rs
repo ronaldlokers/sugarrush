@@ -34,6 +34,14 @@ impl Units {
         }
     }
 
+    /// Convert a value expressed in this unit back into raw mg/dL.
+    pub fn to_mgdl(self, value: f64) -> f64 {
+        match self {
+            Units::Mgdl => value,
+            Units::Mmol => value / MMOL_PER_MGDL,
+        }
+    }
+
     /// Format a raw mg/dL value for display in this unit.
     pub fn format(self, mgdl: f64) -> String {
         match self {
