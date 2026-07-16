@@ -40,6 +40,11 @@ stale_minutes = 15    # warn when the newest reading is older than this
 desktop = true        # fire desktop notifications via notify-send
 sound = true          # looping audible alarm on urgent low/high and stale data
 snooze_minutes = 15   # how long the `a` key silences the audible alarm
+# Quiet hours: during this window only urgent-low sounds (others stay silent).
+# Omit to disable. The window may cross midnight.
+# quiet_start = "23:00"
+# quiet_end = "07:00"
+# quiet_urgent_low = true   # keep urgent-low audible overnight (safety)
 
 # Display colors (optional). Each is a color name (red, green, cyan, yellow,
 # blue, magenta, gray, white, light*) or a #rrggbb hex value.

@@ -10,23 +10,62 @@ use std::sync::OnceLock;
 
 const SAMPLE_RATE: u32 = 44_100;
 
-/// Play the alarm sound once, if a player is available. Non-blocking.
-pub fn alarm() {
-    let Some(path) = wav_path() else { return };
-    play(path);
+/// Which alarm sound to play — distinct tone shapes per alert kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// Urgent low — descending tones.
+    Low,
+    /// Urgent high — ascending tones.
+    High,
+    /// Stale / no data — flat repeated blips.
+    Stale,
 }
 
-/// Path to the generated WAV, created on first call.
-fn wav_path() -> Option<&'static Path> {
-    static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
-    PATH.get_or_init(|| {
+/// Play the alarm sound for `tone` once, if a player is available. Non-blocking.
+pub fn alarm(tone: Tone) {
+    if let Some(path) = wav_path(tone) {
+        play(&path);
+    }
+}
+
+/// Path to the generated WAV for a tone, created on first use per tone.
+fn wav_path(tone: Tone) -> Option<PathBuf> {
+    static PATHS: OnceLock<[Option<PathBuf>; 3]> = OnceLock::new();
+    let paths = PATHS.get_or_init(|| {
         let dir = std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
-        let path = dir.join("sugarrush-alarm.wav");
-        std::fs::write(&path, alarm_wav()).ok().map(|_| path)
-    })
-    .as_deref()
+        [Tone::Low, Tone::High, Tone::Stale].map(|t| {
+            let path = dir.join(format!("sugarrush-alarm-{}.wav", t.suffix()));
+            std::fs::write(&path, alarm_wav(t)).ok().map(|_| path)
+        })
+    });
+    paths[tone.index()].clone()
+}
+
+impl Tone {
+    fn index(self) -> usize {
+        match self {
+            Tone::Low => 0,
+            Tone::High => 1,
+            Tone::Stale => 2,
+        }
+    }
+    fn suffix(self) -> &'static str {
+        match self {
+            Tone::Low => "low",
+            Tone::High => "high",
+            Tone::Stale => "stale",
+        }
+    }
+    /// Frequency sequence for the four segments.
+    fn freqs(self) -> [f64; 4] {
+        match self {
+            Tone::Low => [1320.0, 1100.0, 880.0, 660.0],
+            Tone::High => [660.0, 880.0, 1100.0, 1320.0],
+            Tone::Stale => [880.0, 0.0, 880.0, 0.0],
+        }
+    }
 }
 
 /// Spawn the first available audio player on this platform, detached.
@@ -59,12 +98,11 @@ fn play(path: &Path) {
     }
 }
 
-/// A ~0.5s alarm: alternating 880 Hz / 1320 Hz tones, 16-bit mono PCM.
-fn alarm_wav() -> Vec<u8> {
+/// A ~0.5s alarm: four 110ms segments per the tone's frequency sequence
+/// (0 Hz = silence), 16-bit mono PCM.
+fn alarm_wav(tone: Tone) -> Vec<u8> {
     let mut samples: Vec<i16> = Vec::new();
-    // Four 110ms segments alternating pitch, with a short fade to avoid clicks.
-    for seg in 0..4 {
-        let freq = if seg % 2 == 0 { 880.0 } else { 1320.0 };
+    for freq in tone.freqs() {
         let n = SAMPLE_RATE as usize * 110 / 1000;
         for i in 0..n {
             let t = i as f64 / SAMPLE_RATE as f64;
@@ -114,7 +152,7 @@ mod tests {
 
     #[test]
     fn wav_has_valid_header() {
-        let wav = alarm_wav();
+        let wav = alarm_wav(Tone::Low);
         assert_eq!(&wav[0..4], b"RIFF");
         assert_eq!(&wav[8..12], b"WAVE");
         assert_eq!(&wav[36..40], b"data");

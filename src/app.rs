@@ -3,11 +3,13 @@
 use std::cell::Cell;
 
 use anyhow::Context;
+use chrono::{Local, TimeZone, Timelike};
 use ratatui::layout::Rect;
 
 use crate::alert::{self, Alert};
 use crate::config::{Alerts, AlertsConfig, Config, GraphStyle, MinimapConfig, Site};
 use crate::nightscout::{DeviceStatus, Entry};
+use crate::sound;
 use crate::theme::{self, Theme, ThemeConfig};
 use crate::units::Units;
 use crate::view::View;
@@ -29,6 +31,10 @@ pub enum Field {
     Desktop,
     Sound,
     Snooze,
+    QuietHours,
+    QuietStart,
+    QuietEnd,
+    QuietUrgentLow,
     UrgentLow,
     Low,
     High,
@@ -46,12 +52,16 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 19] = [
+    pub const ALL: [Field; 23] = [
         Field::Units,
         Field::Refresh,
         Field::Desktop,
         Field::Sound,
         Field::Snooze,
+        Field::QuietHours,
+        Field::QuietStart,
+        Field::QuietEnd,
+        Field::QuietUrgentLow,
         Field::UrgentLow,
         Field::Low,
         Field::High,
@@ -75,6 +85,10 @@ impl Field {
             Field::Desktop => "Desktop notifications",
             Field::Sound => "Audible alarm",
             Field::Snooze => "Snooze",
+            Field::QuietHours => "Quiet hours",
+            Field::QuietStart => "Quiet start",
+            Field::QuietEnd => "Quiet end",
+            Field::QuietUrgentLow => "Quiet: urgent-low sounds",
             Field::UrgentLow => "Urgent low",
             Field::Low => "Low",
             Field::High => "High",
@@ -289,7 +303,29 @@ impl App {
 
     /// True when the audible alarm should currently sound.
     pub fn alarm_active(&self, now_ms: i64) -> bool {
-        self.alerts.sound && self.alert.is_urgent() && self.snooze_until.is_none_or(|t| now_ms >= t)
+        if !(self.alerts.sound && self.alert.is_urgent()) {
+            return false;
+        }
+        if self.snooze_until.is_some_and(|t| now_ms < t) {
+            return false;
+        }
+        // During quiet hours only urgent-low sounds (safety override).
+        if let Some(dt) = Local.timestamp_millis_opt(now_ms).single() {
+            let min_of_day = dt.hour() as i32 * 60 + dt.minute() as i32;
+            if self.alerts.in_quiet_hours(min_of_day) {
+                return self.alert == Alert::UrgentLow && self.alerts.quiet_urgent_low;
+            }
+        }
+        true
+    }
+
+    /// The tone to play for the current alert.
+    pub fn alarm_tone(&self) -> sound::Tone {
+        match self.alert {
+            Alert::UrgentLow => sound::Tone::Low,
+            Alert::UrgentHigh => sound::Tone::High,
+            _ => sound::Tone::Stale,
+        }
     }
 
     /// Silence the audible alarm for the configured snooze interval.
@@ -335,6 +371,14 @@ impl App {
         self.status = None;
     }
 
+    /// Enable quiet hours with a sensible default window if currently unset.
+    fn ensure_quiet_hours(&mut self) {
+        if self.alerts.quiet_start.is_none() {
+            self.alerts.quiet_start = Some(23 * 60);
+            self.alerts.quiet_end = Some(7 * 60);
+        }
+    }
+
     /// Adjust the selected field by `dir` (-1 / +1), applied live.
     pub fn settings_adjust(&mut self, dir: i32) {
         // Threshold step: 0.1 mmol/L or 1 mg/dL, expressed in mg/dL.
@@ -351,6 +395,28 @@ impl App {
                 let next = self.alerts.snooze_minutes + dir as i64 * 5;
                 self.alerts.snooze_minutes = next.clamp(1, 120);
             }
+            Field::QuietHours => {
+                if self.alerts.quiet_start.is_some() {
+                    self.alerts.quiet_start = None;
+                    self.alerts.quiet_end = None;
+                } else {
+                    self.alerts.quiet_start = Some(23 * 60); // 23:00
+                    self.alerts.quiet_end = Some(7 * 60); // 07:00
+                }
+            }
+            Field::QuietStart => {
+                self.ensure_quiet_hours();
+                if let Some(s) = self.alerts.quiet_start.as_mut() {
+                    *s = (*s + dir * 30).rem_euclid(1440);
+                }
+            }
+            Field::QuietEnd => {
+                self.ensure_quiet_hours();
+                if let Some(e) = self.alerts.quiet_end.as_mut() {
+                    *e = (*e + dir * 30).rem_euclid(1440);
+                }
+            }
+            Field::QuietUrgentLow => self.alerts.quiet_urgent_low = !self.alerts.quiet_urgent_low,
             Field::Refresh => {
                 let next = self.refresh_secs as i64 + dir as i64 * 5;
                 self.refresh_secs = next.max(5) as u64;
@@ -428,6 +494,9 @@ impl App {
                 desktop: Some(self.alerts.desktop),
                 sound: Some(self.alerts.sound),
                 snooze_minutes: Some(self.alerts.snooze_minutes),
+                quiet_start: self.alerts.quiet_start.map(crate::config::fmt_hhmm),
+                quiet_end: self.alerts.quiet_end.map(crate::config::fmt_hhmm),
+                quiet_urgent_low: Some(self.alerts.quiet_urgent_low),
             },
             theme: ThemeConfig {
                 low: Some(self.theme_names[0].clone()),
@@ -453,6 +522,28 @@ impl App {
             Field::Desktop => if self.alerts.desktop { "on" } else { "off" }.to_string(),
             Field::Sound => if self.alerts.sound { "on" } else { "off" }.to_string(),
             Field::Snooze => format!("{} min", self.alerts.snooze_minutes),
+            Field::QuietHours => if self.alerts.quiet_start.is_some() {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            Field::QuietStart => self
+                .alerts
+                .quiet_start
+                .map(crate::config::fmt_hhmm)
+                .unwrap_or_else(|| "—".into()),
+            Field::QuietEnd => self
+                .alerts
+                .quiet_end
+                .map(crate::config::fmt_hhmm)
+                .unwrap_or_else(|| "—".into()),
+            Field::QuietUrgentLow => if self.alerts.quiet_urgent_low {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
             Field::Stale => format!("{} min", self.alerts.stale_minutes),
             Field::UrgentLow => self.threshold(self.alerts.urgent_low),
             Field::Low => self.threshold(self.alerts.low),
