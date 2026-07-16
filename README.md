@@ -15,7 +15,7 @@ A terminal UI for viewing [Nightscout](https://nightscout.github.io/) CGM
 - mg/dL ↔ mmol/L toggle
 - Auto-refresh
 - Alerts on out-of-range and stale data: in-TUI banner plus optional
-  desktop notifications (`notify-send`), with configurable thresholds
+  desktop notifications (Linux/macOS/Windows), with configurable thresholds
 - Short-term forecast overlay (uploader predictions or a local AR2 fallback)
 - In-app settings screen (`s`) to edit units, refresh, and thresholds live,
   and save them back to config.toml
@@ -92,7 +92,7 @@ the alert state), then exits. Example assets live in [`waybar/`](waybar/):
 - `style.css` — per-alert-state colors.
 - `hyprland.conf` — float rules for the pop-out terminal.
 
-Other subcommands: `sugarrush about` (version + info, also `notify-send`), and
+Other subcommands: `sugarrush about` (version + info, also a desktop notification), and
 `sugarrush --screen settings` (open straight to settings).
 
 ## License
