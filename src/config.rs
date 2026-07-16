@@ -149,6 +149,10 @@ pub struct AlertsConfig {
     /// Optional webhook / ntfy topic URL to POST urgent alerts to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub push_url: Option<String>,
+    /// Warn when the forecast predicts a low/high crossing within this many
+    /// minutes (0 disables predictive alerts).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub predict_horizon_minutes: Option<i64>,
 }
 
 impl AlertsConfig {
@@ -170,6 +174,9 @@ impl AlertsConfig {
             quiet_urgent_low: self.quiet_urgent_low.unwrap_or(d.quiet_urgent_low),
             escalate_minutes: self.escalate_minutes.unwrap_or(d.escalate_minutes),
             push_url: self.push_url.clone(),
+            predict_horizon_minutes: self
+                .predict_horizon_minutes
+                .unwrap_or(d.predict_horizon_minutes),
         }
     }
 }
@@ -209,6 +216,7 @@ pub struct Alerts {
     pub quiet_urgent_low: bool,
     pub escalate_minutes: i64,
     pub push_url: Option<String>,
+    pub predict_horizon_minutes: i64,
 }
 
 impl Default for Alerts {
@@ -227,6 +235,7 @@ impl Default for Alerts {
             quiet_urgent_low: true,
             escalate_minutes: 0,
             push_url: None,
+            predict_horizon_minutes: 30,
         }
     }
 }

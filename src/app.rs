@@ -36,6 +36,7 @@ pub enum Field {
     QuietEnd,
     QuietUrgentLow,
     Escalate,
+    PredictHorizon,
     UrgentLow,
     Low,
     High,
@@ -53,7 +54,7 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 24] = [
+    pub const ALL: [Field; 25] = [
         Field::Units,
         Field::Refresh,
         Field::Desktop,
@@ -64,6 +65,7 @@ impl Field {
         Field::QuietEnd,
         Field::QuietUrgentLow,
         Field::Escalate,
+        Field::PredictHorizon,
         Field::UrgentLow,
         Field::Low,
         Field::High,
@@ -92,6 +94,7 @@ impl Field {
             Field::QuietEnd => "Quiet end",
             Field::QuietUrgentLow => "Quiet: urgent-low sounds",
             Field::Escalate => "Escalate after",
+            Field::PredictHorizon => "Predict horizon",
             Field::UrgentLow => "Urgent low",
             Field::Low => "Low",
             Field::High => "High",
@@ -154,6 +157,8 @@ pub struct App {
     pushed_episode: bool,
     /// Whether the current urgent episode has escalated.
     escalated: bool,
+    /// Whether we've already notified for the current predicted crossing.
+    predicted_notified: bool,
 
     // Settings / persistence.
     pub screen: Screen,
@@ -211,6 +216,7 @@ impl App {
             urgent_since: None,
             pushed_episode: false,
             escalated: false,
+            predicted_notified: false,
             screen: Screen::Dashboard,
             settings_sel: 0,
             refresh_secs: cfg.refresh_secs,
@@ -329,6 +335,44 @@ impl App {
             }
         }
         true
+    }
+
+    /// First predicted low/high crossing from the current forecast, as
+    /// `(rising, minutes_until)`. `rising` = heading high; else heading low.
+    /// Only meaningful while in range and following live data.
+    pub fn prediction_eta(&self, now_ms: i64) -> Option<(bool, i64)> {
+        if self.alert != Alert::InRange {
+            return None;
+        }
+        for &(t, mgdl) in &self.predictions {
+            if mgdl <= self.alerts.low {
+                return Some((false, ((t - now_ms) / 60_000).max(0)));
+            }
+            if mgdl >= self.alerts.high {
+                return Some((true, ((t - now_ms) / 60_000).max(0)));
+            }
+        }
+        None
+    }
+
+    /// A predictive-alert message if a crossing is forecast within the horizon
+    /// and we haven't notified for it yet; debounced per episode.
+    pub fn take_predictive(&mut self, now_ms: i64) -> Option<String> {
+        let horizon = self.alerts.predict_horizon_minutes;
+        match self.prediction_eta(now_ms) {
+            Some((rising, mins)) if horizon > 0 && mins <= horizon => {
+                if self.predicted_notified {
+                    return None;
+                }
+                self.predicted_notified = true;
+                let dir = if rising { "high" } else { "low" };
+                Some(format!("heading {dir} in ~{mins} min"))
+            }
+            _ => {
+                self.predicted_notified = false;
+                None
+            }
+        }
     }
 
     /// The tone to play for the current alert.
@@ -478,6 +522,10 @@ impl App {
                 let next = self.alerts.escalate_minutes + dir as i64 * 5;
                 self.alerts.escalate_minutes = next.clamp(0, 120);
             }
+            Field::PredictHorizon => {
+                let next = self.alerts.predict_horizon_minutes + dir as i64 * 5;
+                self.alerts.predict_horizon_minutes = next.clamp(0, 60);
+            }
             Field::Refresh => {
                 let next = self.refresh_secs as i64 + dir as i64 * 5;
                 self.refresh_secs = next.max(5) as u64;
@@ -560,6 +608,7 @@ impl App {
                 quiet_urgent_low: Some(self.alerts.quiet_urgent_low),
                 escalate_minutes: Some(self.alerts.escalate_minutes),
                 push_url: self.alerts.push_url.clone(),
+                predict_horizon_minutes: Some(self.alerts.predict_horizon_minutes),
             },
             theme: ThemeConfig {
                 low: Some(self.theme_names[0].clone()),
@@ -612,6 +661,13 @@ impl App {
                     "off".to_string()
                 } else {
                     format!("{} min", self.alerts.escalate_minutes)
+                }
+            }
+            Field::PredictHorizon => {
+                if self.alerts.predict_horizon_minutes == 0 {
+                    "off".to_string()
+                } else {
+                    format!("{} min", self.alerts.predict_horizon_minutes)
                 }
             }
             Field::Stale => format!("{} min", self.alerts.stale_minutes),

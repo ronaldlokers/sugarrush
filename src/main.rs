@@ -337,6 +337,11 @@ async fn refresh(app: &mut App, client: &Client) {
             push(&url, &msg).await;
         }
     }
+    if let Some(msg) = app.take_predictive(now) {
+        if app.alerts.desktop {
+            notify_text(&msg);
+        }
+    }
 
     // Forecasts and device status only make sense at the live edge.
     if app.view.is_live() {
@@ -378,6 +383,13 @@ fn notify(alert: alert::Alert, sgv: Option<f64>, units: units::Units) {
     };
     let _ = std::process::Command::new("notify-send")
         .args(["-a", "sugarrush", "-u", alert.urgency(), "sugarrush", &body])
+        .spawn();
+}
+
+/// Fire a plain desktop notification (used for predictive alerts).
+fn notify_text(body: &str) {
+    let _ = std::process::Command::new("notify-send")
+        .args(["-a", "sugarrush", "-u", "normal", "sugarrush", body])
         .spawn();
 }
 

@@ -48,6 +48,8 @@ snooze_minutes = 15   # how long the `a` key silences the audible alarm
 # Escalation: re-notify (and push) if an urgent alert isn't cleared in time.
 # escalate_minutes = 20     # 0 disables
 # push_url = "https://ntfy.sh/your-topic"  # POST urgent alerts here (ntfy/webhook)
+# Predictive alert: warn when the forecast crosses low/high within N minutes.
+predict_horizon_minutes = 30   # 0 disables
 
 # Display colors (optional). Each is a color name (red, green, cyan, yellow,
 # blue, magenta, gray, white, light*) or a #rrggbb hex value.
