@@ -10,8 +10,9 @@ mod ui;
 mod units;
 mod view;
 mod waybar;
+mod wizard;
 
-use std::io::{self, Stdout};
+use std::io::{self, IsTerminal, Stdout};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -79,6 +80,20 @@ async fn main() -> Result<()> {
 }
 
 async fn run_tui(screen: Screen) -> Result<()> {
+    // No config yet: guide the user through setup on a terminal, or point them
+    // at the file when running non-interactively.
+    let path = Config::path()?;
+    if !path.exists() {
+        if std::io::stdin().is_terminal() {
+            wizard::run().await?;
+        } else {
+            anyhow::bail!(
+                "no config at {}. Copy config.example.toml there (set url + token), \
+                 or run sugarrush in a terminal for guided setup.",
+                path.display()
+            );
+        }
+    }
     let cfg = Config::load()?;
     let sites = cfg.resolve_sites()?;
     let alerts = cfg.alerts.resolve(cfg.units);
