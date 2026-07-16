@@ -100,6 +100,7 @@ async fn run_tui(screen: Screen) -> Result<()> {
     let alerts = cfg.alerts.resolve(cfg.units);
     let mut app = App::new(&cfg, alerts, sites);
     app.screen = screen;
+    app.perm_warning = Config::perms_too_open();
 
     install_panic_hook();
     let mut terminal = setup_terminal(app.minimap_enabled)?;

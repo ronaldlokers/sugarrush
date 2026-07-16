@@ -286,6 +286,21 @@ impl Config {
         Ok(cfg)
     }
 
+    /// True when the config file is group- or world-readable (Unix only) —
+    /// the token lives there in plaintext, so it should be `chmod 600`.
+    pub fn perms_too_open() -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(path) = Self::path() {
+                if let Ok(meta) = std::fs::metadata(path) {
+                    return meta.permissions().mode() & 0o077 != 0;
+                }
+            }
+        }
+        false
+    }
+
     /// The configured sites: the `[[sites]]` list if present, otherwise the
     /// legacy top-level `url`/`token` as a single "default" site.
     pub fn resolve_sites(&self) -> Result<Vec<Site>> {
