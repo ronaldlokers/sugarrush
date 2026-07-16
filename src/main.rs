@@ -156,7 +156,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
             }
             _ = alarm_ticker.tick() => {
                 if app.alarm_active(now_ms()) {
-                    sound::alarm();
+                    sound::alarm(app.alarm_tone());
                 }
             }
         }

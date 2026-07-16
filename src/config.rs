@@ -111,7 +111,7 @@ impl Site {
 /// Alert thresholds as written in config.toml. Glucose bounds are expressed in
 /// the configured display `units`; omitted fields fall back to unit-independent
 /// physiological defaults. Call [`AlertsConfig::resolve`] to get mg/dL values.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AlertsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub urgent_low: Option<f64>,
@@ -133,6 +133,15 @@ pub struct AlertsConfig {
     /// How long the snooze key silences the audible alarm, in minutes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snooze_minutes: Option<i64>,
+    /// Start of the quiet-hours window, `HH:MM` (empty/absent = disabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quiet_start: Option<String>,
+    /// End of the quiet-hours window, `HH:MM`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quiet_end: Option<String>,
+    /// Whether urgent-low still sounds during quiet hours (safety override).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quiet_urgent_low: Option<bool>,
 }
 
 impl AlertsConfig {
@@ -149,8 +158,29 @@ impl AlertsConfig {
             desktop: self.desktop.unwrap_or(d.desktop),
             sound: self.sound.unwrap_or(d.sound),
             snooze_minutes: self.snooze_minutes.unwrap_or(d.snooze_minutes),
+            quiet_start: self.quiet_start.as_deref().and_then(parse_hhmm),
+            quiet_end: self.quiet_end.as_deref().and_then(parse_hhmm),
+            quiet_urgent_low: self.quiet_urgent_low.unwrap_or(d.quiet_urgent_low),
         }
     }
+}
+
+/// Parse `HH:MM` into minutes-of-day (0..1440).
+pub fn parse_hhmm(s: &str) -> Option<i32> {
+    let (h, m) = s.trim().split_once(':')?;
+    let h: i32 = h.parse().ok()?;
+    let m: i32 = m.parse().ok()?;
+    if (0..24).contains(&h) && (0..60).contains(&m) {
+        Some(h * 60 + m)
+    } else {
+        None
+    }
+}
+
+/// Format minutes-of-day as `HH:MM`.
+pub fn fmt_hhmm(min: i32) -> String {
+    let m = min.rem_euclid(1440);
+    format!("{:02}:{:02}", m / 60, m % 60)
 }
 
 /// Resolved alert thresholds and behaviour, always in mg/dL.
@@ -164,6 +194,10 @@ pub struct Alerts {
     pub desktop: bool,
     pub sound: bool,
     pub snooze_minutes: i64,
+    /// Quiet-hours window as minutes-of-day; `None` when disabled.
+    pub quiet_start: Option<i32>,
+    pub quiet_end: Option<i32>,
+    pub quiet_urgent_low: bool,
 }
 
 impl Default for Alerts {
@@ -177,6 +211,21 @@ impl Default for Alerts {
             desktop: true,
             sound: true,
             snooze_minutes: 15,
+            quiet_start: None,
+            quiet_end: None,
+            quiet_urgent_low: true,
+        }
+    }
+}
+
+impl Alerts {
+    /// True when `min_of_day` falls inside the quiet-hours window (handles
+    /// windows that cross midnight). Always false when quiet hours are unset.
+    pub fn in_quiet_hours(&self, min_of_day: i32) -> bool {
+        match (self.quiet_start, self.quiet_end) {
+            (Some(s), Some(e)) if s <= e => min_of_day >= s && min_of_day < e,
+            (Some(s), Some(e)) => min_of_day >= s || min_of_day < e,
+            _ => false,
         }
     }
 }
@@ -258,6 +307,32 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(raw.resolve(Units::Mgdl).low, 70.0);
+    }
+
+    #[test]
+    fn hhmm_round_trips() {
+        assert_eq!(parse_hhmm("23:00"), Some(1380));
+        assert_eq!(parse_hhmm("07:30"), Some(450));
+        assert_eq!(parse_hhmm("24:00"), None);
+        assert_eq!(parse_hhmm("nope"), None);
+        assert_eq!(fmt_hhmm(1380), "23:00");
+        assert_eq!(fmt_hhmm(450), "07:30");
+    }
+
+    #[test]
+    fn quiet_hours_handles_midnight_wrap() {
+        let a = Alerts {
+            quiet_start: Some(1380), // 23:00
+            quiet_end: Some(420),    // 07:00
+            ..Alerts::default()
+        };
+        assert!(a.in_quiet_hours(1440 - 1)); // 23:59 in window
+        assert!(a.in_quiet_hours(0)); // 00:00 in window
+        assert!(a.in_quiet_hours(419)); // 06:59 in window
+        assert!(!a.in_quiet_hours(420)); // 07:00 out
+        assert!(!a.in_quiet_hours(720)); // noon out
+                                         // Disabled window is never quiet.
+        assert!(!Alerts::default().in_quiet_hours(0));
     }
 
     #[test]
