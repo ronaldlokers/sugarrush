@@ -38,7 +38,7 @@ impl Alert {
             Alert::InRange => "in range",
             Alert::High => "HIGH",
             Alert::UrgentHigh => "URGENT HIGH",
-            Alert::Stale => "STALE — no recent data",
+            Alert::Stale => "SENSOR GAP — no recent readings",
         }
     }
 
