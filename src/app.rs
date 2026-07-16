@@ -1,8 +1,11 @@
 //! Application state.
 
+use anyhow::Context;
+
 use crate::alert::{self, Alert};
-use crate::config::{Alerts, Config};
+use crate::config::{Alerts, AlertsConfig, Config, Site};
 use crate::nightscout::{DeviceStatus, Entry};
+use crate::theme::{Theme, ThemeConfig};
 use crate::units::Units;
 use crate::view::View;
 
@@ -86,16 +89,22 @@ pub struct App {
     pub refresh_dirty: bool,
     /// Transient status line for the settings screen (e.g. "saved").
     pub status: Option<String>,
-    /// Nightscout connection details, kept for config persistence.
-    url: String,
-    token: String,
+    /// Display colors.
+    pub theme: Theme,
+    /// Raw theme config, kept so it round-trips through a settings save.
+    theme_config: ThemeConfig,
+    /// Configured sites, and which one is active.
+    pub sites: Vec<Site>,
+    pub site_idx: usize,
+    /// Set when the active site changed so the run loop rebuilds its client.
+    pub site_dirty: bool,
 
     pub last_error: Option<String>,
     pub should_quit: bool,
 }
 
 impl App {
-    pub fn new(cfg: &Config, alerts: Alerts) -> Self {
+    pub fn new(cfg: &Config, alerts: Alerts, sites: Vec<Site>) -> Self {
         Self {
             units: cfg.units,
             entries: Vec::new(),
@@ -114,10 +123,27 @@ impl App {
             refresh_secs: cfg.refresh_secs,
             refresh_dirty: false,
             status: None,
-            url: cfg.url.clone(),
-            token: cfg.token.clone(),
+            theme: cfg.theme.resolve(),
+            theme_config: cfg.theme.clone(),
+            sites,
+            site_idx: 0,
+            site_dirty: false,
             last_error: None,
             should_quit: false,
+        }
+    }
+
+    /// The active site.
+    pub fn active_site(&self) -> &Site {
+        &self.sites[self.site_idx.min(self.sites.len().saturating_sub(1))]
+    }
+
+    /// Switch to the next configured site (no-op with a single site).
+    pub fn next_site(&mut self) {
+        if self.sites.len() > 1 {
+            self.site_idx = (self.site_idx + 1) % self.sites.len();
+            self.site_dirty = true;
+            self.view.follow();
         }
     }
 
@@ -217,7 +243,9 @@ impl App {
                 let next = self.alerts.stale_minutes + dir as i64;
                 self.alerts.stale_minutes = next.max(1);
             }
-            Field::UrgentLow => self.alerts.urgent_low = clamp_bg(self.alerts.urgent_low + d * step_mgdl),
+            Field::UrgentLow => {
+                self.alerts.urgent_low = clamp_bg(self.alerts.urgent_low + d * step_mgdl)
+            }
             Field::Low => self.alerts.low = clamp_bg(self.alerts.low + d * step_mgdl),
             Field::High => self.alerts.high = clamp_bg(self.alerts.high + d * step_mgdl),
             Field::UrgentHigh => {
@@ -227,51 +255,51 @@ impl App {
         self.status = None;
     }
 
-    /// Persist current settings back to config.toml.
+    /// Persist current settings back to config.toml. Sites and theme are
+    /// preserved; thresholds are written in the active display unit.
     pub fn save_config(&mut self) {
-        match Config::path().and_then(|p| {
-            let body = self.to_toml();
-            std::fs::write(&p, body).map_err(|e| anyhow::anyhow!("{e}")).map(|_| p)
-        }) {
-            Ok(p) => self.status = Some(format!("saved to {}", p.display())),
-            Err(e) => self.status = Some(format!("save failed: {e}")),
-        }
+        let result = Config::path().and_then(|p| {
+            let body = toml::to_string_pretty(&self.build_config())
+                .context("failed to serialize config")?;
+            std::fs::write(&p, body).with_context(|| format!("failed to write {}", p.display()))?;
+            Ok(p)
+        });
+        self.status = Some(match result {
+            Ok(p) => format!("saved to {}", p.display()),
+            Err(e) => format!("save failed: {e}"),
+        });
     }
 
-    /// Render a clean, commented config.toml reflecting the current settings.
-    /// Thresholds are written in the active display unit.
-    fn to_toml(&self) -> String {
+    /// Reconstruct a `Config` from current settings for persistence. A lone
+    /// "default" site is written back in the legacy top-level form.
+    fn build_config(&self) -> Config {
+        let single_default = self.sites.len() == 1 && self.sites[0].name == "default";
+        let (url, token, sites) = if single_default {
+            (
+                Some(self.sites[0].url.clone()),
+                Some(self.sites[0].token.clone()),
+                Vec::new(),
+            )
+        } else {
+            (None, None, self.sites.clone())
+        };
         let u = self.units;
-        format!(
-            "# sugarrush config\n\
-             url = \"{url}\"\n\
-             token = \"{token}\"\n\
-             units = \"{units}\"\n\
-             refresh_secs = {refresh}\n\
-             \n\
-             # Alert thresholds are in the display unit ({unit_label}).\n\
-             [alerts]\n\
-             urgent_low = {ul}\n\
-             low = {lo}\n\
-             high = {hi}\n\
-             urgent_high = {uh}\n\
-             stale_minutes = {stale}\n\
-             desktop = {desktop}\n",
-            url = self.url,
-            token = self.token,
-            units = match u {
-                Units::Mmol => "mmol",
-                Units::Mgdl => "mgdl",
+        Config {
+            url,
+            token,
+            sites,
+            units: u,
+            refresh_secs: self.refresh_secs,
+            alerts: AlertsConfig {
+                urgent_low: Some(u.from_mgdl(self.alerts.urgent_low)),
+                low: Some(u.from_mgdl(self.alerts.low)),
+                high: Some(u.from_mgdl(self.alerts.high)),
+                urgent_high: Some(u.from_mgdl(self.alerts.urgent_high)),
+                stale_minutes: Some(self.alerts.stale_minutes),
+                desktop: Some(self.alerts.desktop),
             },
-            refresh = self.refresh_secs,
-            unit_label = u.label(),
-            ul = u.from_mgdl(self.alerts.urgent_low),
-            lo = u.from_mgdl(self.alerts.low),
-            hi = u.from_mgdl(self.alerts.high),
-            uh = u.from_mgdl(self.alerts.urgent_high),
-            stale = self.alerts.stale_minutes,
-            desktop = self.alerts.desktop,
-        )
+            theme: self.theme_config.clone(),
+        }
     }
 
     /// Formatted value of a field for display on the settings screen.

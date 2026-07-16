@@ -21,6 +21,8 @@ A terminal UI for viewing [Nightscout](https://nightscout.github.io/) CGM
   and save them back to config.toml
 - Stats panel: time-in-range, mean glucose + GMI (estimated A1c), and
   device/uploader status (battery, sensor age, last seen)
+- Configurable display colors (`[theme]`) and multiple sites (`[[sites]]`,
+  switch with `n`)
 
 Planned work is tracked in [GitHub issues](https://github.com/ronaldlokers/sugarrush/issues)
 (predictions, alerts, IOB/COB, graph scrolling, settings screen, and more).
@@ -69,6 +71,7 @@ The token is sent as a `?token=…` query parameter and only grants read access.
 | `+` / `-` | Zoom window (1h/3h/6h/12h/24h) |
 | `g` | Jump to a date (`YYYY-MM-DD`) |
 | `f` / `Home` | Return to live |
+| `n` | Switch site (multi-site) |
 | `s` | Open/close settings |
 
 On the settings screen: `↑`/`↓` select, `←`/`→` change, `w` save to config.toml, `s`/`Esc` back.

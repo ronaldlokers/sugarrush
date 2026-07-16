@@ -1,23 +1,48 @@
 //! Config loading from ~/.config/sugarrush/config.toml.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::theme::ThemeConfig;
 use crate::units::Units;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Base URL of the Nightscout instance, no trailing slash.
-    pub url: String,
-    /// Read-only access token (Nightscout Subject with `readable` role).
-    pub token: String,
+    /// Base URL of the single Nightscout instance (legacy single-site form).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Read-only token for the single-site form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// One or more named sites (multi-site form). Takes precedence over the
+    /// top-level `url`/`token` when non-empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sites: Vec<Site>,
     #[serde(default = "default_units")]
     pub units: Units,
     #[serde(default = "default_refresh")]
     pub refresh_secs: u64,
     #[serde(default)]
     pub alerts: AlertsConfig,
+    #[serde(default, skip_serializing_if = "is_default_theme")]
+    pub theme: ThemeConfig,
+}
+
+/// A named Nightscout site.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Site {
+    #[serde(default = "default_site_name")]
+    pub name: String,
+    pub url: String,
+    pub token: String,
+}
+
+impl Site {
+    /// Trimmed base URL without a trailing slash.
+    pub fn base_url(&self) -> &str {
+        self.url.trim_end_matches('/')
+    }
 }
 
 /// Alert thresholds as written in config.toml. Glucose bounds are expressed in
@@ -25,13 +50,19 @@ pub struct Config {
 /// physiological defaults. Call [`AlertsConfig::resolve`] to get mg/dL values.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct AlertsConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub urgent_low: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub low: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub high: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub urgent_high: Option<f64>,
     /// Warn when the newest reading is older than this many minutes.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stale_minutes: Option<i64>,
     /// Fire desktop notifications via `notify-send` on threshold crossings.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub desktop: Option<bool>,
 }
 
@@ -81,6 +112,14 @@ fn default_units() -> Units {
 fn default_refresh() -> u64 {
     30
 }
+fn default_site_name() -> String {
+    "default".to_string()
+}
+fn is_default_theme(t: &ThemeConfig) -> bool {
+    toml::Value::try_from(t)
+        .map(|v| v.as_table().map(|tbl| tbl.is_empty()).unwrap_or(true))
+        .unwrap_or(false)
+}
 
 impl Config {
     pub fn path() -> Result<PathBuf> {
@@ -96,14 +135,25 @@ impl Config {
                 path.display()
             )
         })?;
-        let cfg: Config =
-            toml::from_str(&raw).with_context(|| format!("invalid config at {}", path.display()))?;
+        let cfg: Config = toml::from_str(&raw)
+            .with_context(|| format!("invalid config at {}", path.display()))?;
         Ok(cfg)
     }
 
-    /// Trimmed base URL without a trailing slash.
-    pub fn base_url(&self) -> &str {
-        self.url.trim_end_matches('/')
+    /// The configured sites: the `[[sites]]` list if present, otherwise the
+    /// legacy top-level `url`/`token` as a single "default" site.
+    pub fn resolve_sites(&self) -> Result<Vec<Site>> {
+        if !self.sites.is_empty() {
+            return Ok(self.sites.clone());
+        }
+        match (&self.url, &self.token) {
+            (Some(url), Some(token)) => Ok(vec![Site {
+                name: default_site_name(),
+                url: url.clone(),
+                token: token.clone(),
+            }]),
+            _ => bail!("config needs either url + token, or at least one [[sites]] entry"),
+        }
     }
 }
 
