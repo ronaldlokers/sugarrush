@@ -14,18 +14,12 @@ pub struct Config {
     pub token: String,
     #[serde(default = "default_units")]
     pub units: Units,
-    /// Upper bound on entries fetched per request (a 24h window is ~288 points).
-    #[serde(default = "default_count")]
-    pub count: usize,
     #[serde(default = "default_refresh")]
     pub refresh_secs: u64,
 }
 
 fn default_units() -> Units {
     Units::Mmol
-}
-fn default_count() -> usize {
-    2000
 }
 fn default_refresh() -> u64 {
     30
