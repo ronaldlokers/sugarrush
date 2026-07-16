@@ -17,6 +17,8 @@ A terminal UI for viewing [Nightscout](https://nightscout.github.io/) CGM
 - Alerts on out-of-range and stale data: in-TUI banner plus optional
   desktop notifications (`notify-send`), with configurable thresholds
 - Short-term forecast overlay (uploader predictions or a local AR2 fallback)
+- In-app settings screen (`s`) to edit units, refresh, and thresholds live,
+  and save them back to config.toml
 
 Planned work is tracked in [GitHub issues](https://github.com/ronaldlokers/sugarrush/issues)
 (predictions, alerts, IOB/COB, graph scrolling, settings screen, and more).
@@ -65,6 +67,9 @@ The token is sent as a `?token=…` query parameter and only grants read access.
 | `+` / `-` | Zoom window (1h/3h/6h/12h/24h) |
 | `g` | Jump to a date (`YYYY-MM-DD`) |
 | `f` / `Home` | Return to live |
+| `s` | Open/close settings |
+
+On the settings screen: `↑`/`↓` select, `←`/`→` change, `w` save to config.toml, `s`/`Esc` back.
 
 ## License
 

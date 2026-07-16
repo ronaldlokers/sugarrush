@@ -10,9 +10,13 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, Field, Screen};
 
 pub fn draw(f: &mut Frame, app: &App) {
+    if app.screen == Screen::Settings {
+        draw_settings(f, app);
+        return;
+    }
     // A one-line alert banner appears above the header only while alerting.
     let banner = app.alert.is_alerting();
     let mut constraints = Vec::new();
@@ -39,6 +43,58 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_current(f, chunks[i + 1], app);
     draw_graph(f, chunks[i + 2], app);
     draw_footer(f, chunks[i + 3], app);
+}
+
+fn draw_settings(f: &mut Frame, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // header
+            Constraint::Min(5),    // fields
+            Constraint::Length(1), // footer
+        ])
+        .split(f.area());
+
+    let header = Paragraph::new(Line::from(Span::styled(
+        " settings ",
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
+    )))
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(header, chunks[0]);
+
+    let block = Block::default().borders(Borders::ALL);
+    let inner = block.inner(chunks[1]);
+    f.render_widget(block, chunks[1]);
+
+    let rows: Vec<Line> = Field::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, &field)| {
+            let selected = i == app.settings_sel;
+            let marker = if selected { "▸ " } else { "  " };
+            let style = if selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            Line::from(Span::styled(
+                format!("{marker}{:<22}{}", field.label(), app.field_value(field)),
+                style,
+            ))
+        })
+        .collect();
+    f.render_widget(Paragraph::new(rows), inner);
+
+    let footer = match &app.status {
+        Some(msg) => Span::styled(format!(" {msg} "), Style::default().fg(Color::Green)),
+        None => Span::raw(" ↑/↓ select · ←/→ change · w save · s/esc back · q quit "),
+    };
+    f.render_widget(Paragraph::new(Line::from(footer)), chunks[2]);
 }
 
 fn draw_banner(f: &mut Frame, area: Rect, app: &App) {
@@ -218,7 +274,9 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
 
     let text = match &app.last_error {
         Some(err) => Span::styled(format!(" error: {err} "), Style::default().fg(Color::Red)),
-        None => Span::raw(" q quit · r refresh · u units · h/l pan · +/- zoom · g date · f live "),
+        None => {
+            Span::raw(" q quit · r refresh · u units · h/l pan · +/- zoom · g date · f live · s settings ")
+        }
     };
     f.render_widget(Paragraph::new(Line::from(text)), area);
 }
