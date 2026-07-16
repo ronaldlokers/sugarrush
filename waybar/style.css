@@ -3,6 +3,9 @@
    Catppuccin Mocha; adjust to your theme. */
 
 #custom-sugarrush {
+  /* Horizontal margin keeps the module from butting against its neighbours.
+     Adjust to taste for your bar's spacing. */
+  margin: 0 12px;
   padding: 0 8px;
 }
 
