@@ -38,7 +38,7 @@ enum Mode {
     Tui(Screen),
     /// Print one Waybar JSON line and exit.
     Waybar,
-    /// Print version/about info (and notify-send) and exit.
+    /// Print version/about info (and a desktop notification) and exit.
     About,
 }
 
@@ -108,8 +108,8 @@ async fn run_tui(screen: Screen) -> Result<()> {
     res
 }
 
-/// Print name/version/repo and a not-a-medical-device note; also fire a desktop
-/// notification if `notify-send` is available (used by the Waybar About menu).
+/// Print name/version/repo and a not-a-medical-device note, and also fire a
+/// desktop notification (used by the Waybar About menu).
 fn print_about() {
     let version = env!("CARGO_PKG_VERSION");
     let repo = "https://github.com/ronaldlokers/sugarrush";
@@ -117,9 +117,7 @@ fn print_about() {
         "Nightscout CGM TUI\n{repo}\nNot a medical device — do not use for treatment decisions."
     );
     println!("sugarrush v{version}\n{body}");
-    let _ = std::process::Command::new("notify-send")
-        .args(["-a", "sugarrush", &format!("sugarrush v{version}"), &body])
-        .spawn();
+    desktop_notify(&format!("v{version}\n{body}"), false);
 }
 
 /// One input event forwarded from the reader thread.
@@ -381,23 +379,38 @@ async fn refresh(app: &mut App, client: &Client) {
     }
 }
 
-/// Fire a best-effort desktop notification via `notify-send`. Silently does
-/// nothing if the binary is absent — it's an optional convenience.
+/// Fire a best-effort desktop notification for an alert.
 fn notify(alert: alert::Alert, sgv: Option<f64>, units: units::Units) {
     let body = match sgv {
         Some(v) => format!("{} · {} {}", alert.label(), units.format(v), units.label()),
         None => alert.label().to_string(),
     };
-    let _ = std::process::Command::new("notify-send")
-        .args(["-a", "sugarrush", "-u", alert.urgency(), "sugarrush", &body])
-        .spawn();
+    desktop_notify(&body, alert.urgency() == "critical");
 }
 
 /// Fire a plain desktop notification (used for predictive alerts).
 fn notify_text(body: &str) {
-    let _ = std::process::Command::new("notify-send")
-        .args(["-a", "sugarrush", "-u", "normal", "sugarrush", body])
-        .spawn();
+    desktop_notify(body, false);
+}
+
+/// Cross-platform desktop notification (Linux / macOS / Windows) via
+/// notify-rust. Best-effort — errors are ignored.
+fn desktop_notify(body: &str, critical: bool) {
+    let mut n = notify_rust::Notification::new();
+    n.summary("sugarrush").body(body).appname("sugarrush");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        n.urgency(if critical {
+            notify_rust::Urgency::Critical
+        } else {
+            notify_rust::Urgency::Normal
+        });
+    }
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    {
+        let _ = critical;
+    }
+    let _ = n.show();
 }
 
 /// POST an alert message to a webhook / ntfy topic. Best-effort, non-blocking.

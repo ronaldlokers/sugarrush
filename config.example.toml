@@ -37,7 +37,7 @@ low = 3.9             # yellow banner below
 high = 10.0           # yellow banner above
 urgent_high = 13.9    # red banner + critical notification at or above
 stale_minutes = 15    # warn when the newest reading is older than this
-desktop = true        # fire desktop notifications via notify-send
+desktop = true        # fire desktop notifications (Linux/macOS/Windows)
 sound = true          # looping audible alarm on urgent low/high and stale data
 snooze_minutes = 15   # how long the `a` key silences the audible alarm
 # Quiet hours: during this window only urgent-low sounds (others stay silent).

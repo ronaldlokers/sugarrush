@@ -124,7 +124,7 @@ pub struct AlertsConfig {
     /// Warn when the newest reading is older than this many minutes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale_minutes: Option<i64>,
-    /// Fire desktop notifications via `notify-send` on threshold crossings.
+    /// Fire desktop notifications on threshold crossings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub desktop: Option<bool>,
     /// Play a looping audible alarm on urgent/stale states.
