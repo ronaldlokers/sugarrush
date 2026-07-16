@@ -4,16 +4,8 @@ use crate::nightscout::Entry;
 use crate::units::Units;
 use crate::view::View;
 
-/// Which screen is currently shown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Screen {
-    Dashboard,
-    // Settings, // TODO: settings screen — see issues
-}
-
 pub struct App {
     pub units: Units,
-    pub screen: Screen,
     /// Entries loaded for the current window, newest first.
     pub entries: Vec<Entry>,
     /// The visible time window over the history.
@@ -31,7 +23,6 @@ impl App {
     pub fn new(units: Units) -> Self {
         Self {
             units,
-            screen: Screen::Dashboard,
             entries: Vec::new(),
             view: View::default(),
             view_start: 0,
