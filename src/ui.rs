@@ -23,16 +23,22 @@ pub fn draw(f: &mut Frame, app: &App) {
     // A one-line alert banner appears above the header only while alerting.
     let banner = app.alert.is_alerting();
     let minimap = app.minimap_enabled;
+    // On wide terminals, current + stats share one row (side-by-side),
+    // reclaiming ~5 rows for the graph. Otherwise they stack.
+    let wide = f.area().width >= 90;
+
     let mut constraints = Vec::new();
     if banner {
         constraints.push(Constraint::Length(1)); // banner
     }
-    constraints.extend([
-        Constraint::Length(3), // header
-        Constraint::Length(7), // current reading
-        Constraint::Length(5), // stats
-        Constraint::Min(8),    // graph
-    ]);
+    constraints.push(Constraint::Length(3)); // header
+    if wide {
+        constraints.push(Constraint::Length(7)); // current + stats
+    } else {
+        constraints.push(Constraint::Length(7)); // current
+        constraints.push(Constraint::Length(5)); // stats
+    }
+    constraints.push(Constraint::Min(8)); // graph
     if minimap {
         constraints.push(Constraint::Length(4)); // minimap
     }
@@ -49,10 +55,22 @@ pub fn draw(f: &mut Frame, app: &App) {
         i += 1;
     }
     draw_header(f, chunks[i], app);
-    draw_current(f, chunks[i + 1], app);
-    draw_stats(f, chunks[i + 2], app);
-    draw_graph(f, chunks[i + 3], app);
-    i += 4;
+    i += 1;
+    if wide {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(chunks[i]);
+        draw_current(f, cols[0], app);
+        draw_stats(f, cols[1], app);
+        i += 1;
+    } else {
+        draw_current(f, chunks[i], app);
+        draw_stats(f, chunks[i + 1], app);
+        i += 2;
+    }
+    draw_graph(f, chunks[i], app);
+    i += 1;
     if minimap {
         draw_minimap(f, chunks[i], app);
         i += 1;
