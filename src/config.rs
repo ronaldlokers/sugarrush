@@ -30,6 +30,36 @@ pub struct Config {
     /// How the graph draws readings.
     #[serde(default)]
     pub graph_style: GraphStyle,
+    /// Minimap navigator settings.
+    #[serde(default)]
+    pub minimap: MinimapConfig,
+}
+
+/// The 24h (configurable) overview strip and its mouse navigation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct MinimapConfig {
+    /// Show the strip and enable mouse capture (drag to pan, click to jump).
+    #[serde(default = "minimap_enabled")]
+    pub enabled: bool,
+    /// Width of the overview window in hours.
+    #[serde(default = "minimap_span")]
+    pub span_hours: u32,
+}
+
+impl Default for MinimapConfig {
+    fn default() -> Self {
+        Self {
+            enabled: minimap_enabled(),
+            span_hours: minimap_span(),
+        }
+    }
+}
+
+fn minimap_enabled() -> bool {
+    true
+}
+fn minimap_span() -> u32 {
+    24
 }
 
 /// Marker style for the graph's readings.

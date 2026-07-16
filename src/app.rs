@@ -1,13 +1,18 @@
 //! Application state.
 
+use std::cell::Cell;
+
 use anyhow::Context;
+use ratatui::layout::Rect;
 
 use crate::alert::{self, Alert};
-use crate::config::{Alerts, AlertsConfig, Config, GraphStyle, Site};
+use crate::config::{Alerts, AlertsConfig, Config, GraphStyle, MinimapConfig, Site};
 use crate::nightscout::{DeviceStatus, Entry};
 use crate::theme::{Theme, ThemeConfig};
 use crate::units::Units;
 use crate::view::View;
+
+const MS_PER_HOUR: i64 = 3_600_000;
 
 /// Which screen is currently shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +106,16 @@ pub struct App {
     /// How the graph draws readings.
     pub graph_style: GraphStyle,
 
+    // Minimap navigator.
+    pub minimap_enabled: bool,
+    /// Overview span in ms.
+    pub minimap_span_ms: i64,
+    /// Readings across the overview span, newest first.
+    pub minimap_entries: Vec<Entry>,
+    /// Inner rect of the minimap from the last draw, for mouse hit-testing.
+    /// `Cell` so the immutable draw pass can record it.
+    pub minimap_rect: Cell<Option<Rect>>,
+
     pub last_error: Option<String>,
     pub should_quit: bool,
 }
@@ -131,9 +146,34 @@ impl App {
             site_idx: 0,
             site_dirty: false,
             graph_style: cfg.graph_style,
+            minimap_enabled: cfg.minimap.enabled,
+            minimap_span_ms: cfg.minimap.span_hours.max(1) as i64 * MS_PER_HOUR,
+            minimap_entries: Vec::new(),
+            minimap_rect: Cell::new(None),
             last_error: None,
             should_quit: false,
         }
+    }
+
+    /// Handle a mouse press/drag over the minimap at screen column `col`:
+    /// recenter the main window on the corresponding time. Returns true if the
+    /// column fell within the strip (so the caller should refetch).
+    pub fn minimap_seek(&mut self, col: u16, row: u16, now_ms: i64) -> bool {
+        let Some(r) = self.minimap_rect.get() else {
+            return false;
+        };
+        if r.width == 0 || row < r.y || row >= r.y + r.height {
+            return false;
+        }
+        let col = col.clamp(r.x, r.x + r.width - 1);
+        let frac = (col - r.x) as f64 / r.width as f64;
+        let start = now_ms - self.minimap_span_ms;
+        let target = start + (frac * self.minimap_span_ms as f64) as i64;
+        // Center the main window on the target time, clamped to now (→ live).
+        let half = self.view.span.minutes() * 60_000 / 2;
+        let end = (target + half).min(now_ms);
+        self.view.end = if end >= now_ms { None } else { Some(end) };
+        true
     }
 
     /// The active site.
@@ -303,6 +343,10 @@ impl App {
             },
             theme: self.theme_config.clone(),
             graph_style: self.graph_style,
+            minimap: MinimapConfig {
+                enabled: self.minimap_enabled,
+                span_hours: (self.minimap_span_ms / MS_PER_HOUR) as u32,
+            },
         }
     }
 
