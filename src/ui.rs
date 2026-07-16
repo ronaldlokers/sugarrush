@@ -335,7 +335,7 @@ fn draw_current(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 format!("  window end · {stamp}")
             };
-            vec![
+            let mut lines = vec![
                 Line::from(Span::styled(
                     format!("  {}  {}", value, e.arrow()),
                     Style::default()
@@ -343,8 +343,25 @@ fn draw_current(f: &mut Frame, area: Rect, app: &App) {
                         .add_modifier(Modifier::BOLD),
                 )),
                 Line::from(format!("  Δ {} {}", delta, app.units.label())),
-                Line::from(Span::styled(when, Style::default().fg(Color::DarkGray))),
-            ]
+            ];
+            // Forecast ETA to the next threshold, if the trend points at one.
+            if let Some((rising, mins)) = app.prediction_eta(chrono::Utc::now().timestamp_millis())
+            {
+                let (arrow, word, color) = if rising {
+                    ("↗", "high", app.theme.high)
+                } else {
+                    ("↘", "low", app.theme.low)
+                };
+                lines.push(Line::from(Span::styled(
+                    format!("  {arrow} {word} in ~{mins} min"),
+                    Style::default().fg(color),
+                )));
+            }
+            lines.push(Line::from(Span::styled(
+                when,
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines
         }
         None => vec![Line::from("  no data in this window…")],
     };
