@@ -25,6 +25,11 @@ impl Alert {
         !matches!(self, Alert::InRange)
     }
 
+    /// True for states that warrant an audible alarm (urgent or no data).
+    pub fn is_urgent(self) -> bool {
+        matches!(self, Alert::UrgentLow | Alert::UrgentHigh | Alert::Stale)
+    }
+
     /// Short human label for banners and notifications.
     pub fn label(self) -> &'static str {
         match self {

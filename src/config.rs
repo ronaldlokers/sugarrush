@@ -127,6 +127,12 @@ pub struct AlertsConfig {
     /// Fire desktop notifications via `notify-send` on threshold crossings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub desktop: Option<bool>,
+    /// Play a looping audible alarm on urgent/stale states.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sound: Option<bool>,
+    /// How long the snooze key silences the audible alarm, in minutes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snooze_minutes: Option<i64>,
 }
 
 impl AlertsConfig {
@@ -141,6 +147,8 @@ impl AlertsConfig {
             urgent_high: self.urgent_high.map_or(d.urgent_high, |v| units.to_mgdl(v)),
             stale_minutes: self.stale_minutes.unwrap_or(d.stale_minutes),
             desktop: self.desktop.unwrap_or(d.desktop),
+            sound: self.sound.unwrap_or(d.sound),
+            snooze_minutes: self.snooze_minutes.unwrap_or(d.snooze_minutes),
         }
     }
 }
@@ -154,6 +162,8 @@ pub struct Alerts {
     pub urgent_high: f64,
     pub stale_minutes: i64,
     pub desktop: bool,
+    pub sound: bool,
+    pub snooze_minutes: i64,
 }
 
 impl Default for Alerts {
@@ -165,6 +175,8 @@ impl Default for Alerts {
             urgent_high: 250.0,
             stale_minutes: 15,
             desktop: true,
+            sound: true,
+            snooze_minutes: 15,
         }
     }
 }

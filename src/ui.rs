@@ -472,6 +472,9 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             if app.minimap_enabled {
                 s.push_str(" · drag overview");
             }
+            if app.alarm_active(chrono::Utc::now().timestamp_millis()) {
+                s.push_str(" · a snooze");
+            }
             s.push(' ');
             Span::raw(s)
         }

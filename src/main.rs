@@ -3,6 +3,7 @@ mod app;
 mod config;
 mod nightscout;
 mod predict;
+mod sound;
 mod stats;
 mod theme;
 mod ui;
@@ -133,6 +134,9 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
 
     let mut ticker = tokio::time::interval(Duration::from_secs(app.refresh_secs.max(5)));
     ticker.tick().await; // consume the immediate first tick
+                         // A fast ticker to loop the audible alarm while an urgent state persists.
+    let mut alarm_ticker = tokio::time::interval(Duration::from_secs(3));
+    alarm_ticker.tick().await;
 
     loop {
         tokio::select! {
@@ -148,6 +152,11 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                 // history window doesn't change on its own.
                 if app.view.is_live() {
                     refresh(app, &client).await;
+                }
+            }
+            _ = alarm_ticker.tick() => {
+                if app.alarm_active(now_ms()) {
+                    sound::alarm();
                 }
             }
         }
@@ -224,6 +233,7 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
         }
         KeyCode::Char('g') => app.begin_date_input(),
         KeyCode::Char('n') => app.next_site(),
+        KeyCode::Char('a') => app.snooze_alarm(now_ms()),
         _ => {}
     }
 }
