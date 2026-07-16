@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -27,6 +27,7 @@ async fn main() -> Result<()> {
     let client = Client::new(&cfg)?;
     let mut app = App::new(cfg.units);
 
+    install_panic_hook();
     let mut terminal = setup_terminal()?;
     let res = run(&mut terminal, &mut app, &client, cfg.refresh_secs).await;
     restore_terminal(&mut terminal)?;
@@ -40,11 +41,11 @@ async fn run(
     refresh_secs: u64,
 ) -> Result<()> {
     // Input on a blocking thread, forwarded over a channel.
-    let (tx, mut rx) = mpsc::unbounded_channel::<KeyCode>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<KeyEvent>();
     std::thread::spawn(move || loop {
         if event::poll(Duration::from_millis(200)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
-                if k.kind == KeyEventKind::Press && tx.send(k.code).is_err() {
+                if k.kind == KeyEventKind::Press && tx.send(k).is_err() {
                     break;
                 }
             }
@@ -61,7 +62,7 @@ async fn run(
         tokio::select! {
             maybe_key = rx.recv() => {
                 match maybe_key {
-                    Some(code) => handle_key(app, client, code).await,
+                    Some(key) => handle_key(app, client, key).await,
                     None => break,
                 }
             }
@@ -83,13 +84,21 @@ async fn run(
 }
 
 /// Dispatch a keypress, either into the date-jump prompt or the dashboard.
-async fn handle_key(app: &mut App, client: &Client, code: KeyCode) {
-    if app.date_input.is_some() {
-        handle_date_input(app, client, code).await;
+async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
+    // Ctrl+C / Ctrl+D always quit — raw mode delivers these as keys, not signals.
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
+    {
+        app.should_quit = true;
         return;
     }
 
-    match code {
+    if app.date_input.is_some() {
+        handle_date_input(app, client, key.code).await;
+        return;
+    }
+
+    match key.code {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
         KeyCode::Char('u') => app.toggle_units(),
         KeyCode::Char('r') => refresh(app, client).await,
@@ -175,8 +184,24 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    disable_raw_mode().ok();
-    execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
+    restore();
     terminal.show_cursor().ok();
     Ok(())
+}
+
+/// Undo the terminal setup. Safe to call from anywhere, including a panic hook,
+/// as it operates on `stdout` directly rather than the `Terminal`.
+fn restore() {
+    disable_raw_mode().ok();
+    execute!(io::stdout(), LeaveAlternateScreen).ok();
+}
+
+/// Restore the terminal before the default panic handler prints, so a panic
+/// leaves a usable shell and a readable message instead of a garbled screen.
+fn install_panic_hook() {
+    let original = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore();
+        original(info);
+    }));
 }
