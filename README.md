@@ -11,8 +11,11 @@ A terminal UI for viewing [Nightscout](https://nightscout.github.io/) CGM
 **v1**
 - Current blood glucose with trend arrow and delta
 - Recent readings as a live braille graph
+- Pan / zoom / jump through history
 - mg/dL ↔ mmol/L toggle
 - Auto-refresh
+- Alerts on out-of-range and stale data: in-TUI banner plus optional
+  desktop notifications (`notify-send`), with configurable thresholds
 
 Planned work is tracked in [GitHub issues](https://github.com/ronaldlokers/sugarrush/issues)
 (predictions, alerts, IOB/COB, graph scrolling, settings screen, and more).

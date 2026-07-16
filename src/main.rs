@@ -1,3 +1,4 @@
+mod alert;
 mod app;
 mod config;
 mod nightscout;
@@ -25,7 +26,7 @@ use nightscout::Client;
 async fn main() -> Result<()> {
     let cfg = Config::load()?;
     let client = Client::new(&cfg)?;
-    let mut app = App::new(cfg.units);
+    let mut app = App::new(cfg.units, cfg.alerts);
 
     install_panic_hook();
     let mut terminal = setup_terminal()?;
@@ -156,7 +157,8 @@ async fn handle_date_input(app: &mut App, client: &Client, code: KeyCode) {
 }
 
 async fn refresh(app: &mut App, client: &Client) {
-    let (start, end) = app.view.bounds(now_ms());
+    let now = now_ms();
+    let (start, end) = app.view.bounds(now);
     app.view_start = start;
     app.view_end = end;
     match client
@@ -169,6 +171,25 @@ async fn refresh(app: &mut App, client: &Client) {
         }
         Err(e) => app.last_error = Some(e.to_string()),
     }
+
+    app.evaluate_alert(now);
+    if app.alerts.desktop {
+        if let Some(a) = app.take_notification() {
+            notify(a, app.latest().map(|e| e.sgv), app.units);
+        }
+    }
+}
+
+/// Fire a best-effort desktop notification via `notify-send`. Silently does
+/// nothing if the binary is absent — it's an optional convenience.
+fn notify(alert: alert::Alert, sgv: Option<f64>, units: units::Units) {
+    let body = match sgv {
+        Some(v) => format!("{} · {} {}", alert.label(), units.format(v), units.label()),
+        None => alert.label().to_string(),
+    };
+    let _ = std::process::Command::new("notify-send")
+        .args(["-a", "sugarrush", "-u", alert.urgency(), "sugarrush", &body])
+        .spawn();
 }
 
 /// Current time in epoch milliseconds.

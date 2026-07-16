@@ -1,5 +1,7 @@
 //! Application state.
 
+use crate::alert::{self, Alert};
+use crate::config::Alerts;
 use crate::nightscout::Entry;
 use crate::units::Units;
 use crate::view::View;
@@ -15,12 +17,18 @@ pub struct App {
     pub view_end: i64,
     /// When `Some`, a date-jump prompt is open holding the typed buffer.
     pub date_input: Option<String>,
+    /// Configured alert thresholds and behaviour.
+    pub alerts: Alerts,
+    /// Current alert state (only meaningful in live mode).
+    pub alert: Alert,
+    /// Last alert we sent a desktop notification for, to debounce repeats.
+    last_notified: Option<Alert>,
     pub last_error: Option<String>,
     pub should_quit: bool,
 }
 
 impl App {
-    pub fn new(units: Units) -> Self {
+    pub fn new(units: Units, alerts: Alerts) -> Self {
         Self {
             units,
             entries: Vec::new(),
@@ -28,9 +36,38 @@ impl App {
             view_start: 0,
             view_end: 0,
             date_input: None,
+            alerts,
+            alert: Alert::InRange,
+            last_notified: None,
             last_error: None,
             should_quit: false,
         }
+    }
+
+    /// Recompute the alert state from the latest reading. Alerts only apply
+    /// while following live data; browsing history never alerts. Returns the
+    /// new state so the caller can react to transitions.
+    pub fn evaluate_alert(&mut self, now_ms: i64) -> Alert {
+        self.alert = if self.view.is_live() {
+            match self.latest() {
+                Some(e) => alert::evaluate(e.sgv, now_ms - e.date, &self.alerts),
+                None => Alert::InRange,
+            }
+        } else {
+            Alert::InRange
+        };
+        self.alert
+    }
+
+    /// If the alert level changed into an alerting state since the last desktop
+    /// notification, return it (once) and record it. Returning to range or
+    /// staying at the same level yields `None`, debouncing repeats.
+    pub fn take_notification(&mut self) -> Option<Alert> {
+        if self.last_notified == Some(self.alert) {
+            return None;
+        }
+        self.last_notified = Some(self.alert);
+        self.alert.is_alerting().then_some(self.alert)
     }
 
     /// Open the date-jump prompt.

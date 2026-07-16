@@ -13,20 +13,49 @@ use ratatui::{
 use crate::app::App;
 
 pub fn draw(f: &mut Frame, app: &App) {
+    // A one-line alert banner appears above the header only while alerting.
+    let banner = app.alert.is_alerting();
+    let mut constraints = Vec::new();
+    if banner {
+        constraints.push(Constraint::Length(1)); // banner
+    }
+    constraints.extend([
+        Constraint::Length(3), // header
+        Constraint::Length(7), // current reading
+        Constraint::Min(8),    // graph
+        Constraint::Length(1), // footer
+    ]);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // header
-            Constraint::Length(7), // current reading
-            Constraint::Min(8),    // graph
-            Constraint::Length(1), // footer
-        ])
+        .constraints(constraints)
         .split(f.area());
 
-    draw_header(f, chunks[0], app);
-    draw_current(f, chunks[1], app);
-    draw_graph(f, chunks[2], app);
-    draw_footer(f, chunks[3], app);
+    let mut i = 0;
+    if banner {
+        draw_banner(f, chunks[i], app);
+        i += 1;
+    }
+    draw_header(f, chunks[i], app);
+    draw_current(f, chunks[i + 1], app);
+    draw_graph(f, chunks[i + 2], app);
+    draw_footer(f, chunks[i + 3], app);
+}
+
+fn draw_banner(f: &mut Frame, area: Rect, app: &App) {
+    let color = app.alert.color();
+    let line = Line::from(Span::styled(
+        format!(" ⚠ {} ", app.alert.label()),
+        Style::default()
+            .fg(Color::Black)
+            .bg(color)
+            .add_modifier(Modifier::BOLD),
+    ));
+    f.render_widget(
+        Paragraph::new(line)
+            .style(Style::default().bg(color))
+            .alignment(Alignment::Center),
+        area,
+    );
 }
 
 fn draw_header(f: &mut Frame, area: Rect, app: &App) {

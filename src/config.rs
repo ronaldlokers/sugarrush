@@ -16,6 +16,35 @@ pub struct Config {
     pub units: Units,
     #[serde(default = "default_refresh")]
     pub refresh_secs: u64,
+    #[serde(default)]
+    pub alerts: Alerts,
+}
+
+/// Alert thresholds and behaviour. Glucose bounds are in mg/dL regardless of
+/// the display unit.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Alerts {
+    pub urgent_low: f64,
+    pub low: f64,
+    pub high: f64,
+    pub urgent_high: f64,
+    /// Warn when the newest reading is older than this many minutes.
+    pub stale_minutes: i64,
+    /// Fire desktop notifications via `notify-send` on threshold crossings.
+    pub desktop: bool,
+}
+
+impl Default for Alerts {
+    fn default() -> Self {
+        Self {
+            urgent_low: 55.0,
+            low: 70.0,
+            high: 180.0,
+            urgent_high: 250.0,
+            stale_minutes: 15,
+            desktop: true,
+        }
+    }
 }
 
 fn default_units() -> Units {
