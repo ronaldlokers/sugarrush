@@ -27,6 +27,8 @@ pub enum Field {
     Units,
     Refresh,
     Desktop,
+    Sound,
+    Snooze,
     UrgentLow,
     Low,
     High,
@@ -44,10 +46,12 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 17] = [
+    pub const ALL: [Field; 19] = [
         Field::Units,
         Field::Refresh,
         Field::Desktop,
+        Field::Sound,
+        Field::Snooze,
         Field::UrgentLow,
         Field::Low,
         Field::High,
@@ -69,6 +73,8 @@ impl Field {
             Field::Units => "Units",
             Field::Refresh => "Refresh interval",
             Field::Desktop => "Desktop notifications",
+            Field::Sound => "Audible alarm",
+            Field::Snooze => "Snooze",
             Field::UrgentLow => "Urgent low",
             Field::Low => "Low",
             Field::High => "High",
@@ -123,6 +129,8 @@ pub struct App {
     pub alert: Alert,
     /// Last alert we sent a desktop notification for, to debounce repeats.
     last_notified: Option<Alert>,
+    /// While `Some`, the audible alarm is silenced until this epoch-ms.
+    snooze_until: Option<i64>,
 
     // Settings / persistence.
     pub screen: Screen,
@@ -176,6 +184,7 @@ impl App {
             alerts,
             alert: Alert::InRange,
             last_notified: None,
+            snooze_until: None,
             screen: Screen::Dashboard,
             settings_sel: 0,
             refresh_secs: cfg.refresh_secs,
@@ -270,7 +279,26 @@ impl App {
         } else {
             Alert::InRange
         };
+        // A snooze only applies to the urgent episode that started it; once the
+        // state clears, re-arm so the next urgent event alarms again.
+        if !self.alert.is_urgent() {
+            self.snooze_until = None;
+        }
         self.alert
+    }
+
+    /// True when the audible alarm should currently sound.
+    pub fn alarm_active(&self, now_ms: i64) -> bool {
+        self.alerts.sound && self.alert.is_urgent() && self.snooze_until.is_none_or(|t| now_ms >= t)
+    }
+
+    /// Silence the audible alarm for the configured snooze interval.
+    pub fn snooze_alarm(&mut self, now_ms: i64) {
+        if self.alert.is_urgent() {
+            let mins = self.alerts.snooze_minutes.max(1);
+            self.snooze_until = Some(now_ms + mins * 60_000);
+            self.status = Some(format!("alarm snoozed {mins}m"));
+        }
     }
 
     /// If the alert level changed into an alerting state since the last desktop
@@ -318,6 +346,11 @@ impl App {
         match self.selected_field() {
             Field::Units => self.toggle_units(),
             Field::Desktop => self.alerts.desktop = !self.alerts.desktop,
+            Field::Sound => self.alerts.sound = !self.alerts.sound,
+            Field::Snooze => {
+                let next = self.alerts.snooze_minutes + dir as i64 * 5;
+                self.alerts.snooze_minutes = next.clamp(1, 120);
+            }
             Field::Refresh => {
                 let next = self.refresh_secs as i64 + dir as i64 * 5;
                 self.refresh_secs = next.max(5) as u64;
@@ -393,6 +426,8 @@ impl App {
                 urgent_high: Some(u.from_mgdl(self.alerts.urgent_high)),
                 stale_minutes: Some(self.alerts.stale_minutes),
                 desktop: Some(self.alerts.desktop),
+                sound: Some(self.alerts.sound),
+                snooze_minutes: Some(self.alerts.snooze_minutes),
             },
             theme: ThemeConfig {
                 low: Some(self.theme_names[0].clone()),
@@ -416,6 +451,8 @@ impl App {
             Field::Units => self.units.label().to_string(),
             Field::Refresh => format!("{}s", self.refresh_secs),
             Field::Desktop => if self.alerts.desktop { "on" } else { "off" }.to_string(),
+            Field::Sound => if self.alerts.sound { "on" } else { "off" }.to_string(),
+            Field::Snooze => format!("{} min", self.alerts.snooze_minutes),
             Field::Stale => format!("{} min", self.alerts.stale_minutes),
             Field::UrgentLow => self.threshold(self.alerts.urgent_low),
             Field::Low => self.threshold(self.alerts.low),

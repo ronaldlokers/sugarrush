@@ -38,6 +38,8 @@ high = 10.0           # yellow banner above
 urgent_high = 13.9    # red banner + critical notification at or above
 stale_minutes = 15    # warn when the newest reading is older than this
 desktop = true        # fire desktop notifications via notify-send
+sound = true          # looping audible alarm on urgent low/high and stale data
+snooze_minutes = 15   # how long the `a` key silences the audible alarm
 
 # Display colors (optional). Each is a color name (red, green, cyan, yellow,
 # blue, magenta, gray, white, light*) or a #rrggbb hex value.
