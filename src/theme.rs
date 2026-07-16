@@ -63,6 +63,46 @@ fn pick(name: &Option<String>, fallback: Color) -> Color {
     name.as_deref().and_then(parse_color).unwrap_or(fallback)
 }
 
+/// The six color roles, in the order used by the settings screen and by
+/// [`theme_from_names`] / [`ThemeConfig`].
+pub const DEFAULT_NAMES: [&str; 6] = ["red", "green", "yellow", "red", "magenta", "cyan"];
+
+/// Named colors the settings screen cycles through.
+pub const PALETTE: [&str; 12] = [
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "gray",
+    "white",
+    "lightred",
+    "lightgreen",
+    "lightyellow",
+    "lightblue",
+];
+
+/// Next/previous palette color relative to `current` (wrapping).
+pub fn cycle_color(current: &str, dir: i32) -> &'static str {
+    let idx = PALETTE.iter().position(|&c| c == current).unwrap_or(0) as i32;
+    let n = PALETTE.len() as i32;
+    PALETTE[(idx + dir).rem_euclid(n) as usize]
+}
+
+/// Build a [`Theme`] from six color names (role order matches `DEFAULT_NAMES`).
+pub fn theme_from_names(names: &[String; 6]) -> Theme {
+    let d = Theme::default();
+    Theme {
+        low: parse_color(&names[0]).unwrap_or(d.low),
+        in_range: parse_color(&names[1]).unwrap_or(d.in_range),
+        high: parse_color(&names[2]).unwrap_or(d.high),
+        urgent: parse_color(&names[3]).unwrap_or(d.urgent),
+        prediction: parse_color(&names[4]).unwrap_or(d.prediction),
+        graph: parse_color(&names[5]).unwrap_or(d.graph),
+    }
+}
+
 /// Parse a color name or `#rrggbb` hex string.
 pub fn parse_color(s: &str) -> Option<Color> {
     let s = s.trim().to_lowercase();
@@ -111,6 +151,30 @@ mod tests {
     fn parses_hex() {
         assert_eq!(parse_color("#ff8800"), Some(Color::Rgb(255, 136, 0)));
         assert_eq!(parse_color("#zzz"), None);
+    }
+
+    #[test]
+    fn cycle_color_wraps_both_ways() {
+        assert_eq!(cycle_color("red", 1), "green");
+        assert_eq!(cycle_color("red", -1), *PALETTE.last().unwrap());
+        // Unknown color starts from index 0.
+        assert_eq!(cycle_color("chartreuse", 1), PALETTE[1]);
+    }
+
+    #[test]
+    fn theme_from_names_uses_defaults_for_bad_names() {
+        let names = [
+            "chartreuse".to_string(), // invalid → default low (red)
+            "cyan".to_string(),
+            "yellow".to_string(),
+            "red".to_string(),
+            "magenta".to_string(),
+            "blue".to_string(),
+        ];
+        let t = theme_from_names(&names);
+        assert_eq!(t.low, Color::Red); // fell back
+        assert_eq!(t.in_range, Color::Cyan);
+        assert_eq!(t.graph, Color::Blue);
     }
 
     #[test]
