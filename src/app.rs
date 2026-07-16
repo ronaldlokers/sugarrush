@@ -35,6 +35,7 @@ pub enum Field {
     QuietStart,
     QuietEnd,
     QuietUrgentLow,
+    Escalate,
     UrgentLow,
     Low,
     High,
@@ -52,7 +53,7 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 23] = [
+    pub const ALL: [Field; 24] = [
         Field::Units,
         Field::Refresh,
         Field::Desktop,
@@ -62,6 +63,7 @@ impl Field {
         Field::QuietStart,
         Field::QuietEnd,
         Field::QuietUrgentLow,
+        Field::Escalate,
         Field::UrgentLow,
         Field::Low,
         Field::High,
@@ -89,6 +91,7 @@ impl Field {
             Field::QuietStart => "Quiet start",
             Field::QuietEnd => "Quiet end",
             Field::QuietUrgentLow => "Quiet: urgent-low sounds",
+            Field::Escalate => "Escalate after",
             Field::UrgentLow => "Urgent low",
             Field::Low => "Low",
             Field::High => "High",
@@ -145,6 +148,12 @@ pub struct App {
     last_notified: Option<Alert>,
     /// While `Some`, the audible alarm is silenced until this epoch-ms.
     snooze_until: Option<i64>,
+    /// When the current urgent episode began (for escalation timing).
+    urgent_since: Option<i64>,
+    /// Whether we've already pushed for the current urgent episode.
+    pushed_episode: bool,
+    /// Whether the current urgent episode has escalated.
+    escalated: bool,
 
     // Settings / persistence.
     pub screen: Screen,
@@ -199,6 +208,9 @@ impl App {
             alert: Alert::InRange,
             last_notified: None,
             snooze_until: None,
+            urgent_since: None,
+            pushed_episode: false,
+            escalated: false,
             screen: Screen::Dashboard,
             settings_sel: 0,
             refresh_secs: cfg.refresh_secs,
@@ -337,6 +349,51 @@ impl App {
         }
     }
 
+    /// Track the urgent-episode lifecycle used for escalation and push.
+    pub fn update_urgent(&mut self, now_ms: i64) {
+        if self.alert.is_urgent() {
+            if self.urgent_since.is_none() {
+                self.urgent_since = Some(now_ms);
+                self.pushed_episode = false;
+                self.escalated = false;
+            }
+        } else {
+            self.urgent_since = None;
+        }
+    }
+
+    /// A message to POST to the push URL if one is warranted now — at urgent
+    /// onset, then again on escalation after the configured delay. Fires at
+    /// most once per trigger.
+    pub fn take_push(&mut self, now_ms: i64) -> Option<String> {
+        self.alerts.push_url.as_ref()?;
+        if !self.alert.is_urgent() {
+            return None;
+        }
+        let value = self
+            .latest()
+            .map(|e| format!(" · {} {}", self.units.format(e.sgv), self.units.label()))
+            .unwrap_or_default();
+        if !self.pushed_episode {
+            self.pushed_episode = true;
+            return Some(format!("sugarrush: {}{}", self.alert.label(), value));
+        }
+        if self.alerts.escalate_minutes > 0 && !self.escalated {
+            if let Some(s) = self.urgent_since {
+                if now_ms - s >= self.alerts.escalate_minutes * 60_000 {
+                    self.escalated = true;
+                    return Some(format!(
+                        "sugarrush: STILL {} after {} min{}",
+                        self.alert.label(),
+                        self.alerts.escalate_minutes,
+                        value
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     /// If the alert level changed into an alerting state since the last desktop
     /// notification, return it (once) and record it. Returning to range or
     /// staying at the same level yields `None`, debouncing repeats.
@@ -417,6 +474,10 @@ impl App {
                 }
             }
             Field::QuietUrgentLow => self.alerts.quiet_urgent_low = !self.alerts.quiet_urgent_low,
+            Field::Escalate => {
+                let next = self.alerts.escalate_minutes + dir as i64 * 5;
+                self.alerts.escalate_minutes = next.clamp(0, 120);
+            }
             Field::Refresh => {
                 let next = self.refresh_secs as i64 + dir as i64 * 5;
                 self.refresh_secs = next.max(5) as u64;
@@ -497,6 +558,8 @@ impl App {
                 quiet_start: self.alerts.quiet_start.map(crate::config::fmt_hhmm),
                 quiet_end: self.alerts.quiet_end.map(crate::config::fmt_hhmm),
                 quiet_urgent_low: Some(self.alerts.quiet_urgent_low),
+                escalate_minutes: Some(self.alerts.escalate_minutes),
+                push_url: self.alerts.push_url.clone(),
             },
             theme: ThemeConfig {
                 low: Some(self.theme_names[0].clone()),
@@ -544,6 +607,13 @@ impl App {
                 "off"
             }
             .to_string(),
+            Field::Escalate => {
+                if self.alerts.escalate_minutes == 0 {
+                    "off".to_string()
+                } else {
+                    format!("{} min", self.alerts.escalate_minutes)
+                }
+            }
             Field::Stale => format!("{} min", self.alerts.stale_minutes),
             Field::UrgentLow => self.threshold(self.alerts.urgent_low),
             Field::Low => self.threshold(self.alerts.low),

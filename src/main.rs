@@ -316,6 +316,12 @@ async fn refresh(app: &mut App, client: &Client) {
             notify(a, app.latest().map(|e| e.sgv), app.units);
         }
     }
+    app.update_urgent(now);
+    if let Some(msg) = app.take_push(now) {
+        if let Some(url) = app.alerts.push_url.clone() {
+            push(&url, &msg).await;
+        }
+    }
 
     // Forecasts and device status only make sense at the live edge.
     if app.view.is_live() {
@@ -358,6 +364,16 @@ fn notify(alert: alert::Alert, sgv: Option<f64>, units: units::Units) {
     let _ = std::process::Command::new("notify-send")
         .args(["-a", "sugarrush", "-u", alert.urgency(), "sugarrush", &body])
         .spawn();
+}
+
+/// POST an alert message to a webhook / ntfy topic. Best-effort, non-blocking.
+async fn push(url: &str, message: &str) {
+    if let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+    {
+        let _ = client.post(url).body(message.to_string()).send().await;
+    }
 }
 
 /// Current time in epoch milliseconds.
