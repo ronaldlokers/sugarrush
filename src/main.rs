@@ -3,6 +3,7 @@ mod app;
 mod config;
 mod nightscout;
 mod predict;
+mod stats;
 mod ui;
 mod units;
 mod view;
@@ -208,11 +209,16 @@ async fn refresh(app: &mut App, client: &Client) {
         }
     }
 
-    // Forecasts only make sense at the live edge. Prefer uploader-published
-    // predictions; fall back to a local AR2 projection.
+    // Forecasts and device status only make sense at the live edge.
     if app.view.is_live() {
         let device = client.predictions().await.ok().flatten();
         app.predictions = device.unwrap_or_else(|| predict::ar2(&app.entries));
+        if let Ok(status) = client.device_status().await {
+            app.device = status;
+        }
+        if let Ok(started) = client.sensor_start().await {
+            app.sensor_start_ms = started;
+        }
     } else {
         app.predictions.clear();
     }

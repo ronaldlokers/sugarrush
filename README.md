@@ -19,6 +19,8 @@ A terminal UI for viewing [Nightscout](https://nightscout.github.io/) CGM
 - Short-term forecast overlay (uploader predictions or a local AR2 fallback)
 - In-app settings screen (`s`) to edit units, refresh, and thresholds live,
   and save them back to config.toml
+- Stats panel: time-in-range, mean glucose + GMI (estimated A1c), and
+  device/uploader status (battery, sensor age, last seen)
 
 Planned work is tracked in [GitHub issues](https://github.com/ronaldlokers/sugarrush/issues)
 (predictions, alerts, IOB/COB, graph scrolling, settings screen, and more).

@@ -112,6 +112,86 @@ impl Client {
             .and_then(|items| items.first())
             .and_then(parse_predicted))
     }
+
+    /// Fetch uploader/device metadata from `/api/v1/devicestatus`.
+    pub async fn device_status(&self) -> Result<DeviceStatus> {
+        let url = format!("{}/api/v1/devicestatus.json", self.base_url);
+        let value: Value = self
+            .http
+            .get(&url)
+            .query(&[("count", "1"), ("token", self.token.as_str())])
+            .send()
+            .await
+            .context("devicestatus request failed")?
+            .error_for_status()
+            .context("Nightscout returned an error status")?
+            .json()
+            .await
+            .context("failed to parse devicestatus response")?;
+        Ok(value
+            .as_array()
+            .and_then(|items| items.first())
+            .map(parse_device_status)
+            .unwrap_or_default())
+    }
+
+    /// Epoch ms of the most recent sensor start/change treatment, if any.
+    pub async fn sensor_start(&self) -> Result<Option<i64>> {
+        let url = format!("{}/api/v1/treatments.json", self.base_url);
+        let value: Value = self
+            .http
+            .get(&url)
+            .query(&[("count", "50"), ("token", self.token.as_str())])
+            .send()
+            .await
+            .context("treatments request failed")?
+            .error_for_status()
+            .context("Nightscout returned an error status")?
+            .json()
+            .await
+            .context("failed to parse treatments response")?;
+        Ok(value.as_array().and_then(|items| {
+            items
+                .iter()
+                .filter_map(|t| {
+                    let event = t.get("eventType")?.as_str()?;
+                    event
+                        .contains("Sensor")
+                        .then(|| t.get("created_at").and_then(Value::as_str).and_then(parse_iso))
+                        .flatten()
+                })
+                .max()
+        }))
+    }
+}
+
+/// Uploader / device metadata, best-effort.
+#[derive(Debug, Clone, Default)]
+pub struct DeviceStatus {
+    /// Uploader battery percentage.
+    pub battery: Option<i64>,
+    /// Device identifier string.
+    pub device: Option<String>,
+    /// When this status was recorded (epoch ms).
+    pub last_ms: Option<i64>,
+}
+
+fn parse_device_status(item: &Value) -> DeviceStatus {
+    let battery = item
+        .get("uploader")
+        .and_then(|u| u.get("battery"))
+        .or_else(|| item.get("uploaderBattery"))
+        .and_then(Value::as_i64);
+    let device = item.get("device").and_then(Value::as_str).map(str::to_string);
+    let last_ms = item
+        .get("mills")
+        .and_then(Value::as_i64)
+        .or_else(|| item.get("created_at").and_then(Value::as_str).and_then(parse_iso));
+    DeviceStatus {
+        battery,
+        device,
+        last_ms,
+    }
 }
 
 /// Extract a predicted SGV series from one devicestatus record.
