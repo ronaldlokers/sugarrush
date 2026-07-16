@@ -530,6 +530,10 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
 
     let text = match &app.last_error {
         Some(err) => Span::styled(format!(" error: {err} "), Style::default().fg(Color::Red)),
+        None if app.perm_warning => Span::styled(
+            " ⚠ config.toml is readable by others — run: chmod 600 ~/.config/sugarrush/config.toml ",
+            Style::default().fg(Color::Yellow),
+        ),
         None => {
             let mut s = String::from(
                 " q quit · r refresh · u units · h/l pan · +/- zoom · g date · f live · s settings",

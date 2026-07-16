@@ -63,6 +63,21 @@ token in **Nightscout → Admin Tools**:
 
 The token is sent as a `?token=…` query parameter and only grants read access.
 
+### Token storage & permissions
+
+The token is stored **in plaintext** in `config.toml`. Because it's a
+read-only token it only exposes your glucose data (not account control), but
+you should still keep the file private:
+
+```bash
+chmod 600 ~/.config/sugarrush/config.toml
+```
+
+The first-run setup wizard writes the file with `600` already. If the file is
+group- or world-readable, sugarrush shows a warning in the footer until you
+tighten it. There is intentionally no `token_cmd`/env indirection — file-only,
+documented.
+
 ## Keybindings
 
 | Key | Action        |
