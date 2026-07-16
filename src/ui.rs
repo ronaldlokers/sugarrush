@@ -58,14 +58,20 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
     let tir_line = match stats::tir(&app.entries, app.alerts.low, app.alerts.high) {
         Some(t) => Line::from(vec![
             Span::raw("  TIR  "),
-            Span::styled(format!("low {:.0}%", t.low), Style::default().fg(Color::Red)),
+            Span::styled(
+                format!("low {:.0}%", t.low),
+                Style::default().fg(Color::Red),
+            ),
             Span::raw("  "),
             Span::styled(
                 format!("in-range {:.0}%", t.in_range),
                 Style::default().fg(Color::Green),
             ),
             Span::raw("  "),
-            Span::styled(format!("high {:.0}%", t.high), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("high {:.0}%", t.high),
+                Style::default().fg(Color::Yellow),
+            ),
         ]),
         None => Line::from("  TIR  —"),
     };
@@ -97,7 +103,10 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
         parts.push(format!("uploader {} ago", fmt_age(now - last)));
     }
     let dev_line = if parts.is_empty() {
-        Line::from(Span::styled("  device  —", Style::default().fg(Color::DarkGray)))
+        Line::from(Span::styled(
+            "  device  —",
+            Style::default().fg(Color::DarkGray),
+        ))
     } else {
         Line::from(Span::styled(
             format!("  {}", parts.join("   ·   ")),
@@ -198,16 +207,27 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
     } else {
         Span::styled(" ◷ history ", Style::default().fg(Color::Yellow))
     };
-    let title = Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             " sugarrush ",
             Style::default()
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!("· {} · {} ", app.units.label(), app.view.span.label())),
+        Span::raw(format!(
+            "· {} · {} ",
+            app.units.label(),
+            app.view.span.label()
+        )),
         mode,
-    ]);
+    ];
+    if app.sites.len() > 1 {
+        spans.push(Span::styled(
+            format!(" [{}] ", app.active_site().name),
+            Style::default().fg(Color::Blue),
+        ));
+    }
+    let title = Line::from(spans);
     let p = Paragraph::new(title).block(Block::default().borders(Borders::ALL));
     f.render_widget(p, area);
 }
@@ -250,7 +270,11 @@ fn draw_current(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
-    let title = format!(" {} → {} ", fmt_time(app.view_start), fmt_time(app.view_end));
+    let title = format!(
+        " {} → {} ",
+        fmt_time(app.view_start),
+        fmt_time(app.view_end)
+    );
     let block = Block::default().borders(Borders::ALL).title(title);
 
     if app.entries.is_empty() {
@@ -308,40 +332,39 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
     let mut datasets = vec![Dataset::default()
         .marker(symbols::Marker::Braille)
         .graph_type(GraphType::Line)
-        .style(Style::default().fg(Color::Cyan))
+        .style(Style::default().fg(app.theme.graph))
         .data(&points)];
     if !pred.is_empty() {
         datasets.push(
             Dataset::default()
                 .marker(symbols::Marker::Braille)
                 .graph_type(GraphType::Line)
-                .style(Style::default().fg(Color::Magenta))
+                .style(Style::default().fg(app.theme.prediction))
                 .data(&pred),
         );
     }
 
     let chart = Chart::new(datasets)
         .block(block)
-        .x_axis(
-            Axis::default().bounds(bounds_x).labels(vec![
-                Span::raw(fmt_time(app.view_start)),
-                Span::raw(fmt_time(mid_x)),
-                Span::raw(fmt_time(right)),
-            ]),
-        )
-        .y_axis(
-            Axis::default().bounds(bounds_y).labels(vec![
-                Span::raw(format!("{:.1}", bounds_y[0])),
-                Span::raw(format!("{:.1}", bounds_y[1])),
-            ]),
-        );
+        .x_axis(Axis::default().bounds(bounds_x).labels(vec![
+            Span::raw(fmt_time(app.view_start)),
+            Span::raw(fmt_time(mid_x)),
+            Span::raw(fmt_time(right)),
+        ]))
+        .y_axis(Axis::default().bounds(bounds_y).labels(vec![
+            Span::raw(format!("{:.1}", bounds_y[0])),
+            Span::raw(format!("{:.1}", bounds_y[1])),
+        ]));
     f.render_widget(chart, area);
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     if let Some(buf) = &app.date_input {
         let line = Line::from(vec![
-            Span::styled(" jump to date (YYYY-MM-DD): ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                " jump to date (YYYY-MM-DD): ",
+                Style::default().fg(Color::Cyan),
+            ),
             Span::styled(buf.clone(), Style::default().add_modifier(Modifier::BOLD)),
             Span::styled("_", Style::default().add_modifier(Modifier::SLOW_BLINK)),
             Span::raw("  · enter confirm · esc cancel"),
@@ -353,7 +376,14 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let text = match &app.last_error {
         Some(err) => Span::styled(format!(" error: {err} "), Style::default().fg(Color::Red)),
         None => {
-            Span::raw(" q quit · r refresh · u units · h/l pan · +/- zoom · g date · f live · s settings ")
+            let mut s = String::from(
+                " q quit · r refresh · u units · h/l pan · +/- zoom · g date · f live · s settings",
+            );
+            if app.sites.len() > 1 {
+                s.push_str(" · n site");
+            }
+            s.push(' ');
+            Span::raw(s)
         }
     };
     f.render_widget(Paragraph::new(Line::from(text)), area);
@@ -367,13 +397,17 @@ fn fmt_time(ms: i64) -> String {
     }
 }
 
-/// Colour a reading by rough range (thresholds in mg/dL).
-fn color_for(sgv: f64, _app: &App) -> Color {
-    if sgv < 70.0 {
-        Color::Red
-    } else if sgv > 180.0 {
-        Color::Yellow
+/// Colour a reading by configured thresholds and theme.
+fn color_for(sgv: f64, app: &App) -> Color {
+    let a = &app.alerts;
+    let t = &app.theme;
+    if sgv <= a.urgent_low || sgv >= a.urgent_high {
+        t.urgent
+    } else if sgv < a.low {
+        t.low
+    } else if sgv > a.high {
+        t.high
     } else {
-        Color::Green
+        t.in_range
     }
 }

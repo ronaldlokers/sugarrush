@@ -27,6 +27,7 @@ impl Units {
     }
 
     /// Convert a raw mg/dL value into this unit.
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_mgdl(self, mgdl: f64) -> f64 {
         match self {
             Units::Mgdl => mgdl,

@@ -8,7 +8,7 @@ use chrono::DateTime;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::config::Config;
+use crate::config::Site;
 
 const PRED_STEP_MS: i64 = 5 * 60_000;
 
@@ -47,15 +47,15 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(cfg: &Config) -> Result<Self> {
+    pub fn for_site(site: &Site) -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(concat!("sugarrush/", env!("CARGO_PKG_VERSION")))
             .build()
             .context("failed to build HTTP client")?;
         Ok(Self {
             http,
-            base_url: cfg.base_url().to_string(),
-            token: cfg.token.clone(),
+            base_url: site.base_url().to_string(),
+            token: site.token.clone(),
         })
     }
 
@@ -157,7 +157,11 @@ impl Client {
                     let event = t.get("eventType")?.as_str()?;
                     event
                         .contains("Sensor")
-                        .then(|| t.get("created_at").and_then(Value::as_str).and_then(parse_iso))
+                        .then(|| {
+                            t.get("created_at")
+                                .and_then(Value::as_str)
+                                .and_then(parse_iso)
+                        })
                         .flatten()
                 })
                 .max()
@@ -182,11 +186,15 @@ fn parse_device_status(item: &Value) -> DeviceStatus {
         .and_then(|u| u.get("battery"))
         .or_else(|| item.get("uploaderBattery"))
         .and_then(Value::as_i64);
-    let device = item.get("device").and_then(Value::as_str).map(str::to_string);
-    let last_ms = item
-        .get("mills")
-        .and_then(Value::as_i64)
-        .or_else(|| item.get("created_at").and_then(Value::as_str).and_then(parse_iso));
+    let device = item
+        .get("device")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let last_ms = item.get("mills").and_then(Value::as_i64).or_else(|| {
+        item.get("created_at")
+            .and_then(Value::as_str)
+            .and_then(parse_iso)
+    });
     DeviceStatus {
         battery,
         device,
@@ -198,13 +206,19 @@ fn parse_device_status(item: &Value) -> DeviceStatus {
 fn parse_predicted(item: &Value) -> Option<Vec<(i64, f64)>> {
     // Loop: loop.predicted { startDate, values: [mg/dL, …] }
     if let Some(pred) = item.get("loop").and_then(|l| l.get("predicted")) {
-        let start = pred.get("startDate").and_then(Value::as_str).and_then(parse_iso)?;
+        let start = pred
+            .get("startDate")
+            .and_then(Value::as_str)
+            .and_then(parse_iso)?;
         let values = pred.get("values")?.as_array()?;
         return Some(space(start, values));
     }
     // OpenAPS: openaps.suggested { timestamp, predBGs: { COB|IOB|ZT: [...] } }
     if let Some(sug) = item.get("openaps").and_then(|o| o.get("suggested")) {
-        let start = sug.get("timestamp").and_then(Value::as_str).and_then(parse_iso)?;
+        let start = sug
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_iso)?;
         let pred_bgs = sug.get("predBGs")?;
         let arr = ["COB", "IOB", "ZT"]
             .iter()
@@ -219,10 +233,15 @@ fn space(start_ms: i64, values: &[Value]) -> Vec<(i64, f64)> {
     values
         .iter()
         .enumerate()
-        .filter_map(|(i, v)| v.as_f64().map(|bg| (start_ms + i as i64 * PRED_STEP_MS, bg)))
+        .filter_map(|(i, v)| {
+            v.as_f64()
+                .map(|bg| (start_ms + i as i64 * PRED_STEP_MS, bg))
+        })
         .collect()
 }
 
 fn parse_iso(s: &str) -> Option<i64> {
-    DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp_millis())
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp_millis())
 }

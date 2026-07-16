@@ -4,6 +4,7 @@ mod config;
 mod nightscout;
 mod predict;
 mod stats;
+mod theme;
 mod ui;
 mod units;
 mod view;
@@ -27,22 +28,19 @@ use nightscout::Client;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cfg = Config::load()?;
-    let client = Client::new(&cfg)?;
+    let sites = cfg.resolve_sites()?;
     let alerts = cfg.alerts.resolve(cfg.units);
-    let mut app = App::new(&cfg, alerts);
+    let mut app = App::new(&cfg, alerts, sites);
 
     install_panic_hook();
     let mut terminal = setup_terminal()?;
-    let res = run(&mut terminal, &mut app, &client).await;
+    let res = run(&mut terminal, &mut app).await;
     restore_terminal(&mut terminal)?;
     res
 }
 
-async fn run(
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    app: &mut App,
-    client: &Client,
-) -> Result<()> {
+async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
+    let mut client = Client::for_site(app.active_site())?;
     // Input on a blocking thread, forwarded over a channel.
     let (tx, mut rx) = mpsc::unbounded_channel::<KeyEvent>();
     std::thread::spawn(move || loop {
@@ -55,7 +53,7 @@ async fn run(
         }
     });
 
-    refresh(app, client).await;
+    refresh(app, &client).await;
     terminal.draw(|f| ui::draw(f, app))?;
 
     let mut ticker = tokio::time::interval(Duration::from_secs(app.refresh_secs.max(5)));
@@ -65,7 +63,7 @@ async fn run(
         tokio::select! {
             maybe_key = rx.recv() => {
                 match maybe_key {
-                    Some(key) => handle_key(app, client, key).await,
+                    Some(key) => handle_key(app, &client, key).await,
                     None => break,
                 }
             }
@@ -73,13 +71,24 @@ async fn run(
                 // Only auto-refetch when following the live edge; a fixed
                 // history window doesn't change on its own.
                 if app.view.is_live() {
-                    refresh(app, client).await;
+                    refresh(app, &client).await;
                 }
             }
         }
 
         if app.should_quit {
             break;
+        }
+        // Rebuild the client and reload when the active site changed.
+        if app.site_dirty {
+            match Client::for_site(app.active_site()) {
+                Ok(c) => {
+                    client = c;
+                    refresh(app, &client).await;
+                }
+                Err(e) => app.last_error = Some(e.to_string()),
+            }
+            app.site_dirty = false;
         }
         // Rebuild the ticker if the refresh interval was changed in settings.
         if app.refresh_dirty {
@@ -138,6 +147,7 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
             refresh(app, client).await;
         }
         KeyCode::Char('g') => app.begin_date_input(),
+        KeyCode::Char('n') => app.next_site(),
         _ => {}
     }
 }

@@ -28,3 +28,25 @@ high = 10.0           # yellow banner above
 urgent_high = 13.9    # red banner + critical notification at or above
 stale_minutes = 15    # warn when the newest reading is older than this
 desktop = true        # fire desktop notifications via notify-send
+
+# Display colors (optional). Each is a color name (red, green, cyan, yellow,
+# blue, magenta, gray, white, light*) or a #rrggbb hex value.
+# [theme]
+# low = "red"
+# in_range = "green"
+# high = "yellow"
+# urgent = "red"
+# prediction = "magenta"
+# graph = "cyan"
+
+# Multiple sites (optional). Provide one or more [[sites]] instead of the
+# top-level url/token above, and switch between them in-app with `n`.
+# [[sites]]
+# name = "home"
+# url = "https://home.example.com"
+# token = "readonly-token-1"
+#
+# [[sites]]
+# name = "clinic"
+# url = "https://clinic.example.com"
+# token = "readonly-token-2"
