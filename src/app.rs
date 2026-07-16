@@ -51,10 +51,11 @@ pub enum Field {
     ThemeUrgent,
     ThemePrediction,
     ThemeGraph,
+    Colorblind,
 }
 
 impl Field {
-    pub const ALL: [Field; 25] = [
+    pub const ALL: [Field; 26] = [
         Field::Units,
         Field::Refresh,
         Field::Desktop,
@@ -80,6 +81,7 @@ impl Field {
         Field::ThemeUrgent,
         Field::ThemePrediction,
         Field::ThemeGraph,
+        Field::Colorblind,
     ];
 
     pub fn label(self) -> &'static str {
@@ -109,6 +111,7 @@ impl Field {
             Field::ThemeUrgent => "Color: urgent",
             Field::ThemePrediction => "Color: forecast",
             Field::ThemeGraph => "Color: graph",
+            Field::Colorblind => "Colorblind palette",
         }
     }
 
@@ -508,6 +511,14 @@ impl App {
         self.status = None;
     }
 
+    /// True when the current theme colors match the colorblind-safe palette.
+    fn is_colorblind(&self) -> bool {
+        self.theme_names
+            .iter()
+            .zip(theme::COLORBLIND_NAMES)
+            .all(|(a, b)| a == b)
+    }
+
     /// Enable quiet hours with a sensible default window if currently unset.
     fn ensure_quiet_hours(&mut self) {
         if self.alerts.quiet_start.is_none() {
@@ -584,6 +595,15 @@ impl App {
             Field::MinimapSpan => {
                 let next = self.minimap_span_ms / MS_PER_HOUR + dir as i64 * 6;
                 self.minimap_span_ms = next.clamp(6, 72) * MS_PER_HOUR;
+            }
+            Field::Colorblind => {
+                let names = if self.is_colorblind() {
+                    theme::DEFAULT_NAMES
+                } else {
+                    theme::COLORBLIND_NAMES
+                };
+                self.theme_names = names.map(String::from);
+                self.theme = theme::theme_from_names(&self.theme_names);
             }
             f => {
                 if let Some(i) = f.theme_index() {
@@ -714,6 +734,7 @@ impl App {
             Field::GraphStyle => self.graph_style.label().to_string(),
             Field::MinimapEnabled => if self.minimap_enabled { "on" } else { "off" }.to_string(),
             Field::MinimapSpan => format!("{}h", self.minimap_span_ms / MS_PER_HOUR),
+            Field::Colorblind => if self.is_colorblind() { "on" } else { "off" }.to_string(),
             f => f
                 .theme_index()
                 .map(|i| self.theme_names[i].clone())
