@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Waybar menu for the sugarrush module. Copy to ~/.config/waybar/.
+     Requires Waybar >= 0.11.0 (menu / menu-actions support). -->
+<interface>
+  <object class="GtkMenu" id="menu">
+    <child>
+      <object class="GtkMenuItem" id="graph">
+        <property name="label">Graph</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkMenuItem" id="settings">
+        <property name="label">Settings</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkMenuItem" id="about">
+        <property name="label">About</property>
+      </object>
+    </child>
+  </object>
+</interface>

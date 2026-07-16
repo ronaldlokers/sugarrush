@@ -8,6 +8,7 @@ mod theme;
 mod ui;
 mod units;
 mod view;
+mod waybar;
 
 use std::io::{self, Stdout};
 use std::time::Duration;
@@ -28,18 +29,80 @@ use app::{App, Screen};
 use config::Config;
 use nightscout::Client;
 
+/// How the binary was invoked.
+enum Mode {
+    /// Run the interactive TUI, starting on the given screen.
+    Tui(Screen),
+    /// Print one Waybar JSON line and exit.
+    Waybar,
+    /// Print version/about info (and notify-send) and exit.
+    About,
+}
+
+fn parse_args() -> Mode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut screen = Screen::Dashboard;
+    let mut mode: Option<Mode> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "waybar" => mode = Some(Mode::Waybar),
+            "about" => mode = Some(Mode::About),
+            "--screen" => {
+                i += 1;
+                if args.get(i).map(String::as_str) == Some("settings") {
+                    screen = Screen::Settings;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    mode.unwrap_or(Mode::Tui(screen))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    match parse_args() {
+        Mode::About => {
+            print_about();
+            Ok(())
+        }
+        Mode::Waybar => {
+            let cfg = Config::load()?;
+            println!("{}", waybar::line(&cfg).await);
+            Ok(())
+        }
+        Mode::Tui(screen) => run_tui(screen).await,
+    }
+}
+
+async fn run_tui(screen: Screen) -> Result<()> {
     let cfg = Config::load()?;
     let sites = cfg.resolve_sites()?;
     let alerts = cfg.alerts.resolve(cfg.units);
     let mut app = App::new(&cfg, alerts, sites);
+    app.screen = screen;
 
     install_panic_hook();
     let mut terminal = setup_terminal(app.minimap_enabled)?;
     let res = run(&mut terminal, &mut app).await;
     restore_terminal(&mut terminal)?;
     res
+}
+
+/// Print name/version/repo and a not-a-medical-device note; also fire a desktop
+/// notification if `notify-send` is available (used by the Waybar About menu).
+fn print_about() {
+    let version = env!("CARGO_PKG_VERSION");
+    let repo = "https://github.com/ronaldlokers/sugarrush";
+    let body = format!(
+        "Nightscout CGM TUI\n{repo}\nNot a medical device — do not use for treatment decisions."
+    );
+    println!("sugarrush v{version}\n{body}");
+    let _ = std::process::Command::new("notify-send")
+        .args(["-a", "sugarrush", &format!("sugarrush v{version}"), &body])
+        .spawn();
 }
 
 /// One input event forwarded from the reader thread.

@@ -1,0 +1,22 @@
+// Example Waybar custom module for sugarrush.
+// Merge the "custom/sugarrush" block into your ~/.config/waybar/config(.jsonc)
+// and add "custom/sugarrush" to one of the modules-* arrays.
+{
+  "custom/sugarrush": {
+    "exec": "sugarrush waybar",
+    "return-type": "json",
+    "interval": 60,
+    "format": "{}",
+    // Left click opens the full TUI graph in a floating terminal.
+    "on-click": "foot -a sugarrush-float sugarrush",
+    // Right click opens the native menu (requires Waybar >= 0.11.0).
+    // On older Waybar, delete the three menu* keys and rely on on-click.
+    "menu": "on-click-right",
+    "menu-file": "$HOME/.config/waybar/sugarrush-menu.xml",
+    "menu-actions": {
+      "graph": "foot -a sugarrush-float sugarrush",
+      "settings": "foot -a sugarrush-float sugarrush --screen settings",
+      "about": "sugarrush about"
+    }
+  }
+}

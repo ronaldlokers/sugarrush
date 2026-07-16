@@ -1,0 +1,26 @@
+/* sugarrush Waybar module styling. Merge into your Waybar style.css.
+   The module sets a CSS class matching the alert state. Colors below are
+   Catppuccin Mocha; adjust to your theme. */
+
+#custom-sugarrush {
+  padding: 0 8px;
+}
+
+#custom-sugarrush.urgent-low,
+#custom-sugarrush.urgent-high {
+  color: #f38ba8; /* red */
+  font-weight: bold;
+}
+
+#custom-sugarrush.low,
+#custom-sugarrush.high {
+  color: #f9e2af; /* yellow */
+}
+
+#custom-sugarrush.in-range {
+  color: #a6e3a1; /* green */
+}
+
+#custom-sugarrush.stale {
+  color: #6c7086; /* muted */
+}

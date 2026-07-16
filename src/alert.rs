@@ -37,6 +37,18 @@ impl Alert {
         }
     }
 
+    /// Kebab-case identifier for Waybar CSS classes.
+    pub fn class(self) -> &'static str {
+        match self {
+            Alert::UrgentLow => "urgent-low",
+            Alert::Low => "low",
+            Alert::InRange => "in-range",
+            Alert::High => "high",
+            Alert::UrgentHigh => "urgent-high",
+            Alert::Stale => "stale",
+        }
+    }
+
     /// Colour for the in-TUI banner.
     pub fn color(self) -> Color {
         match self {
