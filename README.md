@@ -16,6 +16,7 @@ A terminal UI for viewing [Nightscout](https://nightscout.github.io/) CGM
 - Auto-refresh
 - Alerts on out-of-range and stale data: in-TUI banner plus optional
   desktop notifications (`notify-send`), with configurable thresholds
+- Short-term forecast overlay (uploader predictions or a local AR2 fallback)
 
 Planned work is tracked in [GitHub issues](https://github.com/ronaldlokers/sugarrush/issues)
 (predictions, alerts, IOB/COB, graph scrolling, settings screen, and more).

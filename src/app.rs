@@ -17,6 +17,8 @@ pub struct App {
     pub view_end: i64,
     /// When `Some`, a date-jump prompt is open holding the typed buffer.
     pub date_input: Option<String>,
+    /// Forecast points `(epoch_ms, mg/dL)`, live mode only.
+    pub predictions: Vec<(i64, f64)>,
     /// Configured alert thresholds and behaviour.
     pub alerts: Alerts,
     /// Current alert state (only meaningful in live mode).
@@ -36,6 +38,7 @@ impl App {
             view_start: 0,
             view_end: 0,
             date_input: None,
+            predictions: Vec::new(),
             alerts,
             alert: Alert::InRange,
             last_notified: None,

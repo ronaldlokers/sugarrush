@@ -2,6 +2,7 @@ mod alert;
 mod app;
 mod config;
 mod nightscout;
+mod predict;
 mod ui;
 mod units;
 mod view;
@@ -178,6 +179,15 @@ async fn refresh(app: &mut App, client: &Client) {
         if let Some(a) = app.take_notification() {
             notify(a, app.latest().map(|e| e.sgv), app.units);
         }
+    }
+
+    // Forecasts only make sense at the live edge. Prefer uploader-published
+    // predictions; fall back to a local AR2 projection.
+    if app.view.is_live() {
+        let device = client.predictions().await.ok().flatten();
+        app.predictions = device.unwrap_or_else(|| predict::ar2(&app.entries));
+    } else {
+        app.predictions.clear();
     }
 }
 
