@@ -14,17 +14,12 @@ pub struct Config {
     pub token: String,
     #[serde(default = "default_units")]
     pub units: Units,
-    #[serde(default = "default_count")]
-    pub count: usize,
     #[serde(default = "default_refresh")]
     pub refresh_secs: u64,
 }
 
 fn default_units() -> Units {
     Units::Mmol
-}
-fn default_count() -> usize {
-    48
 }
 fn default_refresh() -> u64 {
     30

@@ -15,8 +15,5 @@ token = "readonly-subject-token"
 # Display units: "mgdl" or "mmol". Toggle live in-app with `u`.
 units = "mmol"
 
-# How many recent sensor readings to fetch for the graph.
-count = 48
-
 # Auto-refresh interval in seconds.
 refresh_secs = 30

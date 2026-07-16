@@ -56,6 +56,11 @@ The token is sent as a `?token=…` query parameter and only grants read access.
 | `q` / `Esc` | Quit    |
 | `r` | Refresh now   |
 | `u` | Toggle units  |
+| `h` / `←` | Pan back in time |
+| `l` / `→` | Pan forward in time |
+| `+` / `-` | Zoom window (1h/3h/6h/12h/24h) |
+| `g` | Jump to a date (`YYYY-MM-DD`) |
+| `f` / `Home` | Return to live |
 
 ## License
 
