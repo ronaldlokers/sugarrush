@@ -137,20 +137,54 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
         .map(|e| (e.date as f64, app.units.from_mgdl(e.sgv)))
         .collect();
 
-    let (min_y, max_y) = points.iter().fold((f64::MAX, f64::MIN), |(lo, hi), (_, y)| {
-        (lo.min(*y), hi.max(*y))
-    });
+    // Forecast series, anchored to the latest actual reading for continuity.
+    let pred: Vec<(f64, f64)> = if app.predictions.is_empty() {
+        Vec::new()
+    } else {
+        let anchor = app
+            .latest()
+            .map(|e| (e.date as f64, app.units.from_mgdl(e.sgv)));
+        anchor
+            .into_iter()
+            .chain(
+                app.predictions
+                    .iter()
+                    .map(|(t, mgdl)| (*t as f64, app.units.from_mgdl(*mgdl))),
+            )
+            .collect()
+    };
+
+    let (min_y, max_y) = points
+        .iter()
+        .chain(pred.iter())
+        .fold((f64::MAX, f64::MIN), |(lo, hi), (_, y)| {
+            (lo.min(*y), hi.max(*y))
+        });
     let pad = ((max_y - min_y) * 0.1).max(app.units.from_mgdl(10.0));
     let bounds_y = [min_y - pad, max_y + pad];
-    // Anchor x to the requested window so panning/zooming reads naturally.
-    let bounds_x = [app.view_start as f64, app.view_end as f64];
-    let mid_x = (app.view_start + app.view_end) / 2;
+    // Anchor x to the requested window; extend right to cover any forecast.
+    let right = pred
+        .last()
+        .map(|(x, _)| *x as i64)
+        .unwrap_or(app.view_end)
+        .max(app.view_end);
+    let bounds_x = [app.view_start as f64, right as f64];
+    let mid_x = (app.view_start + right) / 2;
 
-    let datasets = vec![Dataset::default()
+    let mut datasets = vec![Dataset::default()
         .marker(symbols::Marker::Braille)
         .graph_type(GraphType::Line)
         .style(Style::default().fg(Color::Cyan))
         .data(&points)];
+    if !pred.is_empty() {
+        datasets.push(
+            Dataset::default()
+                .marker(symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(Color::Magenta))
+                .data(&pred),
+        );
+    }
 
     let chart = Chart::new(datasets)
         .block(block)
@@ -158,7 +192,7 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
             Axis::default().bounds(bounds_x).labels(vec![
                 Span::raw(fmt_time(app.view_start)),
                 Span::raw(fmt_time(mid_x)),
-                Span::raw(fmt_time(app.view_end)),
+                Span::raw(fmt_time(right)),
             ]),
         )
         .y_axis(
