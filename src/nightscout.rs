@@ -40,7 +40,8 @@ pub struct Client {
     http: reqwest::Client,
     base_url: String,
     token: String,
-    count: usize,
+    /// Upper bound on entries fetched in one request (from config).
+    max_count: usize,
 }
 
 impl Client {
@@ -53,18 +54,27 @@ impl Client {
             http,
             base_url: cfg.base_url().to_string(),
             token: cfg.token.clone(),
-            count: cfg.count,
+            max_count: cfg.count,
         })
     }
 
-    /// Fetch the most recent SGV entries, newest first (as Nightscout returns them).
-    pub async fn entries(&self) -> Result<Vec<Entry>> {
+    /// Fetch SGV entries whose `date` falls within `[start_ms, end_ms]`, newest
+    /// first. `want` entries are requested, capped by the configured maximum.
+    pub async fn entries_range(
+        &self,
+        start_ms: i64,
+        end_ms: i64,
+        want: usize,
+    ) -> Result<Vec<Entry>> {
+        let count = want.min(self.max_count).max(1);
         let url = format!("{}/api/v1/entries/sgv.json", self.base_url);
         let entries: Vec<Entry> = self
             .http
             .get(&url)
             .query(&[
-                ("count", self.count.to_string()),
+                ("find[date][$gte]", start_ms.to_string()),
+                ("find[date][$lte]", end_ms.to_string()),
+                ("count", count.to_string()),
                 ("token", self.token.clone()),
             ])
             .send()

@@ -1,5 +1,6 @@
 //! Rendering. v1: a single dashboard screen.
 
+use chrono::{Local, TimeZone};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -29,6 +30,11 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 fn draw_header(f: &mut Frame, area: Rect, app: &App) {
+    let mode = if app.view.is_live() {
+        Span::styled(" ● live ", Style::default().fg(Color::Green))
+    } else {
+        Span::styled(" ◷ history ", Style::default().fg(Color::Yellow))
+    };
     let title = Line::from(vec![
         Span::styled(
             " sugarrush ",
@@ -36,7 +42,8 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!("· {} ", app.units.label())),
+        Span::raw(format!("· {} · {} ", app.units.label(), app.view.span.label())),
+        mode,
     ]);
     let p = Paragraph::new(title).block(Block::default().borders(Borders::ALL));
     f.render_widget(p, area);
@@ -57,6 +64,12 @@ fn draw_current(f: &mut Frame, area: Rect, app: &App) {
                     format!("{}{}", sign, app.units.format(d.abs()))
                 })
                 .unwrap_or_else(|| "--".into());
+            let stamp = fmt_time(e.date);
+            let when = if app.view.is_live() {
+                format!("  as of {stamp}")
+            } else {
+                format!("  window end · {stamp}")
+            };
             vec![
                 Line::from(Span::styled(
                     format!("  {}  {}", value, e.arrow()),
@@ -65,19 +78,21 @@ fn draw_current(f: &mut Frame, area: Rect, app: &App) {
                         .add_modifier(Modifier::BOLD),
                 )),
                 Line::from(format!("  Δ {} {}", delta, app.units.label())),
+                Line::from(Span::styled(when, Style::default().fg(Color::DarkGray))),
             ]
         }
-        None => vec![Line::from("  no data yet…")],
+        None => vec![Line::from("  no data in this window…")],
     };
     f.render_widget(Paragraph::new(text), inner);
 }
 
 fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::ALL).title(" recent ");
+    let title = format!(" {} → {} ", fmt_time(app.view_start), fmt_time(app.view_end));
+    let block = Block::default().borders(Borders::ALL).title(title);
 
     if app.entries.is_empty() {
         f.render_widget(
-            Paragraph::new("  waiting for readings…")
+            Paragraph::new("  no readings in this window…")
                 .block(block)
                 .alignment(Alignment::Left),
             area,
@@ -85,13 +100,12 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Oldest -> newest, x = index, y = value in current units.
+    // x = real timestamp (ms), y = value in current units.
     let points: Vec<(f64, f64)> = app
         .entries
         .iter()
         .rev()
-        .enumerate()
-        .map(|(i, e)| (i as f64, app.units.from_mgdl(e.sgv)))
+        .map(|e| (e.date as f64, app.units.from_mgdl(e.sgv)))
         .collect();
 
     let (min_y, max_y) = points.iter().fold((f64::MAX, f64::MIN), |(lo, hi), (_, y)| {
@@ -99,7 +113,9 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
     });
     let pad = ((max_y - min_y) * 0.1).max(app.units.from_mgdl(10.0));
     let bounds_y = [min_y - pad, max_y + pad];
-    let bounds_x = [0.0, (points.len().saturating_sub(1)) as f64];
+    // Anchor x to the requested window so panning/zooming reads naturally.
+    let bounds_x = [app.view_start as f64, app.view_end as f64];
+    let mid_x = (app.view_start + app.view_end) / 2;
 
     let datasets = vec![Dataset::default()
         .marker(symbols::Marker::Braille)
@@ -109,24 +125,47 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
 
     let chart = Chart::new(datasets)
         .block(block)
-        .x_axis(Axis::default().bounds(bounds_x))
+        .x_axis(
+            Axis::default().bounds(bounds_x).labels(vec![
+                Span::raw(fmt_time(app.view_start)),
+                Span::raw(fmt_time(mid_x)),
+                Span::raw(fmt_time(app.view_end)),
+            ]),
+        )
         .y_axis(
-            Axis::default()
-                .bounds(bounds_y)
-                .labels(vec![
-                    Span::raw(format!("{:.1}", bounds_y[0])),
-                    Span::raw(format!("{:.1}", bounds_y[1])),
-                ]),
+            Axis::default().bounds(bounds_y).labels(vec![
+                Span::raw(format!("{:.1}", bounds_y[0])),
+                Span::raw(format!("{:.1}", bounds_y[1])),
+            ]),
         );
     f.render_widget(chart, area);
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
+    if let Some(buf) = &app.date_input {
+        let line = Line::from(vec![
+            Span::styled(" jump to date (YYYY-MM-DD): ", Style::default().fg(Color::Cyan)),
+            Span::styled(buf.clone(), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("_", Style::default().add_modifier(Modifier::SLOW_BLINK)),
+            Span::raw("  · enter confirm · esc cancel"),
+        ]);
+        f.render_widget(Paragraph::new(line), area);
+        return;
+    }
+
     let text = match &app.last_error {
         Some(err) => Span::styled(format!(" error: {err} "), Style::default().fg(Color::Red)),
-        None => Span::raw(" q quit · r refresh · u units "),
+        None => Span::raw(" q quit · r refresh · u units · h/l pan · +/- zoom · g date · f live "),
     };
     f.render_widget(Paragraph::new(Line::from(text)), area);
+}
+
+/// Format an epoch-ms timestamp as local `MM-DD HH:MM`.
+fn fmt_time(ms: i64) -> String {
+    match Local.timestamp_millis_opt(ms).single() {
+        Some(dt) => dt.format("%m-%d %H:%M").to_string(),
+        None => "--".into(),
+    }
 }
 
 /// Colour a reading by rough range (thresholds in mg/dL).

@@ -15,8 +15,9 @@ token = "readonly-subject-token"
 # Display units: "mgdl" or "mmol". Toggle live in-app with `u`.
 units = "mmol"
 
-# How many recent sensor readings to fetch for the graph.
-count = 48
+# Upper bound on sensor readings fetched per request. A 24h window is ~288
+# points, so keep this comfortably above that for smooth history browsing.
+count = 2000
 
 # Auto-refresh interval in seconds.
 refresh_secs = 30
