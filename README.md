@@ -25,6 +25,8 @@ A terminal UI for viewing [Nightscout](https://nightscout.github.io/) CGM
   switch with `n`)
 - Minimap navigator: a 24h overview strip you click/drag to move the main
   window (`[minimap]`, uses mouse capture)
+- Waybar module (`sugarrush waybar`): current BG + arrow + delta in the bar,
+  with an hourly sparkline tooltip and click-through to the graph
 
 Planned work is tracked in [GitHub issues](https://github.com/ronaldlokers/sugarrush/issues)
 (predictions, alerts, IOB/COB, graph scrolling, settings screen, and more).
@@ -77,6 +79,21 @@ The token is sent as a `?token=…` query parameter and only grants read access.
 | `s` | Open/close settings |
 
 On the settings screen: `↑`/`↓` select, `←`/`→` change, `w` save to config.toml, `s`/`Esc` back.
+
+## Waybar
+
+`sugarrush waybar` prints a single Waybar JSON line (current value + trend
+arrow + delta, an hourly block sparkline in the tooltip, and a CSS class for
+the alert state), then exits. Example assets live in [`waybar/`](waybar/):
+
+- `config.jsonc` — the custom module (left-click opens the graph; right-click
+  opens a Graph / Settings / About menu on Waybar ≥ 0.11.0).
+- `sugarrush-menu.xml` — the menu definition.
+- `style.css` — per-alert-state colors.
+- `hyprland.conf` — float rules for the pop-out terminal.
+
+Other subcommands: `sugarrush about` (version + info, also `notify-send`), and
+`sugarrush --screen settings` (open straight to settings).
 
 ## License
 
