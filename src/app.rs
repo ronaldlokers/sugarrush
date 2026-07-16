@@ -2,7 +2,7 @@
 
 use crate::alert::{self, Alert};
 use crate::config::{Alerts, Config};
-use crate::nightscout::Entry;
+use crate::nightscout::{DeviceStatus, Entry};
 use crate::units::Units;
 use crate::view::View;
 
@@ -65,6 +65,10 @@ pub struct App {
     pub date_input: Option<String>,
     /// Forecast points `(epoch_ms, mg/dL)`, live mode only.
     pub predictions: Vec<(i64, f64)>,
+    /// Uploader/device metadata (live mode only).
+    pub device: DeviceStatus,
+    /// Epoch ms of the latest sensor start/change, if known.
+    pub sensor_start_ms: Option<i64>,
     /// Configured alert thresholds and behaviour (mg/dL internally).
     pub alerts: Alerts,
     /// Current alert state (only meaningful in live mode).
@@ -100,6 +104,8 @@ impl App {
             view_end: 0,
             date_input: None,
             predictions: Vec::new(),
+            device: DeviceStatus::default(),
+            sensor_start_ms: None,
             alerts,
             alert: Alert::InRange,
             last_notified: None,

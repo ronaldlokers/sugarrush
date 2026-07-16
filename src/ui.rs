@@ -11,6 +11,7 @@ use ratatui::{
 };
 
 use crate::app::{App, Field, Screen};
+use crate::stats;
 
 pub fn draw(f: &mut Frame, app: &App) {
     if app.screen == Screen::Settings {
@@ -26,6 +27,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     constraints.extend([
         Constraint::Length(3), // header
         Constraint::Length(7), // current reading
+        Constraint::Length(5), // stats
         Constraint::Min(8),    // graph
         Constraint::Length(1), // footer
     ]);
@@ -41,8 +43,84 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     draw_header(f, chunks[i], app);
     draw_current(f, chunks[i + 1], app);
-    draw_graph(f, chunks[i + 2], app);
-    draw_footer(f, chunks[i + 3], app);
+    draw_stats(f, chunks[i + 2], app);
+    draw_graph(f, chunks[i + 3], app);
+    draw_footer(f, chunks[i + 4], app);
+}
+
+fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default().borders(Borders::ALL).title(" stats ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let u = app.units;
+    // Time-in-range over the loaded window.
+    let tir_line = match stats::tir(&app.entries, app.alerts.low, app.alerts.high) {
+        Some(t) => Line::from(vec![
+            Span::raw("  TIR  "),
+            Span::styled(format!("low {:.0}%", t.low), Style::default().fg(Color::Red)),
+            Span::raw("  "),
+            Span::styled(
+                format!("in-range {:.0}%", t.in_range),
+                Style::default().fg(Color::Green),
+            ),
+            Span::raw("  "),
+            Span::styled(format!("high {:.0}%", t.high), Style::default().fg(Color::Yellow)),
+        ]),
+        None => Line::from("  TIR  —"),
+    };
+
+    // Mean + estimated A1c.
+    let avg_line = match stats::mean_mgdl(&app.entries) {
+        Some(mean) => Line::from(format!(
+            "  avg  {} {}   ·   GMI {:.1}%",
+            u.format(mean),
+            u.label(),
+            stats::gmi(mean),
+        )),
+        None => Line::from("  avg  —"),
+    };
+
+    // Device / uploader status.
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut parts = Vec::new();
+    if let Some(name) = &app.device.device {
+        parts.push(name.clone());
+    }
+    if let Some(b) = app.device.battery {
+        parts.push(format!("battery {b}%"));
+    }
+    if let Some(start) = app.sensor_start_ms {
+        parts.push(format!("sensor {}", fmt_age(now - start)));
+    }
+    if let Some(last) = app.device.last_ms {
+        parts.push(format!("uploader {} ago", fmt_age(now - last)));
+    }
+    let dev_line = if parts.is_empty() {
+        Line::from(Span::styled("  device  —", Style::default().fg(Color::DarkGray)))
+    } else {
+        Line::from(Span::styled(
+            format!("  {}", parts.join("   ·   ")),
+            Style::default().fg(Color::DarkGray),
+        ))
+    };
+
+    f.render_widget(Paragraph::new(vec![tir_line, avg_line, dev_line]), inner);
+}
+
+/// Format a positive duration in ms as a compact age like `6d 4h` or `12m`.
+fn fmt_age(ms: i64) -> String {
+    let mins = ms.max(0) / 60_000;
+    let days = mins / 1440;
+    let hours = (mins % 1440) / 60;
+    let m = mins % 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {m}m")
+    } else {
+        format!("{m}m")
+    }
 }
 
 fn draw_settings(f: &mut Frame, app: &App) {
