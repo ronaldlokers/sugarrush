@@ -2,7 +2,7 @@
 
 use chrono::{Local, TimeZone};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
@@ -761,6 +761,41 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
             Span::raw(format!("{:.1}", bounds_y[1])),
         ]));
     f.render_widget(chart, area);
+    tint_in_range_band(f, area, bounds_y, low_y, high_y);
+}
+
+/// Shade the in-range y-band by tinting the plot cells' background — a clean
+/// solid band that `Chart`/`Canvas` can't paint directly. Runs after the chart
+/// so readings keep their foreground colour on the tint.
+fn tint_in_range_band(f: &mut Frame, area: Rect, bounds_y: [f64; 2], low_y: f64, high_y: f64) {
+    let inner = area.inner(Margin::new(1, 1)); // inside the block border
+                                               // Chart reserves the y-label column(s) on the left and one x-label row below.
+    let ylab_w = format!("{:.1}", bounds_y[0])
+        .len()
+        .max(format!("{:.1}", bounds_y[1]).len()) as u16;
+    let plot_x = inner.x.saturating_add(ylab_w + 1);
+    let plot_r = inner.x + inner.width;
+    let plot_top = inner.y;
+    let plot_bot = inner.y + inner.height.saturating_sub(1); // exclude x-labels
+    if plot_bot <= plot_top || plot_r <= plot_x {
+        return;
+    }
+    let ph = (plot_bot - plot_top) as f64;
+    let yspan = (bounds_y[1] - bounds_y[0]).max(0.001);
+    let row_of = |v: f64| -> u16 {
+        let r = ((bounds_y[1] - v) / yspan * ph).round() as i32;
+        (plot_top as i32 + r).clamp(plot_top as i32, plot_bot as i32) as u16
+    };
+    let (y0, y1) = (row_of(high_y), row_of(low_y));
+    let band = Color::Rgb(22, 46, 30);
+    let buf = f.buffer_mut();
+    for yy in y0..=y1 {
+        for xx in plot_x..plot_r {
+            if let Some(cell) = buf.cell_mut((xx, yy)) {
+                cell.set_bg(band);
+            }
+        }
+    }
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
