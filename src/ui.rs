@@ -6,11 +6,12 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, Paragraph},
+    widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, Paragraph, Tabs},
     Frame,
 };
 
-use crate::app::{App, Field, Screen};
+use crate::agp;
+use crate::app::{App, Field, GraphView, Screen};
 use crate::bigfont;
 use crate::config::GraphStyle;
 use crate::stats;
@@ -69,7 +70,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         draw_stats(f, chunks[i + 1], app);
         i += 2;
     }
-    draw_graph(f, chunks[i], app);
+    draw_graph_pane(f, chunks[i], app);
     i += 1;
     if minimap {
         draw_minimap(f, chunks[i], app);
@@ -561,6 +562,129 @@ fn current_info<'a>(app: &App, e: &crate::nightscout::Entry) -> Vec<Line<'a>> {
     lines
 }
 
+/// The graph pane: a tab bar to pick the view, then the chosen chart below it.
+fn draw_graph_pane(f: &mut Frame, area: Rect, app: &App) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(3)])
+        .split(area);
+    draw_graph_tabs(f, rows[0], app);
+    match app.graph_view {
+        GraphView::Agp => draw_agp(f, rows[1], app),
+        _ => draw_graph(f, rows[1], app),
+    }
+}
+
+/// The 3h / 24h / AGP selector above the graph.
+fn draw_graph_tabs(f: &mut Frame, area: Rect, app: &App) {
+    let titles: Vec<Line> = GraphView::ALL
+        .iter()
+        .map(|v| Line::from(v.label()))
+        .collect();
+    let tabs = Tabs::new(titles)
+        .select(app.graph_view.index())
+        .style(Style::default().fg(Color::DarkGray))
+        .highlight_style(
+            Style::default()
+                .fg(app.theme.graph)
+                .add_modifier(Modifier::BOLD),
+        )
+        .divider(symbols::DOT);
+    f.render_widget(tabs, area);
+}
+
+/// Ambulatory Glucose Profile: readings from the last N days folded onto one
+/// 24-hour clock, drawn as a percentile fan (median + 25/75 + 5/95 bands).
+fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default().borders(Borders::ALL).title(format!(
+        " AGP · last {}d · median + 25/75 + 5/95 ",
+        app.agp_days
+    ));
+
+    let bands = agp::profile(&app.agp_entries);
+    if bands.is_empty() {
+        f.render_widget(
+            Paragraph::new("  gathering days of history…").block(block),
+            area,
+        );
+        return;
+    }
+
+    let conv = |mgdl: f64| app.units.from_mgdl(mgdl);
+    let series = |pick: fn(&agp::Band) -> f64| -> Vec<(f64, f64)> {
+        bands
+            .iter()
+            .map(|b| (b.minute as f64, conv(pick(b))))
+            .collect()
+    };
+    let p05 = series(|b| b.p05);
+    let p25 = series(|b| b.p25);
+    let p50 = series(|b| b.p50);
+    let p75 = series(|b| b.p75);
+    let p95 = series(|b| b.p95);
+
+    let low_y = conv(app.alerts.low);
+    let high_y = conv(app.alerts.high);
+    let (min_y, max_y) = p05
+        .iter()
+        .chain(p95.iter())
+        .fold((f64::MAX, f64::MIN), |(lo, hi), (_, y)| {
+            (lo.min(*y), hi.max(*y))
+        });
+    let (min_y, max_y) = (min_y.min(low_y), max_y.max(high_y));
+    let pad = ((max_y - min_y) * 0.1).max(conv(10.0));
+    let bounds_y = [min_y - pad, max_y + pad];
+    let bounds_x = [0.0, 1440.0];
+
+    let low_rail = [(0.0, low_y), (1440.0, low_y)];
+    let high_rail = [(0.0, high_y), (1440.0, high_y)];
+
+    // Monochrome fan: dim outer deciles, medium quartiles, bright median.
+    let dim = Style::default()
+        .fg(app.theme.graph)
+        .add_modifier(Modifier::DIM);
+    let quart = Style::default().fg(app.theme.graph);
+    let median = Style::default()
+        .fg(app.theme.graph)
+        .add_modifier(Modifier::BOLD);
+
+    let datasets = vec![
+        braille_line(&low_rail, Style::default().fg(Color::DarkGray)),
+        braille_line(&high_rail, Style::default().fg(Color::DarkGray)),
+        braille_line(&p05, dim),
+        braille_line(&p95, dim),
+        braille_line(&p25, quart),
+        braille_line(&p75, quart),
+        braille_line(&p50, median),
+    ];
+
+    let chart = Chart::new(datasets)
+        .block(block)
+        .x_axis(Axis::default().bounds(bounds_x).labels(vec![
+            Span::raw("00:00"),
+            Span::raw("06:00"),
+            Span::raw("12:00"),
+            Span::raw("18:00"),
+            Span::raw("24:00"),
+        ]))
+        .y_axis(Axis::default().bounds(bounds_y).labels(vec![
+            Span::raw(format!("{:.1}", bounds_y[0])),
+            Span::raw(format!("{:.1}", bounds_y[1])),
+        ]));
+    f.render_widget(chart, area);
+    tint_in_range_band(f, area, bounds_y, low_y, high_y);
+}
+
+/// A braille line dataset over `data`, styled. Free fn so the borrow of `data`
+/// carries into the returned `Dataset` (a closure can't express that).
+fn braille_line(data: &[(f64, f64)], style: Style) -> Dataset<'_> {
+    Dataset::default()
+        .marker(symbols::Marker::Braille)
+        .graph_type(GraphType::Line)
+        .style(style)
+        .data(data)
+}
+
 fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
     let title = format!(
         " {} → {} ",
@@ -843,9 +967,13 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::Yellow),
         ),
         None => {
-            let mut s = String::from(
-                " q quit · r refresh · u units · h/l pan · +/- zoom · g date · f live · s settings",
-            );
+            let mut s = if app.is_agp() {
+                String::from(" q quit · r refresh · u units · tab view · s settings")
+            } else {
+                String::from(
+                    " q quit · r refresh · u units · tab view · h/l pan · +/- zoom · g date · f live · s settings",
+                )
+            };
             if app.sites.len() > 1 {
                 s.push_str(" · n site");
             }
