@@ -12,6 +12,11 @@ use crate::config::Site;
 
 const PRED_STEP_MS: i64 = 5 * 60_000;
 
+/// Lowest SGV treated as a real glucose reading (mg/dL). Nightscout encodes
+/// sensor errors as small codes (0–12); anything below a physiological floor is
+/// noise, not a hypo. CGMs themselves don't report below ~39.
+const MIN_PHYSIOLOGICAL_SGV: f64 = 39.0;
+
 /// A single sensor glucose reading as returned by Nightscout.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Entry {
@@ -50,6 +55,10 @@ impl Client {
     pub fn for_site(site: &Site) -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(concat!("sugarrush/", env!("CARGO_PKG_VERSION")))
+            // Bound every request so a half-open connection can't freeze the
+            // run loop (and with it keyboard input and the audible alarm).
+            .timeout(std::time::Duration::from_secs(12))
+            .connect_timeout(std::time::Duration::from_secs(6))
             .build()
             .context("failed to build HTTP client")?;
         Ok(Self {
@@ -87,7 +96,13 @@ impl Client {
             .json()
             .await
             .context("failed to parse Nightscout response")?;
-        Ok(entries)
+        // Drop non-physiological values: Nightscout stores sensor error/noise
+        // states as small SGV codes (0–12), which must never be read as a real
+        // (urgent-low) reading or fed to the forecast (ln of a tiny value).
+        Ok(entries
+            .into_iter()
+            .filter(|e| e.sgv >= MIN_PHYSIOLOGICAL_SGV)
+            .collect())
     }
 
     /// Fetch uploader-published forecasts from `/api/v1/devicestatus` (Loop's

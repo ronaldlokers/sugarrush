@@ -375,11 +375,61 @@ async fn refresh(app: &mut App, client: &Client) {
         Err(e) => app.mark_offline(now, e.to_string()),
     }
 
-    // Treatment markers for the visible window (best-effort).
-    if let Ok(t) = client.treatments(start, end).await {
-        app.treatments = t;
+    // Supplementary fetches only happen when the primary read succeeded — on an
+    // outage we skip them and go straight to (local) alert evaluation, so a
+    // stalled network can't pile up doomed requests behind it.
+    if app.online {
+        // Treatment markers for the visible window (best-effort).
+        if let Ok(t) = client.treatments(start, end).await {
+            app.treatments = t;
+        }
+
+        // Forecasts and device status only make sense at the live edge — and
+        // must be refreshed *before* predictive alerts read them below.
+        if app.view.is_live() {
+            let device = client.predictions().await.ok().flatten();
+            app.predictions = device.unwrap_or_else(|| predict::ar2(&app.entries));
+            if let Ok(status) = client.device_status().await {
+                app.device = status;
+            }
+            if let Ok(started) = client.sensor_start().await {
+                app.sensor_start_ms = started;
+            }
+        } else {
+            app.predictions.clear();
+        }
+
+        // AGP folds many days of history; fetch its own wider window on demand.
+        if app.is_agp() {
+            if let Ok(entries) = client
+                .entries_range(now - app.agp_span_ms(), now, app.agp_fetch_count())
+                .await
+            {
+                app.agp_entries = entries;
+            }
+        }
+
+        // Refresh the trailing overview only at the live edge; while dragging
+        // into history it stays put (it's a now-anchored strip, so refetching
+        // on each drag frame would be wasteful).
+        if app.minimap_enabled && (app.view.is_live() || app.minimap_entries.is_empty()) {
+            if let Ok(entries) = client
+                .entries_range(
+                    now - app.minimap_span_ms,
+                    now,
+                    2 * app.minimap_span_ms as usize / 60_000,
+                )
+                .await
+            {
+                app.minimap_entries = entries;
+            }
+        }
+    } else if !app.view.is_live() {
+        app.predictions.clear();
     }
 
+    // Alert evaluation and notifications run every refresh, online or not, so a
+    // sensor gap still escalates to a Stale alarm.
     app.evaluate_alert(now);
     if app.alerts.desktop {
         if let Some(a) = app.take_notification() {
@@ -395,46 +445,6 @@ async fn refresh(app: &mut App, client: &Client) {
     if let Some(msg) = app.take_predictive(now) {
         if app.alerts.desktop {
             notify_text(&msg);
-        }
-    }
-
-    // Forecasts and device status only make sense at the live edge.
-    if app.view.is_live() {
-        let device = client.predictions().await.ok().flatten();
-        app.predictions = device.unwrap_or_else(|| predict::ar2(&app.entries));
-        if let Ok(status) = client.device_status().await {
-            app.device = status;
-        }
-        if let Ok(started) = client.sensor_start().await {
-            app.sensor_start_ms = started;
-        }
-    } else {
-        app.predictions.clear();
-    }
-
-    // AGP folds many days of history; fetch its own wider window on demand.
-    if app.is_agp() {
-        if let Ok(entries) = client
-            .entries_range(now - app.agp_span_ms(), now, app.agp_fetch_count())
-            .await
-        {
-            app.agp_entries = entries;
-        }
-    }
-
-    // Refresh the trailing overview only at the live edge; while dragging into
-    // history it stays put (it's a now-anchored strip, so refetching on each
-    // drag frame would be wasteful).
-    if app.minimap_enabled && (app.view.is_live() || app.minimap_entries.is_empty()) {
-        if let Ok(entries) = client
-            .entries_range(
-                now - app.minimap_span_ms,
-                now,
-                2 * app.minimap_span_ms as usize / 60_000,
-            )
-            .await
-        {
-            app.minimap_entries = entries;
         }
     }
 }
