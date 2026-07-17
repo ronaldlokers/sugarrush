@@ -76,10 +76,39 @@ To ship a version:
 3. **Bump the version** in `Cargo.toml` to the same CalVer (`cargo build` to
    update `Cargo.lock`), on a branch → PR → merge.
 4. **Tag and push**: `git tag vYYYY.M.N && git push origin vYYYY.M.N`.
-5. **Fix the Release title** — once the Release exists, set its title to *just
-   the version*: `gh release edit vYYYY.M.N --title "YYYY.M.N"`. cargo-dist
-   titles it from the changelog heading (which includes the date), but the
-   title must be the version alone, e.g. `2026.7.2`.
+5. **Rewrite the Release title and body to the house format** — cargo-dist
+   auto-generates both; overwrite them once the Release exists:
+
+   ```sh
+   gh release edit vYYYY.M.N --title "YYYY.M.N" --notes-file notes.md
+   ```
+
+   - **Title**: *just the version*, no `v` — e.g. `2026.7.2`, never `v2026.7.2`.
+     Never carry the date (cargo-dist inherits it from the changelog heading).
+   - **Body**: exactly two sections, in this order (drop cargo-dist's
+     auto-generated *Install …* and *Download …* sections — GitHub already
+     lists the assets):
+
+     ```markdown
+     ## Release Notes
+
+     <this version's CHANGELOG section: the summary paragraph, then the
+     ### Added / ### Changed / ### Fixed groups>
+
+     ## Install
+
+     ```sh
+     cargo install sugarrush          # crates.io
+     cargo binstall sugarrush         # prebuilt binary, no compile
+     yay -S sugarrush-bin             # Arch (AUR)
+     brew install ronaldlokers/tap/sugarrush   # Homebrew (macOS/Linux)
+     # or the shell installer:
+     curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ronaldlokers/sugarrush/releases/latest/download/sugarrush-installer.sh | sh
+     ```
+     ```
+
+   The Install block is fixed and version-agnostic (it uses `…/releases/latest/…`),
+   so never write a `v`-prefixed or version-pinned URL into the notes.
 
 That one tag fans out automatically:
 
