@@ -1,43 +1,71 @@
 name: Publish to AUR
 
-# Push sugarrush-bin to the AUR after a GitHub Release is published (so the
-# release tarball exists). No-ops until the AUR_SSH_KEY secret is set.
+# Push sugarrush-bin to the AUR once release binaries exist. Triggered after
+# the dist "Release" workflow finishes (the release assets are then present),
+# or manually via workflow_dispatch for a given tag. No-ops until the
+# AUR_SSH_KEY secret is set.
+#
+# Note: `on: release` doesn't fire for releases created by the default
+# GITHUB_TOKEN, which is why this keys off the Release workflow instead.
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v2026.7.1)"
+        required: true
 
 permissions:
   contents: read
 
 jobs:
   aur:
+    # On workflow_run only proceed if the release actually produced artifacts
+    # (host job succeeded); manual dispatch always proceeds.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'cancelled' }}
     runs-on: ubuntu-latest
     env:
-      TAG: ${{ github.event.release.tag_name }}
+      TAG: ${{ github.event.inputs.tag || github.event.workflow_run.head_branch }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check for AUR key
+      - name: Check inputs
         id: gate
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
         run: |
+          set -euo pipefail
           if [ -z "$AUR_SSH_KEY" ]; then
             echo "AUR_SSH_KEY not set — skipping AUR publish."
             echo "ready=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          case "$TAG" in
+            v[0-9]*) echo "ready=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "not a version tag: '$TAG' — skipping."; echo "ready=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Wait for release asset
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          ver="${TAG#v}"
+          url="https://github.com/ronaldlokers/sugarrush/releases/download/v${ver}/sugarrush-x86_64-unknown-linux-musl.tar.xz"
+          for i in $(seq 1 30); do
+            if curl -fsSL -o /tmp/sr.tar.xz "$url"; then echo "got asset"; exit 0; fi
+            echo "waiting for release asset ($i)…"; sleep 10
+          done
+          echo "release asset not found: $url"; exit 1
 
       - name: Render PKGBUILD
         if: steps.gate.outputs.ready == 'true'
         run: |
           set -euo pipefail
           ver="${TAG#v}"
-          case "$ver" in ''|*[!0-9.]*) echo "unexpected tag: $TAG"; exit 1;; esac
-          url="https://github.com/ronaldlokers/sugarrush/releases/download/v${ver}/sugarrush-x86_64-unknown-linux-musl.tar.xz"
-          sha="$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)"
+          sha="$(sha256sum /tmp/sr.tar.xz | cut -d' ' -f1)"
           sed -e "s/@VERSION@/${ver}/" -e "s/@SHA256@/${sha}/" \
             packaging/aur/PKGBUILD.in > packaging/aur/PKGBUILD
           echo "----- PKGBUILD -----"; cat packaging/aur/PKGBUILD
