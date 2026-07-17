@@ -125,6 +125,8 @@ fn print_about() {
 enum Input {
     Key(KeyEvent),
     Mouse(MouseEvent),
+    /// Terminal was resized — triggers a redraw.
+    Resize,
 }
 
 async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
@@ -136,6 +138,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
             let forwarded = match event::read() {
                 Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => tx.send(Input::Key(k)),
                 Ok(Event::Mouse(m)) => tx.send(Input::Mouse(m)),
+                Ok(Event::Resize(_, _)) => tx.send(Input::Resize),
                 _ => continue,
             };
             if forwarded.is_err() {
@@ -159,6 +162,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                 match maybe_input {
                     Some(Input::Key(key)) => handle_key(app, &client, key).await,
                     Some(Input::Mouse(m)) => handle_mouse(app, &client, m).await,
+                    Some(Input::Resize) => {} // fall through to the redraw below
                     None => break,
                 }
             }
