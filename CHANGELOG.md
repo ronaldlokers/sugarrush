@@ -6,6 +6,16 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Alarm reliability** — the audible alarm could stop working silently in
+  several cases, now fixed: the Nightscout client had no request timeout (a
+  stalled connection froze input and the alarm), a total sensor dropout read as
+  "in range" instead of a sensor gap, Nightscout sensor-error codes (0–12) were
+  read as a real reading and could fire a false urgent-low, and predictive
+  alerts evaluated the previous refresh's forecast. Failed data fetches no
+  longer pile up doomed follow-up requests.
+
 ## [2026.7.2] - 2026-07-17
 
 This release is a dashboard glow-up. The graph now colour-codes readings by zone

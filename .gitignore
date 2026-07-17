@@ -2,3 +2,4 @@
 # local config may contain a Nightscout token — never commit
 config.toml
 *.log
+.product-team-review/

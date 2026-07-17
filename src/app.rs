@@ -468,6 +468,10 @@ impl App {
         self.alert = if self.view.is_live() {
             match self.latest() {
                 Some(e) => alert::evaluate(e.sgv, now_ms - e.date, &self.alerts),
+                // No reading at all in the live window is itself a sensor gap —
+                // but only once we've seen data (don't alarm during first-run
+                // setup before any successful fetch).
+                None if self.last_ok_ms.is_some() => Alert::Stale,
                 None => Alert::InRange,
             }
         } else {
