@@ -15,6 +15,16 @@ use crate::app::{App, Field, GraphView, Screen};
 use crate::bigfont;
 use crate::config::GraphStyle;
 use crate::stats;
+use crate::units::Units;
+
+/// Format an already-in-display-units value: integer for mg/dL, one decimal for
+/// mmol/L (mg/dL never has a fractional part).
+fn fmt_disp(units: Units, v: f64) -> String {
+    match units {
+        Units::Mgdl => format!("{v:.0}"),
+        Units::Mmol => format!("{v:.1}"),
+    }
+}
 
 pub fn draw(f: &mut Frame, app: &App) {
     if app.screen == Screen::Settings {
@@ -669,8 +679,11 @@ fn draw_graph_tabs(f: &mut Frame, area: Rect, app: &App) {
 /// 24-hour clock, drawn as a percentile fan (median + 25/75 + 5/95 bands).
 fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default().borders(Borders::ALL).title(format!(
-        " AGP · last {}d · median + 25/75 + 5/95 ",
-        app.agp_days
+        " AGP · last {}d · target {}–{} {} · median + IQR + 5/95 ",
+        app.agp_days,
+        fmt_disp(app.units, app.units.from_mgdl(app.alerts.low)),
+        fmt_disp(app.units, app.units.from_mgdl(app.alerts.high)),
+        app.units.label(),
     ));
 
     let bands = agp::profile(&app.agp_entries);
@@ -683,26 +696,17 @@ fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let conv = |mgdl: f64| app.units.from_mgdl(mgdl);
-    let series = |pick: fn(&agp::Band) -> f64| -> Vec<(f64, f64)> {
-        bands
-            .iter()
-            .map(|b| (b.minute as f64, conv(pick(b))))
-            .collect()
-    };
-    let p05 = series(|b| b.p05);
-    let p25 = series(|b| b.p25);
-    let p50 = series(|b| b.p50);
-    let p75 = series(|b| b.p75);
-    let p95 = series(|b| b.p95);
+    // Median line (the only line drawn; the fan is a background tint).
+    let p50: Vec<(f64, f64)> = bands
+        .iter()
+        .map(|b| (b.minute as f64, conv(b.p50)))
+        .collect();
 
     let low_y = conv(app.alerts.low);
     let high_y = conv(app.alerts.high);
-    let (min_y, max_y) = p05
-        .iter()
-        .chain(p95.iter())
-        .fold((f64::MAX, f64::MIN), |(lo, hi), (_, y)| {
-            (lo.min(*y), hi.max(*y))
-        });
+    let (min_y, max_y) = bands.iter().fold((f64::MAX, f64::MIN), |(lo, hi), b| {
+        (lo.min(conv(b.p05)), hi.max(conv(b.p95)))
+    });
     let (min_y, max_y) = (min_y.min(low_y), max_y.max(high_y));
     let pad = ((max_y - min_y) * 0.1).max(conv(10.0));
     let bounds_y = [min_y - pad, max_y + pad];
@@ -711,24 +715,19 @@ fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
     let low_rail = [(0.0, low_y), (1440.0, low_y)];
     let high_rail = [(0.0, high_y), (1440.0, high_y)];
 
-    // Monochrome fan: dim outer deciles, medium quartiles, bright median.
-    let dim = Style::default()
-        .fg(app.theme.graph)
-        .add_modifier(Modifier::DIM);
-    let quart = Style::default().fg(app.theme.graph);
+    // Only the median is a line; the 5–95 and 25–75 bands are a background fan.
     let median = Style::default()
         .fg(app.theme.graph)
         .add_modifier(Modifier::BOLD);
-
     let datasets = vec![
         braille_line(&low_rail, Style::default().fg(Color::DarkGray)),
         braille_line(&high_rail, Style::default().fg(Color::DarkGray)),
-        braille_line(&p05, dim),
-        braille_line(&p95, dim),
-        braille_line(&p25, quart),
-        braille_line(&p75, quart),
         braille_line(&p50, median),
     ];
+
+    let lo_lab = fmt_disp(app.units, bounds_y[0]);
+    let hi_lab = fmt_disp(app.units, bounds_y[1]);
+    let ylab_w = lo_lab.len().max(hi_lab.len()) as u16;
 
     let chart = Chart::new(datasets)
         .block(block)
@@ -739,12 +738,13 @@ fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
             Span::raw("18:00"),
             Span::raw("24:00"),
         ]))
-        .y_axis(Axis::default().bounds(bounds_y).labels(vec![
-            Span::raw(format!("{:.1}", bounds_y[0])),
-            Span::raw(format!("{:.1}", bounds_y[1])),
-        ]));
+        .y_axis(
+            Axis::default()
+                .bounds(bounds_y)
+                .labels(vec![Span::raw(lo_lab), Span::raw(hi_lab)]),
+        );
     f.render_widget(chart, area);
-    tint_in_range_band(f, area, bounds_y, low_y, high_y);
+    tint_agp_fan(f, area, bounds_y, ylab_w, &bands, &conv, app.theme.graph);
 }
 
 /// A braille line dataset over `data`, styled. Free fn so the borrow of `data`
@@ -968,6 +968,10 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
         );
     }
 
+    let lo_lab = fmt_disp(app.units, bounds_y[0]);
+    let hi_lab = fmt_disp(app.units, bounds_y[1]);
+    let ylab_w = lo_lab.len().max(hi_lab.len()) as u16;
+
     let chart = Chart::new(datasets)
         .block(block)
         .x_axis(Axis::default().bounds(bounds_x).labels(vec![
@@ -975,43 +979,163 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
             Span::raw(fmt_time(mid_x)),
             Span::raw(fmt_time(right)),
         ]))
-        .y_axis(Axis::default().bounds(bounds_y).labels(vec![
-            Span::raw(format!("{:.1}", bounds_y[0])),
-            Span::raw(format!("{:.1}", bounds_y[1])),
-        ]));
+        .y_axis(
+            Axis::default()
+                .bounds(bounds_y)
+                .labels(vec![Span::raw(lo_lab), Span::raw(hi_lab)]),
+        );
     f.render_widget(chart, area);
-    tint_in_range_band(f, area, bounds_y, low_y, high_y);
+    tint_in_range_band(f, area, bounds_y, ylab_w, low_y, high_y, app.theme.in_range);
+}
+
+/// Approximate RGB for a `Color`, so background tints can be derived from the
+/// (possibly named / colourblind) palette rather than hardcoded.
+fn rgb_of(c: Color) -> (u8, u8, u8) {
+    match c {
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Red => (205, 60, 55),
+        Color::LightRed => (240, 100, 95),
+        Color::Green => (40, 170, 95),
+        Color::LightGreen => (90, 220, 130),
+        Color::Yellow => (200, 170, 40),
+        Color::LightYellow => (235, 215, 90),
+        Color::Blue => (60, 110, 210),
+        Color::LightBlue => (110, 170, 235),
+        Color::Magenta => (185, 90, 175),
+        Color::LightMagenta => (225, 130, 215),
+        Color::Cyan => (40, 175, 180),
+        Color::LightCyan => (110, 220, 225),
+        Color::White | Color::Gray => (200, 205, 210),
+        _ => (150, 155, 160),
+    }
+}
+
+/// A dark background tint derived from a foreground colour (scaled toward
+/// black), so a shaded zone tracks the active palette.
+fn tint_bg(c: Color, scale: f32) -> Color {
+    let (r, g, b) = rgb_of(c);
+    Color::Rgb(
+        (r as f32 * scale) as u8,
+        (g as f32 * scale) as u8,
+        (b as f32 * scale) as u8,
+    )
+}
+
+/// Geometry of a `Chart`'s plotting rect inside `area`: the columns/rows that
+/// hold data, excluding the block border, the left y-label gutter, and the
+/// bottom x-label row. `ylab_w` is the widest y-label.
+struct Plot {
+    x0: u16,
+    x1: u16,
+    top: u16,
+    bot: u16,
+    bounds_y: [f64; 2],
+}
+
+impl Plot {
+    fn new(area: Rect, bounds_y: [f64; 2], ylab_w: u16) -> Option<Self> {
+        let inner = area.inner(Margin::new(1, 1));
+        let x0 = inner.x.saturating_add(ylab_w + 1);
+        let x1 = inner.x + inner.width;
+        let top = inner.y;
+        let bot = inner.y + inner.height.saturating_sub(1);
+        (bot > top && x1 > x0).then_some(Self {
+            x0,
+            x1,
+            top,
+            bot,
+            bounds_y,
+        })
+    }
+    fn row_of(&self, v: f64) -> u16 {
+        let ph = (self.bot - self.top) as f64;
+        let yspan = (self.bounds_y[1] - self.bounds_y[0]).max(0.001);
+        let r = ((self.bounds_y[1] - v) / yspan * ph).round() as i32;
+        (self.top as i32 + r).clamp(self.top as i32, self.bot as i32) as u16
+    }
 }
 
 /// Shade the in-range y-band by tinting the plot cells' background — a clean
-/// solid band that `Chart`/`Canvas` can't paint directly. Runs after the chart
-/// so readings keep their foreground colour on the tint.
-fn tint_in_range_band(f: &mut Frame, area: Rect, bounds_y: [f64; 2], low_y: f64, high_y: f64) {
-    let inner = area.inner(Margin::new(1, 1)); // inside the block border
-                                               // Chart reserves the y-label column(s) on the left and one x-label row below.
-    let ylab_w = format!("{:.1}", bounds_y[0])
-        .len()
-        .max(format!("{:.1}", bounds_y[1]).len()) as u16;
-    let plot_x = inner.x.saturating_add(ylab_w + 1);
-    let plot_r = inner.x + inner.width;
-    let plot_top = inner.y;
-    let plot_bot = inner.y + inner.height.saturating_sub(1); // exclude x-labels
-    if plot_bot <= plot_top || plot_r <= plot_x {
+/// solid band that `Chart` can't paint directly. Runs after the chart so
+/// readings keep their foreground colour on the tint. The tint is derived from
+/// the in-range palette colour so it survives theming / the colourblind preset.
+fn tint_in_range_band(
+    f: &mut Frame,
+    area: Rect,
+    bounds_y: [f64; 2],
+    ylab_w: u16,
+    low_y: f64,
+    high_y: f64,
+    in_range: Color,
+) {
+    let Some(plot) = Plot::new(area, bounds_y, ylab_w) else {
         return;
-    }
-    let ph = (plot_bot - plot_top) as f64;
-    let yspan = (bounds_y[1] - bounds_y[0]).max(0.001);
-    let row_of = |v: f64| -> u16 {
-        let r = ((bounds_y[1] - v) / yspan * ph).round() as i32;
-        (plot_top as i32 + r).clamp(plot_top as i32, plot_bot as i32) as u16
     };
-    let (y0, y1) = (row_of(high_y), row_of(low_y));
-    let band = Color::Rgb(22, 46, 30);
+    let (y0, y1) = (plot.row_of(high_y), plot.row_of(low_y));
+    let band = tint_bg(in_range, 0.20);
     let buf = f.buffer_mut();
     for yy in y0..=y1 {
-        for xx in plot_x..plot_r {
+        for xx in plot.x0..plot.x1 {
             if let Some(cell) = buf.cell_mut((xx, yy)) {
                 cell.set_bg(band);
+            }
+        }
+    }
+}
+
+/// Fill the AGP percentile fan by tinting cell backgrounds per column: a light
+/// outer 5–95 band and a darker inner 25–75 band, interpolated across the day.
+/// Leaves the median line (drawn by the chart) crisp on top.
+fn tint_agp_fan(
+    f: &mut Frame,
+    area: Rect,
+    bounds_y: [f64; 2],
+    ylab_w: u16,
+    bands: &[agp::Band],
+    conv: &dyn Fn(f64) -> f64,
+    base: Color,
+) {
+    let Some(plot) = Plot::new(area, bounds_y, ylab_w) else {
+        return;
+    };
+    if bands.len() < 2 {
+        return;
+    }
+    let outer = tint_bg(base, 0.16);
+    let inner = tint_bg(base, 0.34);
+    // Linear-interpolate a percentile curve at `minute` from the sparse buckets.
+    let at = |minute: f64, pick: &dyn Fn(&agp::Band) -> f64| -> f64 {
+        match bands.iter().position(|b| b.minute as f64 >= minute) {
+            Some(0) => conv(pick(&bands[0])),
+            Some(i) => {
+                let (a, b) = (&bands[i - 1], &bands[i]);
+                let span = (b.minute - a.minute).max(1) as f64;
+                let t = (minute - a.minute as f64) / span;
+                conv(pick(a)) + (conv(pick(b)) - conv(pick(a))) * t
+            }
+            None => conv(pick(&bands[bands.len() - 1])),
+        }
+    };
+    let pw = (plot.x1 - plot.x0).max(1) as f64;
+    let buf = f.buffer_mut();
+    for xx in plot.x0..plot.x1 {
+        let minute = (xx - plot.x0) as f64 / pw * 1440.0;
+        let (o_lo, o_hi) = (
+            plot.row_of(at(minute, &|b| b.p95)),
+            plot.row_of(at(minute, &|b| b.p05)),
+        );
+        let (i_lo, i_hi) = (
+            plot.row_of(at(minute, &|b| b.p75)),
+            plot.row_of(at(minute, &|b| b.p25)),
+        );
+        for yy in o_lo..=o_hi {
+            let c = if yy >= i_lo && yy <= i_hi {
+                inner
+            } else {
+                outer
+            };
+            if let Some(cell) = buf.cell_mut((xx, yy)) {
+                cell.set_bg(c);
             }
         }
     }
