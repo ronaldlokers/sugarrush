@@ -166,14 +166,22 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
         None => Line::from("  TIR  —"),
     };
 
-    // Mean + estimated A1c.
+    // Mean + estimated A1c, plus IOB/COB when the uploader provides them.
+    let mut iobcob = String::new();
+    if let Some(iob) = app.device.iob {
+        iobcob.push_str(&format!("   ·   IOB {iob:.1}U"));
+    }
+    if let Some(cob) = app.device.cob {
+        iobcob.push_str(&format!("   ·   COB {cob:.0}g"));
+    }
     let avg_line = match stats::mean_mgdl(&app.entries) {
         Some(mean) => Line::from(format!(
-            "  avg  {} {}   ·   GMI {:.1}%",
+            "  avg  {} {}   ·   GMI {:.1}%{iobcob}",
             u.format(mean),
             u.label(),
             stats::gmi(mean),
         )),
+        None if !iobcob.is_empty() => Line::from(format!("  avg  —{iobcob}")),
         None => Line::from("  avg  —"),
     };
 
@@ -505,6 +513,21 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
         .filter(|x| *x >= app.view_start as f64 && *x <= right as f64)
         .map(|x| [(x, bounds_y[0]), (x, bounds_y[1])]);
 
+    // Treatment markers along the bottom: carbs and boluses on separate rows.
+    let span_y = (bounds_y[1] - bounds_y[0]).max(1.0);
+    let carb_pts: Vec<(f64, f64)> = app
+        .treatments
+        .iter()
+        .filter(|t| t.carbs.is_some())
+        .map(|t| (t.at_ms as f64, bounds_y[0] + span_y * 0.02))
+        .collect();
+    let bolus_pts: Vec<(f64, f64)> = app
+        .treatments
+        .iter()
+        .filter(|t| t.insulin.is_some())
+        .map(|t| (t.at_ms as f64, bounds_y[0] + span_y * 0.08))
+        .collect();
+
     let (marker, gtype) = match app.graph_style {
         GraphStyle::Line => (symbols::Marker::Braille, GraphType::Line),
         GraphStyle::Dots => (symbols::Marker::Dot, GraphType::Scatter),
@@ -522,6 +545,24 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
                 .graph_type(GraphType::Line)
                 .style(Style::default().fg(Color::DarkGray))
                 .data(nl),
+        );
+    }
+    if !carb_pts.is_empty() {
+        datasets.push(
+            Dataset::default()
+                .marker(symbols::Marker::Dot)
+                .graph_type(GraphType::Scatter)
+                .style(Style::default().fg(Color::Yellow))
+                .data(&carb_pts),
+        );
+    }
+    if !bolus_pts.is_empty() {
+        datasets.push(
+            Dataset::default()
+                .marker(symbols::Marker::Dot)
+                .graph_type(GraphType::Scatter)
+                .style(Style::default().fg(Color::Blue))
+                .data(&bolus_pts),
         );
     }
     if !pred.is_empty() {

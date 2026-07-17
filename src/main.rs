@@ -331,6 +331,11 @@ async fn refresh(app: &mut App, client: &Client) {
         Err(e) => app.mark_offline(now, e.to_string()),
     }
 
+    // Treatment markers for the visible window (best-effort).
+    if let Ok(t) = client.treatments(start, end).await {
+        app.treatments = t;
+    }
+
     app.evaluate_alert(now);
     if app.alerts.desktop {
         if let Some(a) = app.take_notification() {

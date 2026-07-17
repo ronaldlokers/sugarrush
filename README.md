@@ -17,6 +17,7 @@ A terminal UI for viewing [Nightscout](https://nightscout.github.io/) CGM
 - Alerts on out-of-range and stale data: in-TUI banner plus optional
   desktop notifications (Linux/macOS/Windows), with configurable thresholds
 - Short-term forecast overlay (uploader predictions or a local AR2 fallback)
+- Insulin-on-board / carbs-on-board readout, plus carb & bolus markers on the graph
 - In-app settings screen (`s`) to edit units, refresh, and thresholds live,
   and save them back to config.toml
 - Stats panel: time-in-range, mean glucose + GMI (estimated A1c), and

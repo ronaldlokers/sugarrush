@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 
 use crate::alert::{self, Alert};
 use crate::config::{Alerts, AlertsConfig, Config, GraphStyle, MinimapConfig, Site};
-use crate::nightscout::{DeviceStatus, Entry};
+use crate::nightscout::{DeviceStatus, Entry, Treatment};
 use crate::sound;
 use crate::theme::{self, Theme, ThemeConfig};
 use crate::units::Units;
@@ -142,8 +142,10 @@ pub struct App {
     pub date_input: Option<String>,
     /// Forecast points `(epoch_ms, mg/dL)`, live mode only.
     pub predictions: Vec<(i64, f64)>,
-    /// Uploader/device metadata (live mode only).
+    /// Uploader/device metadata + IOB/COB (live mode only).
     pub device: DeviceStatus,
+    /// Carb/insulin treatments within the current window.
+    pub treatments: Vec<Treatment>,
     /// Epoch ms of the latest sensor start/change, if known.
     pub sensor_start_ms: Option<i64>,
     /// Configured alert thresholds and behaviour (mg/dL internally).
@@ -222,6 +224,7 @@ impl App {
             date_input: None,
             predictions: Vec::new(),
             device: DeviceStatus::default(),
+            treatments: Vec::new(),
             sensor_start_ms: None,
             alerts,
             alert: Alert::InRange,
