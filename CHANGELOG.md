@@ -8,6 +8,10 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- The **AGP view** now renders as a filled percentile fan (a shaded 5–95 and a
+  brighter inter-quartile band) with a single bright median line, and its title
+  shows the target range — much closer to a clinical AGP than the previous flat
+  lines.
 - A **keybinding help overlay** — press `?` for a full cheatsheet. The footer
   now falls back to a terse hint set on narrow terminals (it previously clipped
   silently, hiding settings/site/snooze) while always keeping `? help` visible.
@@ -16,6 +20,9 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Graph theming** — the shaded in-range band is now derived from the in-range
+  palette colour (it was hardcoded green, so it broke the colourblind preset),
+  and the y-axis shows integer mg/dL values instead of spurious decimals.
 - **Setup** — the first-run wizard now asks for the display unit (mmol/L or
   mg/dL) instead of always defaulting to mmol/L, so mg/dL users aren't dropped
   into the wrong unit.
