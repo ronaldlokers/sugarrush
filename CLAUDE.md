@@ -51,6 +51,14 @@ build, and test** — all four must pass. Run them locally before pushing.
   `App::build_config` (`src/app.rs`). Anything user-editable must round-trip.
 - **`waybar/` examples stay compositor-generic** — no distro-specific config
   (no Omarchy helpers, no bespoke launchers). It ships to the general public.
+- **Versioning (CalVer)**: `YYYY.M.N` — year, month (not zero-padded), and an
+  incremental `N` that resets each month (first release of a month is `.1`).
+  E.g. `2026.7.1` → `2026.7.2` → (August) `2026.8.1`. Pick the next version
+  from today's date; tags are `v`-prefixed (`v2026.7.1`). It's valid SemVer, so
+  Cargo/crates.io accept it.
+- **Releases** are driven by cargo-dist: a `v`-tag builds all targets and
+  publishes a GitHub Release + installers; separate workflows publish to
+  crates.io / Homebrew / AUR (gated on their secrets).
 
 ## IMPORTANT: new settings go in the settings menu
 
