@@ -9,6 +9,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Lint is platform-independent, so run fmt + clippy once (kept as `check`).
   check:
     runs-on: ubuntu-latest
     steps:
@@ -21,6 +22,20 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+
+  # Build + test on every platform we ship to, so platform-specific breakage
+  # (notify-rust, sound.rs, terminal handling) is caught here, not at tag time.
+  test:
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --verbose
       - name: Test
