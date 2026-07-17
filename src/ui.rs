@@ -33,9 +33,9 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     constraints.push(Constraint::Length(3)); // header
     if wide {
-        constraints.push(Constraint::Length(7)); // current + stats
+        constraints.push(Constraint::Length(8)); // current + stats
     } else {
-        constraints.push(Constraint::Length(7)); // current
+        constraints.push(Constraint::Length(8)); // current
         constraints.push(Constraint::Length(5)); // stats
     }
     constraints.push(Constraint::Min(8)); // graph
@@ -393,17 +393,29 @@ fn draw_current(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(Paragraph::new("  no data in this window…"), inner);
         return;
     };
+
+    // Reserve a bottom row for the range bar when there's height to spare.
+    let (content, bar_area) = if inner.height >= 6 {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(4), Constraint::Length(1)])
+            .split(inner);
+        (rows[0], Some(rows[1]))
+    } else {
+        (inner, None)
+    };
+
     let value = app.units.format(e.sgv);
     let color = color_for(e.sgv, app);
     let info = current_info(app, e);
     let big_w = bigfont::width(&value);
 
     // Big number when there's room; compact single line otherwise.
-    if inner.height as usize >= bigfont::ROWS && inner.width >= big_w + 24 {
+    if content.height as usize >= bigfont::ROWS && content.width >= big_w + 24 {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(big_w + 3), Constraint::Min(0)])
-            .split(inner);
+            .split(content);
         let big: Vec<Line> = bigfont::render(&value)
             .into_iter()
             .map(|l| {
@@ -421,8 +433,64 @@ fn draw_current(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ))];
         lines.extend(info.into_iter().skip(1)); // drop the unit/arrow line (already shown)
-        f.render_widget(Paragraph::new(lines), inner);
+        f.render_widget(Paragraph::new(lines), content);
     }
+
+    if let Some(ba) = bar_area {
+        f.render_widget(Paragraph::new(range_bar(app, e.sgv, ba.width)), ba);
+    }
+}
+
+/// A one-row zoned range bar: `low ━━━●━━━ high` (display units), coloured by
+/// zone with a marker at the current value.
+fn range_bar<'a>(app: &App, sgv: f64, width: u16) -> Line<'a> {
+    let u = app.units;
+    let lo = u.from_mgdl(app.alerts.urgent_low);
+    let hi = u.from_mgdl(app.alerts.urgent_high);
+    let low = u.from_mgdl(app.alerts.low);
+    let high = u.from_mgdl(app.alerts.high);
+    let lo_s = format!("{lo:.1}");
+    let hi_s = format!("{hi:.1}");
+    // ` <lo> ` + bar + ` <hi>`
+    let used = lo_s.len() + hi_s.len() + 3;
+    let cells = (width as usize).saturating_sub(used);
+    if cells < 6 {
+        return Line::from("");
+    }
+    let span = (hi - lo).max(0.1);
+    let cur = u.from_mgdl(sgv);
+    let marker = (((cur - lo) / span) * (cells as f64 - 1.0)).round();
+    let marker = marker.clamp(0.0, cells as f64 - 1.0) as usize;
+
+    let mut spans = vec![Span::styled(
+        format!(" {lo_s} "),
+        Style::default().fg(Color::DarkGray),
+    )];
+    for i in 0..cells {
+        if i == marker {
+            spans.push(Span::styled(
+                "●",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            continue;
+        }
+        let v = lo + (i as f64 / (cells as f64 - 1.0)) * span;
+        let c = if v < low {
+            app.theme.low
+        } else if v > high {
+            app.theme.high
+        } else {
+            app.theme.in_range
+        };
+        spans.push(Span::styled("━", Style::default().fg(c)));
+    }
+    spans.push(Span::styled(
+        format!(" {hi_s}"),
+        Style::default().fg(Color::DarkGray),
+    ));
+    Line::from(spans)
 }
 
 /// The secondary info lines beside/below the current value: unit + arrow,
