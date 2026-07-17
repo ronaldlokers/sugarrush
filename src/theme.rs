@@ -67,15 +67,20 @@ fn pick(name: &Option<String>, fallback: Color) -> Color {
 /// [`theme_from_names`] / [`ThemeConfig`].
 pub const DEFAULT_NAMES: [&str; 6] = ["red", "green", "yellow", "red", "magenta", "cyan"];
 
-/// A colorblind-safe palette (Okabe–Ito) as hex, same role order as
-/// [`DEFAULT_NAMES`]: low / in-range / high / urgent / forecast / graph.
+/// A colorblind-safe palette, same role order as [`DEFAULT_NAMES`]:
+/// low / in-range / high / urgent / forecast / graph.
+///
+/// Named ANSI colors (not truecolor hex) so the palette renders identically on
+/// 16-color consoles, tmux, and SSH sessions that lack `COLORTERM=truecolor` —
+/// where hex would silently collapse. The zones map onto the colorblind-safe
+/// blue–white–yellow axis rather than red/green.
 pub const COLORBLIND_NAMES: [&str; 6] = [
-    "#0072b2", // low — blue
-    "#009e73", // in range — bluish green
-    "#e69f00", // high — orange
-    "#d55e00", // urgent — vermillion
-    "#cc79a7", // forecast — pink
-    "#56b4e9", // graph — sky blue
+    "blue",     // low
+    "white",    // in range
+    "yellow",   // high
+    "lightred", // urgent
+    "magenta",  // forecast
+    "cyan",     // graph
 ];
 
 /// Named colors the settings screen cycles through.

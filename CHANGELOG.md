@@ -13,6 +13,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Accessibility** — the colourblind-safe palette now uses named ANSI colours
+  instead of truecolor hex, so it renders correctly on 16/256-colour terminals,
+  tmux, and SSH sessions that lack truecolor (where it previously collapsed
+  silently). The current reading is also exposed as plain text alongside the
+  big-number glyphs, so screen readers, tmux copy, and braille displays can read
+  it.
 - **Clearer connection errors** — a wrong or non-readable token now reports
   "authentication failed — check your read-only token (not API_SECRET)" instead
   of a generic "offline", both at runtime (in the header) and during first-run
