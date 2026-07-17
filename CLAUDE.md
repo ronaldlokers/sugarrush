@@ -62,13 +62,20 @@ Releases are driven by **cargo-dist**; all publish secrets
 (`CARGO_REGISTRY_TOKEN`, `HOMEBREW_TAP_TOKEN`, `AUR_SSH_KEY`) are already set.
 To ship a version:
 
-1. **Update `CHANGELOG.md`** — move items from `## [Unreleased]` into a new
-   `## [YYYY.M.N] - <date>` section (Keep a Changelog format). cargo-dist
-   extracts this section verbatim for the GitHub Release notes, so keep it
+1. **Draft a release summary and get it approved first.** When I ask to cut a
+   release, before touching anything write a short (2–4 sentence) plain-language
+   summary of the notable changes since the last release — skim
+   `git log vLASTTAG..main` and the `## [Unreleased]` changelog. Show it to me
+   to approve or edit, and wait for my go-ahead before continuing.
+2. **Update `CHANGELOG.md`** — move items from `## [Unreleased]` into a new
+   `## [YYYY.M.N] - <date>` section (Keep a Changelog format), and put the
+   approved summary as the intro paragraph at the top of that section (like the
+   `2026.7.1` note). cargo-dist extracts this whole section verbatim for the
+   GitHub Release notes, so the summary rides along automatically — keep it
    good.
-2. **Bump the version** in `Cargo.toml` to the same CalVer (`cargo build` to
+3. **Bump the version** in `Cargo.toml` to the same CalVer (`cargo build` to
    update `Cargo.lock`), on a branch → PR → merge.
-3. **Tag and push**: `git tag vYYYY.M.N && git push origin vYYYY.M.N`.
+4. **Tag and push**: `git tag vYYYY.M.N && git push origin vYYYY.M.N`.
 
 That one tag fans out automatically:
 
