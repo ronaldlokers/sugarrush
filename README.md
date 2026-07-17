@@ -117,6 +117,7 @@ design: file-only, documented.
 | Key | Action |
 |-----|--------|
 | `q` / `Esc` | Quit |
+| `?` | Toggle the keybinding help overlay |
 | `r` | Refresh now |
 | `u` | Toggle mg/dL ↔ mmol/L |
 | `Tab` / `Shift+Tab` | Switch graph view (3h / 24h / AGP) |

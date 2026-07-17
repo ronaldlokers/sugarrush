@@ -245,8 +245,15 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
         return;
     }
 
+    // While the help overlay is up, any key dismisses it.
+    if app.show_help {
+        app.show_help = false;
+        return;
+    }
+
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+        KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('s') => app.toggle_settings(),
         KeyCode::Char('u') => app.toggle_units(),
         KeyCode::Char('r') => refresh(app, client).await,

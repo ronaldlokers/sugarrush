@@ -6,7 +6,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, Paragraph, Tabs},
+    widgets::{Axis, Block, Borders, Chart, Clear, Dataset, GraphType, Paragraph, Tabs},
     Frame,
 };
 
@@ -77,6 +77,63 @@ pub fn draw(f: &mut Frame, app: &App) {
         i += 1;
     }
     draw_footer(f, chunks[i], app);
+
+    if app.show_help {
+        draw_help(f, f.area());
+    }
+}
+
+/// A centered keybinding cheatsheet, drawn over the dashboard. Dismissed by any
+/// key. Reachable with `?` — the discoverable home for every binding, so the
+/// footer can shrink on narrow terminals without hiding functionality.
+fn draw_help(f: &mut Frame, area: Rect) {
+    let rows = [
+        ("q / Esc", "quit"),
+        ("?", "toggle this help"),
+        ("r", "refresh now"),
+        ("u", "toggle mg/dL ↔ mmol/L"),
+        ("Tab / ⇧Tab", "switch graph view (3h / 24h / AGP)"),
+        ("h / l · ← / →", "pan back / forward"),
+        ("+ / -", "zoom window (1h–24h)"),
+        ("g", "jump to a date"),
+        ("f / Home", "return to live"),
+        ("a", "snooze the audible alarm"),
+        ("n", "switch site (multi-site)"),
+        ("s", "open / close settings"),
+    ];
+    let w = 52u16.min(area.width.saturating_sub(2));
+    let h = (rows.len() as u16 + 4).min(area.height.saturating_sub(2));
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let popup = Rect::new(x, y, w, h);
+
+    let mut lines = vec![Line::from("")];
+    for (k, d) in rows {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {k:<14}"),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(d),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  press any key to close",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" keybindings "),
+        ),
+        popup,
+    );
 }
 
 fn draw_minimap(f: &mut Frame, area: Rect, app: &App) {
@@ -982,23 +1039,37 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::Yellow),
         ),
         None => {
-            let mut s = if app.is_agp() {
-                String::from(" q quit · r refresh · u units · tab view · s settings")
+            // On a narrow footer the full hint line silently clips, hiding
+            // settings/site/snooze; fall back to a terse set that always keeps
+            // `? help` so nothing becomes undiscoverable.
+            let alarm = app.alarm_active(chrono::Utc::now().timestamp_millis());
+            let s = if area.width < 72 {
+                let mut s = String::from(" q quit · tab view · s settings");
+                if alarm {
+                    s.push_str(" · a snooze");
+                }
+                s.push_str(" · ? help ");
+                s
             } else {
-                String::from(
-                    " q quit · r refresh · u units · tab view · h/l pan · +/- zoom · g date · f live · s settings",
-                )
+                let mut s = if app.is_agp() {
+                    String::from(" q quit · r refresh · u units · tab view · s settings")
+                } else {
+                    String::from(
+                        " q quit · r refresh · u units · tab view · h/l pan · +/- zoom · g date · f live · s settings",
+                    )
+                };
+                if app.sites.len() > 1 {
+                    s.push_str(" · n site");
+                }
+                if app.minimap_enabled {
+                    s.push_str(" · drag overview");
+                }
+                if alarm {
+                    s.push_str(" · a snooze");
+                }
+                s.push_str(" · ? help ");
+                s
             };
-            if app.sites.len() > 1 {
-                s.push_str(" · n site");
-            }
-            if app.minimap_enabled {
-                s.push_str(" · drag overview");
-            }
-            if app.alarm_active(chrono::Utc::now().timestamp_millis()) {
-                s.push_str(" · a snooze");
-            }
-            s.push(' ');
             Span::raw(s)
         }
     };

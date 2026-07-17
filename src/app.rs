@@ -287,6 +287,8 @@ pub struct App {
 
     pub last_error: Option<String>,
     pub should_quit: bool,
+    /// Whether the keybinding help overlay is showing.
+    pub show_help: bool,
 }
 
 impl App {
@@ -336,6 +338,7 @@ impl App {
             next_retry_at: None,
             last_error: None,
             should_quit: false,
+            show_help: false,
         }
     }
 
