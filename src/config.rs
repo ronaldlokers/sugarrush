@@ -273,6 +273,22 @@ impl Config {
         Ok(dir.join("sugarrush").join("config.toml"))
     }
 
+    /// A self-contained config for `--demo` mode (no real site; the client is
+    /// built but never used — demo data is generated locally).
+    pub fn demo() -> Self {
+        Self {
+            url: Some("http://demo.invalid".to_string()),
+            token: Some("demo".to_string()),
+            sites: Vec::new(),
+            units: default_units(),
+            refresh_secs: 5,
+            alerts: AlertsConfig::default(),
+            theme: ThemeConfig::default(),
+            graph_style: GraphStyle::default(),
+            minimap: MinimapConfig::default(),
+        }
+    }
+
     pub fn load() -> Result<Self> {
         let path = Self::path()?;
         let raw = std::fs::read_to_string(&path).with_context(|| {
