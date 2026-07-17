@@ -48,17 +48,22 @@ jobs:
             *) echo "not a version tag: '$TAG' — skipping."; echo "ready=false" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      - name: Wait for release asset
+      - name: Download release asset
         if: steps.gate.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          ver="${TAG#v}"
-          url="https://github.com/ronaldlokers/sugarrush/releases/download/v${ver}/sugarrush-x86_64-unknown-linux-musl.tar.xz"
-          for i in $(seq 1 30); do
-            if curl -fsSL -o /tmp/sr.tar.xz "$url"; then echo "got asset"; exit 0; fi
+          # Use the API (gh) not the browser download URL — the latter can 404
+          # for dist-created releases even when the asset is fully uploaded.
+          for i in $(seq 1 20); do
+            if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+                 -p 'sugarrush-x86_64-unknown-linux-musl.tar.xz' -O /tmp/sr.tar.xz --clobber; then
+              echo "got asset"; exit 0
+            fi
             echo "waiting for release asset ($i)…"; sleep 10
           done
-          echo "release asset not found: $url"; exit 1
+          echo "release asset not found for $TAG"; exit 1
 
       - name: Render PKGBUILD
         if: steps.gate.outputs.ready == 'true'
