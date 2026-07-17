@@ -5,6 +5,10 @@ A fast, keyboard-driven TUI for glanceable blood glucose — live value, history
 forecast, alerts, and stats — built with Rust + [Ratatui](https://ratatui.rs/).
 
 [![CI](https://github.com/ronaldlokers/sugarrush/actions/workflows/ci.yml/badge.svg)](https://github.com/ronaldlokers/sugarrush/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/sugarrush.svg)](https://crates.io/crates/sugarrush)
+[![downloads](https://img.shields.io/crates/d/sugarrush.svg)](https://crates.io/crates/sugarrush)
+[![AUR](https://img.shields.io/aur/version/sugarrush-bin)](https://aur.archlinux.org/packages/sugarrush-bin)
+[![release](https://img.shields.io/github/v/release/ronaldlokers/sugarrush?sort=semver)](https://github.com/ronaldlokers/sugarrush/releases/latest)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)
 
