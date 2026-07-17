@@ -6,6 +6,15 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2026.7.2] - 2026-07-17
+
+This release is a dashboard glow-up. The graph now colour-codes readings by zone
+with a shaded in-range band and dashed threshold rails, adds a zoned range bar
+under the current value, and gains a switchable **AGP** (ambulatory glucose
+profile) view alongside the 3h/24h timelines. The stats panel picks up a
+time-in-range bar and a mean sparkline, and short-term forecasts now render as
+an **uncertainty cone** — a high/low band — instead of a single line.
+
 ### Added
 
 - **Graph view tabs** (`Tab` / `Shift+Tab`) — switch the graph pane between a
@@ -54,5 +63,6 @@ self-hosted [Nightscout](https://nightscout.github.io/) CGM data.
 - **Distribution** — published to crates.io, the AUR (`sugarrush-bin`), and a
   Homebrew tap; prebuilt binaries + shell/PowerShell installers via cargo-dist.
 
-[Unreleased]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.1...HEAD
+[Unreleased]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.2...HEAD
+[2026.7.2]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.1...v2026.7.2
 [2026.7.1]: https://github.com/ronaldlokers/sugarrush/releases/tag/v2026.7.1
