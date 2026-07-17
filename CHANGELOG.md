@@ -13,6 +13,10 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Clearer connection errors** — a wrong or non-readable token now reports
+  "authentication failed — check your read-only token (not API_SECRET)" instead
+  of a generic "offline", both at runtime (in the header) and during first-run
+  setup; unreachable hosts and HTTP errors are also distinguished.
 - **Alarm responsiveness** — a sensor gap now escalates to a Stale alarm within
   seconds (re-checked on the alarm tick) instead of waiting for the next full
   refresh, and a failed escalation push (dead `push_url`) is surfaced instead of

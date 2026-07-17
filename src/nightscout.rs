@@ -79,7 +79,7 @@ impl Client {
     ) -> Result<Vec<Entry>> {
         let count = want.max(1);
         let url = format!("{}/api/v1/entries/sgv.json", self.base_url);
-        let entries: Vec<Entry> = self
+        let resp = self
             .http
             .get(&url)
             .query(&[
@@ -90,9 +90,8 @@ impl Client {
             ])
             .send()
             .await
-            .context("request to Nightscout failed")?
-            .error_for_status()
-            .context("Nightscout returned an error status")?
+            .context("can't reach Nightscout (check the URL and your connection)")?;
+        let entries: Vec<Entry> = check_status(resp)?
             .json()
             .await
             .context("failed to parse Nightscout response")?;
@@ -359,6 +358,22 @@ fn envelope(start_ms: i64, curves: &[&Vec<Value>]) -> Vec<Prediction> {
         }
     }
     out
+}
+
+/// Turn a response status into an actionable error, distinguishing an auth
+/// problem (the common "pasted API_SECRET instead of a read-only token" case)
+/// from a generic server error — so the UI never mislabels a bad token as a
+/// network outage.
+fn check_status(resp: reqwest::Response) -> Result<reqwest::Response> {
+    use reqwest::StatusCode;
+    match resp.status() {
+        s if s.is_success() => Ok(resp),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => anyhow::bail!(
+            "authentication failed — check your read-only token (a Nightscout \
+             Subject token with the 'readable' role, not API_SECRET)"
+        ),
+        s => anyhow::bail!("Nightscout returned HTTP {}", s.as_u16()),
+    }
 }
 
 fn parse_iso(s: &str) -> Option<i64> {

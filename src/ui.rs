@@ -395,8 +395,14 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
                 )
             })
             .unwrap_or_default();
+        // Show the actual cause (auth vs unreachable) rather than a blanket
+        // "offline", so a bad token doesn't send the user to debug the network.
+        let msg = app
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "can't reach Nightscout".to_string());
         spans.push(Span::styled(
-            format!(" ⚠ offline — can't reach Nightscout{age} "),
+            format!(" ⚠ {msg}{age} "),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ));
     }
