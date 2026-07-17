@@ -516,12 +516,16 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
             .collect()
     };
 
+    // Threshold rails (in display units) — always kept in view for reference.
+    let low_y = app.units.from_mgdl(app.alerts.low);
+    let high_y = app.units.from_mgdl(app.alerts.high);
     let (min_y, max_y) = points
         .iter()
         .chain(pred.iter())
         .fold((f64::MAX, f64::MIN), |(lo, hi), (_, y)| {
             (lo.min(*y), hi.max(*y))
         });
+    let (min_y, max_y) = (min_y.min(low_y), max_y.max(high_y));
     let pad = ((max_y - min_y) * 0.1).max(app.units.from_mgdl(10.0));
     let bounds_y = [min_y - pad, max_y + pad];
     // Anchor x to the requested window; extend right to cover any forecast.
@@ -561,11 +565,65 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
         GraphStyle::Dots => (symbols::Marker::Dot, GraphType::Scatter),
         GraphStyle::Blocks => (symbols::Marker::Block, GraphType::Scatter),
     };
-    let mut datasets = vec![Dataset::default()
-        .marker(marker)
-        .graph_type(gtype)
-        .style(Style::default().fg(app.theme.graph))
-        .data(&points)];
+
+    // Dim reference rails at the low/high thresholds (drawn under everything).
+    let low_rail = [(app.view_start as f64, low_y), (right as f64, low_y)];
+    let high_rail = [(app.view_start as f64, high_y), (right as f64, high_y)];
+
+    // In scatter modes, colour readings by zone. A connected line can't change
+    // colour mid-segment, so line mode keeps a single colour.
+    let scatter = !matches!(app.graph_style, GraphStyle::Line);
+    let (mut low_z, mut in_z, mut high_z) = (Vec::new(), Vec::new(), Vec::new());
+    if scatter {
+        for e in app.entries.iter().rev() {
+            let p = (e.date as f64, app.units.from_mgdl(e.sgv));
+            if e.sgv < app.alerts.low {
+                low_z.push(p);
+            } else if e.sgv > app.alerts.high {
+                high_z.push(p);
+            } else {
+                in_z.push(p);
+            }
+        }
+    }
+
+    let mut datasets = vec![
+        Dataset::default()
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::DarkGray))
+            .data(&low_rail),
+        Dataset::default()
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::DarkGray))
+            .data(&high_rail),
+    ];
+    if scatter {
+        for (pts, color) in [
+            (&in_z, app.theme.in_range),
+            (&low_z, app.theme.low),
+            (&high_z, app.theme.high),
+        ] {
+            if !pts.is_empty() {
+                datasets.push(
+                    Dataset::default()
+                        .marker(marker)
+                        .graph_type(gtype)
+                        .style(Style::default().fg(color))
+                        .data(pts),
+                );
+            }
+        }
+    } else {
+        datasets.push(
+            Dataset::default()
+                .marker(marker)
+                .graph_type(gtype)
+                .style(Style::default().fg(app.theme.graph))
+                .data(&points),
+        );
+    }
     if let Some(nl) = &now_line {
         datasets.push(
             Dataset::default()
