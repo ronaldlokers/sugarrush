@@ -11,7 +11,7 @@ readme = "README.md"
 keywords = ["nightscout", "cgm", "diabetes", "glucose", "tui"]
 categories = ["command-line-utilities", "visualization"]
 # Keep the published crate lean — dev/CI/demo assets aren't needed to build.
-exclude = ["assets/", "waybar/", ".github/", "*.tape", "settings-preview.*"]
+exclude = ["assets/", "waybar/", "packaging/", ".github/", "*.tape", "settings-preview.*"]
 
 [dependencies]
 ratatui = "0.29"
