@@ -248,37 +248,42 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
         None => Line::from("  avg  —"),
     };
 
-    // Device / uploader status (IOB/COB lead when present).
+    // Device / uploader status. IOB/COB are the clinically actionable numbers,
+    // so give them foreground weight; the device/battery/uploader stay dim.
     let now = chrono::Utc::now().timestamp_millis();
-    let mut parts = Vec::new();
+    let strong = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let mut spans: Vec<Span> = Vec::new();
     if let Some(iob) = app.device.iob {
-        parts.push(format!("IOB {iob:.1}U"));
+        spans.push(Span::styled(format!("  IOB {iob:.1}U"), strong));
     }
     if let Some(cob) = app.device.cob {
-        parts.push(format!("COB {cob:.0}g"));
+        spans.push(Span::styled(format!("   COB {cob:.0}g"), strong));
     }
+    let mut rest = Vec::new();
     if let Some(name) = &app.device.device {
-        parts.push(name.clone());
+        rest.push(name.clone());
     }
     if let Some(b) = app.device.battery {
-        parts.push(format!("battery {b}%"));
+        rest.push(format!("battery {b}%"));
     }
     if let Some(start) = app.sensor_start_ms {
-        parts.push(format!("sensor {}", fmt_age(now - start)));
+        rest.push(format!("sensor {}", fmt_age(now - start)));
     }
     if let Some(last) = app.device.last_ms {
-        parts.push(format!("uploader {} ago", fmt_age(now - last)));
+        rest.push(format!("uploader {} ago", fmt_age(now - last)));
     }
-    let dev_line = if parts.is_empty() {
-        Line::from(Span::styled(
-            "  device  —",
-            Style::default().fg(Color::DarkGray),
-        ))
+    if !rest.is_empty() {
+        let prefix = if spans.is_empty() { "  " } else { "   ·   " };
+        spans.push(Span::styled(
+            format!("{prefix}{}", rest.join("   ·   ")),
+            dim,
+        ));
+    }
+    let dev_line = if spans.is_empty() {
+        Line::from(Span::styled("  device  —", dim))
     } else {
-        Line::from(Span::styled(
-            format!("  {}", parts.join("   ·   ")),
-            Style::default().fg(Color::DarkGray),
-        ))
+        Line::from(spans)
     };
 
     f.render_widget(Paragraph::new(vec![tir_line, avg_line, dev_line]), inner);
@@ -543,8 +548,10 @@ fn range_bar<'a>(app: &App, sgv: f64, width: u16) -> Line<'a> {
     let hi = u.from_mgdl(app.alerts.urgent_high);
     let low = u.from_mgdl(app.alerts.low);
     let high = u.from_mgdl(app.alerts.high);
-    let lo_s = format!("{lo:.1}");
-    let hi_s = format!("{hi:.1}");
+    let ulow = u.from_mgdl(app.alerts.urgent_low);
+    let uhigh = u.from_mgdl(app.alerts.urgent_high);
+    let lo_s = fmt_disp(u, lo);
+    let hi_s = fmt_disp(u, hi);
     // ` <lo> ` + bar + ` <hi>`
     let used = lo_s.len() + hi_s.len() + 3;
     let cells = (width as usize).saturating_sub(used);
@@ -571,7 +578,11 @@ fn range_bar<'a>(app: &App, sgv: f64, width: u16) -> Line<'a> {
             continue;
         }
         let v = lo + (i as f64 / (cells as f64 - 1.0)) * span;
-        let c = if v < low {
+        // Four zones: the bar spans urgent-low → urgent-high, so tint the
+        // extremes urgent, then low / in-range / high between the thresholds.
+        let c = if v <= ulow || v >= uhigh {
+            app.theme.urgent
+        } else if v < low {
             app.theme.low
         } else if v > high {
             app.theme.high
@@ -758,12 +769,25 @@ fn braille_line(data: &[(f64, f64)], style: Style) -> Dataset<'_> {
 }
 
 fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
-    let title = format!(
+    // Title carries a small legend for the treatment markers, which are
+    // otherwise unlabelled dots on the graph.
+    let mut title = vec![Span::raw(format!(
         " {} → {} ",
         fmt_time(app.view_start),
         fmt_time(app.view_end)
-    );
-    let block = Block::default().borders(Borders::ALL).title(title);
+    ))];
+    if app.treatments.iter().any(|t| t.carbs.is_some()) {
+        title.push(Span::styled(
+            "· ● carbs ",
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    if app.treatments.iter().any(|t| t.insulin.is_some()) {
+        title.push(Span::styled("· ● bolus ", Style::default().fg(Color::Blue)));
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Line::from(title));
 
     if app.entries.is_empty() {
         f.render_widget(
