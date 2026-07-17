@@ -57,6 +57,9 @@ That's the recording above. When you're ready, point it at your own site
 ## Install
 
 ```bash
+# Homebrew (macOS/Linux)
+brew install ronaldlokers/tap/sugarrush
+
 # crates.io (compiles from source)
 cargo install sugarrush
 
