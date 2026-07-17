@@ -552,6 +552,13 @@ impl App {
         }
     }
 
+    /// Minutes left on an active snooze, if the alarm is currently silenced.
+    pub fn snooze_remaining_min(&self, now_ms: i64) -> Option<i64> {
+        self.snooze_until
+            .filter(|t| *t > now_ms)
+            .map(|t| (t - now_ms) / 60_000 + 1)
+    }
+
     /// Silence the audible alarm for the configured snooze interval.
     pub fn snooze_alarm(&mut self, now_ms: i64) {
         if self.alert.is_urgent() {
@@ -897,4 +904,87 @@ fn names_from_config(tc: &ThemeConfig) -> [String; 6] {
 
 fn clamp_bg(mgdl: f64) -> f64 {
     mgdl.clamp(20.0, 500.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NOW: i64 = 1_700_000_000_000;
+
+    fn app() -> App {
+        let cfg = Config::demo();
+        let alerts = cfg.alerts.resolve(cfg.units);
+        let sites = cfg.resolve_sites().unwrap();
+        App::new(&cfg, alerts, sites)
+    }
+
+    fn entry(sgv: f64, date: i64) -> Entry {
+        Entry {
+            sgv,
+            date,
+            direction: None,
+        }
+    }
+
+    #[test]
+    fn dropout_without_history_does_not_alarm() {
+        // Live, no readings, never fetched — first-run setup must not false-alarm.
+        let mut a = app();
+        assert_eq!(a.evaluate_alert(NOW), Alert::InRange);
+    }
+
+    #[test]
+    fn dropout_after_data_is_stale() {
+        // Once we've seen data, a live window with zero readings is a sensor gap.
+        let mut a = app();
+        a.last_ok_ms = Some(NOW);
+        a.entries.clear();
+        assert_eq!(a.evaluate_alert(NOW), Alert::Stale);
+    }
+
+    #[test]
+    fn fresh_in_range_reading() {
+        let mut a = app();
+        a.entries = vec![entry(100.0, NOW)];
+        assert_eq!(a.evaluate_alert(NOW), Alert::InRange);
+    }
+
+    #[test]
+    fn old_reading_is_stale() {
+        let mut a = app();
+        a.entries = vec![entry(100.0, NOW - 20 * 60_000)]; // 20m > 15m stale window
+        assert_eq!(a.evaluate_alert(NOW), Alert::Stale);
+    }
+
+    #[test]
+    fn urgent_low_reading_alarms() {
+        let mut a = app();
+        a.entries = vec![entry(50.0, NOW)]; // <= 55 urgent-low
+        assert_eq!(a.evaluate_alert(NOW), Alert::UrgentLow);
+        assert!(a.alarm_active(NOW));
+    }
+
+    #[test]
+    fn history_view_never_alarms() {
+        let mut a = app();
+        a.entries = vec![entry(40.0, NOW)];
+        a.view.end = Some(NOW - 3_600_000); // pinned into history
+        assert_eq!(a.evaluate_alert(NOW), Alert::InRange);
+    }
+
+    #[test]
+    fn snooze_silences_then_re_arms() {
+        let mut a = app();
+        a.entries = vec![entry(40.0, NOW)];
+        a.evaluate_alert(NOW);
+        assert!(a.alarm_active(NOW));
+        a.snooze_alarm(NOW);
+        assert!(!a.alarm_active(NOW));
+        assert!(a.snooze_remaining_min(NOW).is_some());
+        // Returning to range clears the snooze so the next episode alarms again.
+        a.entries = vec![entry(100.0, NOW)];
+        a.evaluate_alert(NOW);
+        assert!(a.snooze_remaining_min(NOW).is_none());
+    }
 }

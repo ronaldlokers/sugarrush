@@ -185,6 +185,11 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
             }
             _ = alarm_ticker.tick() => {
                 let now = now_ms();
+                // Re-classify locally every few seconds (no network) so a sensor
+                // gap escalates to a Stale alarm promptly instead of waiting for
+                // the next full refresh.
+                app.evaluate_alert(now);
+                app.update_urgent(now);
                 if app.alarm_active(now) {
                     sound::alarm(app.alarm_tone());
                 }
@@ -439,7 +444,11 @@ async fn refresh(app: &mut App, client: &Client) {
     app.update_urgent(now);
     if let Some(msg) = app.take_push(now) {
         if let Some(url) = app.alerts.push_url.clone() {
-            push(&url, &msg).await;
+            // The push webhook is a safety channel (unacknowledged-urgent
+            // escalation); a dead URL must not fail silently.
+            if !push(&url, &msg).await {
+                app.last_error = Some("push notification failed — check push_url".to_string());
+            }
         }
     }
     if let Some(msg) = app.take_predictive(now) {
@@ -483,14 +492,22 @@ fn desktop_notify(body: &str, critical: bool) {
     let _ = n.show();
 }
 
-/// POST an alert message to a webhook / ntfy topic. Best-effort, non-blocking.
-async fn push(url: &str, message: &str) {
-    if let Ok(client) = reqwest::Client::builder()
+/// POST an alert message to a webhook / ntfy topic. Returns whether the request
+/// was accepted (2xx), so the caller can surface a dead push URL.
+async fn push(url: &str, message: &str) -> bool {
+    let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
-    {
-        let _ = client.post(url).body(message.to_string()).send().await;
-    }
+    else {
+        return false;
+    };
+    client
+        .post(url)
+        .body(message.to_string())
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
 
 /// Current time in epoch milliseconds.
