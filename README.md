@@ -56,13 +56,21 @@ That's the recording above. When you're ready, point it at your own site
 
 ## Install
 
-Rust toolchain (pinned here via [mise](https://mise.jdx.dev/)):
-
 ```bash
-mise install                       # pinned Rust toolchain
-cargo install --path . --root ~/.local   # → ~/.local/bin/sugarrush
-# …or just: cargo build --release  (binary at target/release/sugarrush)
+# crates.io (compiles from source)
+cargo install sugarrush
+
+# …or a prebuilt binary via cargo-binstall (no compile)
+cargo binstall sugarrush
+
+# …or the shell installer (Linux/macOS) — grabs the right prebuilt binary
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/ronaldlokers/sugarrush/releases/latest/download/sugarrush-installer.sh | sh
 ```
+
+Prebuilt archives (Linux gnu/musl, macOS x86_64/arm64, Windows) are attached to
+every [release](https://github.com/ronaldlokers/sugarrush/releases). From a
+checkout: `cargo build --release` (binary at `target/release/sugarrush`).
 
 ## Configuration
 

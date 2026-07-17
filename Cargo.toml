@@ -2,10 +2,16 @@
 name = "sugarrush"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.82"
 description = "A terminal UI for viewing Nightscout CGM (blood glucose sensor) data"
 license = "MIT"
 repository = "https://github.com/ronaldlokers/sugarrush"
+homepage = "https://github.com/ronaldlokers/sugarrush"
 readme = "README.md"
+keywords = ["nightscout", "cgm", "diabetes", "glucose", "tui"]
+categories = ["command-line-utilities", "visualization"]
+# Keep the published crate lean — dev/CI/demo assets aren't needed to build.
+exclude = ["assets/", "waybar/", ".github/", "*.tape", "settings-preview.*"]
 
 [dependencies]
 ratatui = "0.29"
