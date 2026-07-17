@@ -540,8 +540,17 @@ fn current_info<'a>(app: &App, e: &crate::nightscout::Entry) -> Vec<Line<'a>> {
     // Textual range label — legible without relying on color.
     let range = crate::alert::from_value(e.sgv, &app.alerts).label();
     let mut lines = vec![
+        // Includes the value as plain text so the reading is readable when the
+        // big-number layout draws it as block glyphs (screen readers, tmux
+        // copy, braille). The compact layout skips this line — it shows the
+        // value itself already.
         Line::from(Span::styled(
-            format!(" {}  {}", app.units.label(), e.arrow()),
+            format!(
+                " {} {}  {}",
+                app.units.format(e.sgv),
+                app.units.label(),
+                e.arrow()
+            ),
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
