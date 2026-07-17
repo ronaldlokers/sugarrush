@@ -56,9 +56,40 @@ build, and test** — all four must pass. Run them locally before pushing.
   E.g. `2026.7.1` → `2026.7.2` → (August) `2026.8.1`. Pick the next version
   from today's date; tags are `v`-prefixed (`v2026.7.1`). It's valid SemVer, so
   Cargo/crates.io accept it.
-- **Releases** are driven by cargo-dist: a `v`-tag builds all targets and
-  publishes a GitHub Release + installers; separate workflows publish to
-  crates.io / Homebrew / AUR (gated on their secrets).
+## Cutting a release
+
+Releases are driven by **cargo-dist**; all publish secrets
+(`CARGO_REGISTRY_TOKEN`, `HOMEBREW_TAP_TOKEN`, `AUR_SSH_KEY`) are already set.
+To ship a version:
+
+1. **Update `CHANGELOG.md`** — move items from `## [Unreleased]` into a new
+   `## [YYYY.M.N] - <date>` section (Keep a Changelog format). cargo-dist
+   extracts this section verbatim for the GitHub Release notes, so keep it
+   good.
+2. **Bump the version** in `Cargo.toml` to the same CalVer (`cargo build` to
+   update `Cargo.lock`), on a branch → PR → merge.
+3. **Tag and push**: `git tag vYYYY.M.N && git push origin vYYYY.M.N`.
+
+That one tag fans out automatically:
+
+- **Release** workflow (dist) — builds every target, publishes a public GitHub
+  Release with archives, checksums, and the `curl|sh` / PowerShell installers,
+  and pushes the Homebrew formula to `ronaldlokers/homebrew-tap`.
+- **Publish crate** — `cargo publish` to crates.io (`cargo install` / `cargo
+  binstall sugarrush`).
+- **Publish to AUR** — runs after the Release completes (keyed off
+  `workflow_run`, *not* `on: release`, since `GITHUB_TOKEN`-created releases
+  don't fire release events); renders the PKGBUILD and pushes `sugarrush-bin`.
+
+Notes for future release work:
+
+- The repo is **public** — required so release-asset downloads (installers,
+  binstall, Homebrew, AUR) work unauthenticated.
+- Release-asset downloads in CI must use `gh release download` (the browser
+  `releases/download/...` URL can 404 for dist-created releases).
+- If a channel's job fails after the release exists, re-run it against the
+  same tag — no re-tag needed: `gh run rerun <id> --failed` (Homebrew) or
+  `gh workflow run aur.yml -f tag=vYYYY.M.N` (AUR).
 
 ## IMPORTANT: new settings go in the settings menu
 
