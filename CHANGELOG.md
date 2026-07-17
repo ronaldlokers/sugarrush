@@ -12,12 +12,25 @@ All notable changes to sugarrush are documented here. The format is based on
   3h or 24h timeline and an **AGP** (ambulatory glucose profile) that folds the
   last N days of readings onto a 24h clock as a percentile band (median +
   25/75 + 5/95). The number of days is configurable in settings (`AGP days`).
+- **Dashboard graph glow-up** — readings are colour-coded by zone
+  (low/in-range/high) with dashed reference rails at the low/high thresholds,
+  the in-range region is shaded as a band behind the trace, and a zoned range
+  bar under the big current value shows where it sits between the thresholds.
+- **Stats upgrade** — time-in-range is drawn as a stacked zone bar, and the
+  mean gets an inline sparkline of recent readings.
 
 ### Changed
 
 - **Forecast is now an uncertainty cone** — predictions render as a widening
   high/low band (the plausible range) instead of a single line; the
   time-to-low/high ETA warns on the worst plausible path.
+
+### Fixed
+
+- **AUR publishing** — trigger the publish from the Release workflow's
+  `workflow_run` (plus a manual dispatch) since token-created releases never
+  fire the `release` event, and download the release asset via the GitHub API
+  rather than the browser URL (which 404s for dist-created releases).
 
 ## [2026.7.1] - 2026-07-17
 
