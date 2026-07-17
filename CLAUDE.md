@@ -85,30 +85,16 @@ To ship a version:
 
    - **Title**: *just the version*, no `v` — e.g. `2026.7.2`, never `v2026.7.2`.
      Never carry the date (cargo-dist inherits it from the changelog heading).
-   - **Body**: exactly two sections, in this order (drop cargo-dist's
-     auto-generated *Install …* and *Download …* sections — GitHub already
-     lists the assets):
+   - **Body**: just the release notes — drop cargo-dist's auto-generated
+     *Install …* and *Download …* sections (GitHub already lists the assets,
+     and install instructions live in the README):
 
      ```markdown
      ## Release Notes
 
      <this version's CHANGELOG section: the summary paragraph, then the
      ### Added / ### Changed / ### Fixed groups>
-
-     ## Install
-
-     ```sh
-     cargo install sugarrush          # crates.io
-     cargo binstall sugarrush         # prebuilt binary, no compile
-     yay -S sugarrush-bin             # Arch (AUR)
-     brew install ronaldlokers/tap/sugarrush   # Homebrew (macOS/Linux)
-     # or the shell installer:
-     curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ronaldlokers/sugarrush/releases/latest/download/sugarrush-installer.sh | sh
      ```
-     ```
-
-   The Install block is fixed and version-agnostic (it uses `…/releases/latest/…`),
-   so never write a `v`-prefixed or version-pinned URL into the notes.
 
 That one tag fans out automatically:
 
