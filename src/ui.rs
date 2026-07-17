@@ -144,50 +144,51 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, area);
 
     let u = app.units;
-    // Time-in-range over the loaded window.
+    // Time-in-range as a stacked zone bar with the in-range % alongside.
     let tir_line = match stats::tir(&app.entries, app.alerts.low, app.alerts.high) {
-        Some(t) => Line::from(vec![
-            Span::raw("  TIR  "),
-            Span::styled(
-                format!("low {:.0}%", t.low),
-                Style::default().fg(Color::Red),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                format!("in-range {:.0}%", t.in_range),
-                Style::default().fg(Color::Green),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                format!("high {:.0}%", t.high),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
+        Some(t) => {
+            let bar_w = (inner.width as usize).saturating_sub(22).clamp(8, 40);
+            let rc = (t.low / 100.0 * bar_w as f64).round() as usize;
+            let yc = (t.high / 100.0 * bar_w as f64).round() as usize;
+            let gc = bar_w.saturating_sub(rc + yc);
+            Line::from(vec![
+                Span::raw("  TIR "),
+                Span::styled("█".repeat(rc), Style::default().fg(app.theme.low)),
+                Span::styled("█".repeat(gc), Style::default().fg(app.theme.in_range)),
+                Span::styled("█".repeat(yc), Style::default().fg(app.theme.high)),
+                Span::styled(
+                    format!(" {:.0}% in range", t.in_range),
+                    Style::default().fg(app.theme.in_range),
+                ),
+            ])
+        }
         None => Line::from("  TIR  —"),
     };
 
-    // Mean + estimated A1c, plus IOB/COB when the uploader provides them.
-    let mut iobcob = String::new();
-    if let Some(iob) = app.device.iob {
-        iobcob.push_str(&format!("   ·   IOB {iob:.1}U"));
-    }
-    if let Some(cob) = app.device.cob {
-        iobcob.push_str(&format!("   ·   COB {cob:.0}g"));
-    }
+    // Mean + a sparkline of recent readings + estimated A1c.
     let avg_line = match stats::mean_mgdl(&app.entries) {
-        Some(mean) => Line::from(format!(
-            "  avg  {} {}   ·   GMI {:.1}%{iobcob}",
-            u.format(mean),
-            u.label(),
-            stats::gmi(mean),
-        )),
-        None if !iobcob.is_empty() => Line::from(format!("  avg  —{iobcob}")),
+        Some(mean) => {
+            // Newest-first entries → oldest→newest for the sparkline.
+            let mut spark: Vec<f64> = app.entries.iter().take(16).map(|e| e.sgv).collect();
+            spark.reverse();
+            Line::from(vec![
+                Span::raw(format!("  avg  {} {}  ", u.format(mean), u.label())),
+                Span::styled(sparkline_str(&spark), Style::default().fg(app.theme.graph)),
+                Span::raw(format!("  ·  GMI {:.1}%", stats::gmi(mean))),
+            ])
+        }
         None => Line::from("  avg  —"),
     };
 
-    // Device / uploader status.
+    // Device / uploader status (IOB/COB lead when present).
     let now = chrono::Utc::now().timestamp_millis();
     let mut parts = Vec::new();
+    if let Some(iob) = app.device.iob {
+        parts.push(format!("IOB {iob:.1}U"));
+    }
+    if let Some(cob) = app.device.cob {
+        parts.push(format!("COB {cob:.0}g"));
+    }
     if let Some(name) = &app.device.device {
         parts.push(name.clone());
     }
@@ -213,6 +214,25 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
     };
 
     f.render_widget(Paragraph::new(vec![tir_line, avg_line, dev_line]), inner);
+}
+
+/// An 8-level block sparkline over the values (min→max normalized).
+fn sparkline_str(values: &[f64]) -> String {
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    if values.is_empty() {
+        return String::new();
+    }
+    let (min, max) = values
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+    let range = (max - min).max(1.0);
+    values
+        .iter()
+        .map(|&v| {
+            let level = ((v - min) / range * (BARS.len() - 1) as f64).round() as usize;
+            BARS[level.min(BARS.len() - 1)]
+        })
+        .collect()
 }
 
 /// Format a positive duration in ms as a compact age like `6d 4h` or `12m`.
