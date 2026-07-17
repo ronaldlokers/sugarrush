@@ -35,11 +35,14 @@ That's the recording above. When you're ready, point it at your own site
 - Insulin-on-board / carbs-on-board, with carb & bolus markers on the graph
 
 **History & forecast**
+- Switchable **graph views** (`Tab`) — a 3h or 24h timeline, or an **AGP**
+  (ambulatory glucose profile) folding days of readings into a percentile band
 - Live braille/dot graph you can **pan** (`h`/`l`), **zoom** (`+`/`-`,
   1h–24h), and **jump to a date** (`g`)
 - A 24h **minimap** you click or drag to move the window
-- Short-term **forecast** overlay (uploader predictions or a local AR2
-  fallback) with a "now" line and a *time-to-low/high* ETA
+- Short-term **forecast cone** (uploader predictions or a local AR2 fallback)
+  showing the high/low uncertainty band, with a "now" line and a
+  *time-to-low/high* ETA
 
 **Alerts & safety**
 - In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows)
@@ -116,6 +119,7 @@ design: file-only, documented.
 | `q` / `Esc` | Quit |
 | `r` | Refresh now |
 | `u` | Toggle mg/dL ↔ mmol/L |
+| `Tab` / `Shift+Tab` | Switch graph view (3h / 24h / AGP) |
 | `h` / `←` · `l` / `→` | Pan back / forward in time |
 | `+` / `-` | Zoom window (1h/3h/6h/12h/24h) |
 | `g` | Jump to a date (`YYYY-MM-DD`) |
