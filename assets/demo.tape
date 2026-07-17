@@ -30,6 +30,14 @@ Sleep 1.3s
 # Back to the live edge
 Type "f"
 Sleep 1.5s
+# Cycle the graph tabs: 3h -> 24h -> AGP (multi-day percentile profile)
+Tab
+Sleep 1.5s
+Tab
+Sleep 2.2s
+# Back to the 3h timeline
+Tab
+Sleep 1.3s
 # Toggle units mmol/L <-> mg/dL
 Type "u"
 Sleep 1.6s

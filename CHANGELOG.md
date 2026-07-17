@@ -6,6 +6,19 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Graph view tabs** (`Tab` / `Shift+Tab`) — switch the graph pane between a
+  3h or 24h timeline and an **AGP** (ambulatory glucose profile) that folds the
+  last N days of readings onto a 24h clock as a percentile band (median +
+  25/75 + 5/95). The number of days is configurable in settings (`AGP days`).
+
+### Changed
+
+- **Forecast is now an uncertainty cone** — predictions render as a widening
+  high/low band (the plausible range) instead of a single line; the
+  time-to-low/high ETA warns on the worst plausible path.
+
 ## [2026.7.1] - 2026-07-17
 
 First public release. A fast, keyboard-driven terminal UI for viewing

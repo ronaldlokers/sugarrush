@@ -91,6 +91,22 @@ Notes for future release work:
   same tag — no re-tag needed: `gh run rerun <id> --failed` (Homebrew) or
   `gh workflow run aur.yml -f tag=vYYYY.M.N` (AUR).
 
+## Definition of done for a user-visible change
+
+A feature or UX PR isn't done until each of these holds. Skip the ones that
+genuinely don't apply — but say which and why in the PR.
+
+1. **Gates green** — `fmt --check`, `clippy -D warnings`, build, and test.
+2. **Setting?** — wired into the settings screen *and* `config.example.toml`
+   (see [new settings go in the settings menu](#important-new-settings-go-in-the-settings-menu)).
+3. **`CHANGELOG.md`** — a user-facing bullet under `## [Unreleased]`.
+4. **Demo** — `assets/demo.tape` demonstrates it and `assets/demo.gif` is
+   regenerated, if it's visible in `--demo`.
+5. **README** — keybindings table and feature list updated (see below).
+6. **Visually verified** — the affected view checked against `--demo`.
+
+The sections below are the "how" for the non-obvious items.
+
 ## IMPORTANT: new settings go in the settings menu
 
 When you add a new configurable setting, wire it into the in-app **settings
@@ -106,3 +122,48 @@ screen** — do not leave it config-file-only. For a setting to be complete:
 
 A setting that exists in `config.toml` but not in the settings screen is
 considered incomplete.
+
+## IMPORTANT: keep the changelog and demo in sync
+
+Any change that adds or alters a **user-visible feature** must, in the same PR:
+
+1. **Update `CHANGELOG.md`** — add a bullet under `## [Unreleased]` in the
+   right Keep-a-Changelog group (`### Added` / `### Changed` / `### Fixed`;
+   create the group if missing). cargo-dist turns this into the release notes,
+   so write it for a user, not as a commit message.
+2. **Keep the demo GIF current** — the `assets/demo.gif` in the README is the
+   first thing people see, so it must reflect the current UI. If the feature is
+   visible in `--demo`:
+   - Extend `assets/demo.tape` so the recording actually *shows* the new
+     feature (add the keystrokes + a `Sleep` to let it land).
+   - Regenerate the GIF and commit it alongside the tape:
+
+     ```bash
+     mise exec -- cargo build --release
+     mise x vhs ttyd -- vhs assets/demo.tape   # writes assets/demo.gif
+     ```
+
+Internal-only changes (refactors, tests, CI, docs) need neither.
+
+## Keep the README current
+
+The README is the project's public face; it must match the shipped UI. When a
+change adds or alters a user-visible feature or a keybinding, update **both**:
+
+- the **Keybindings** table — every key the dashboard and settings screen
+  handle, and
+- the **What it does** feature list — so the prose reflects what the app can do.
+
+## Verify UI changes visually
+
+`Chart` / `Canvas` / layout bugs don't surface in `cargo test`. Before merging
+any change to rendering (`src/ui.rs`) or graph/layout behaviour, look at it on
+synthetic data:
+
+```bash
+mise exec -- cargo build --release
+./target/release/sugarrush --demo
+```
+
+For a reviewable artefact, capture the affected view with a one-off vhs tape
+(`Screenshot out.png`). "It compiled" is not "it looks right".
