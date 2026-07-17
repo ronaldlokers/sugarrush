@@ -57,6 +57,9 @@ That's the recording above. When you're ready, point it at your own site
 ## Install
 
 ```bash
+# Arch (AUR)
+yay -S sugarrush-bin
+
 # Homebrew (macOS/Linux)
 brew install ronaldlokers/tap/sugarrush
 

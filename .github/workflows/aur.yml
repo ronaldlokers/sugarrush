@@ -1,0 +1,55 @@
+name: Publish to AUR
+
+# Push sugarrush-bin to the AUR after a GitHub Release is published (so the
+# release tarball exists). No-ops until the AUR_SSH_KEY secret is set.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  aur:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for AUR key
+        id: gate
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_KEY" ]; then
+            echo "AUR_SSH_KEY not set — skipping AUR publish."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render PKGBUILD
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          ver="${TAG#v}"
+          case "$ver" in ''|*[!0-9.]*) echo "unexpected tag: $TAG"; exit 1;; esac
+          url="https://github.com/ronaldlokers/sugarrush/releases/download/v${ver}/sugarrush-x86_64-unknown-linux-musl.tar.xz"
+          sha="$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)"
+          sed -e "s/@VERSION@/${ver}/" -e "s/@SHA256@/${sha}/" \
+            packaging/aur/PKGBUILD.in > packaging/aur/PKGBUILD
+          echo "----- PKGBUILD -----"; cat packaging/aur/PKGBUILD
+
+      - name: Publish
+        if: steps.gate.outputs.ready == 'true'
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: sugarrush-bin
+          pkgbuild: packaging/aur/PKGBUILD
+          commit_username: ronaldlokers
+          commit_email: ronald@lokers.email
+          ssh_private_key: ${{ secrets.AUR_SSH_KEY }}
+          commit_message: "Update to ${{ env.TAG }}"
+          updpkgsums: false
