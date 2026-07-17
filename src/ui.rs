@@ -987,7 +987,19 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             Span::raw(s)
         }
     };
-    f.render_widget(Paragraph::new(Line::from(text)), area);
+    // A visible acknowledgement that the safety alarm is silenced, with a
+    // countdown, shown ahead of the normal footer content.
+    let mut spans = Vec::new();
+    if let Some(mins) = app.snooze_remaining_min(chrono::Utc::now().timestamp_millis()) {
+        spans.push(Span::styled(
+            format!(" ⏸ alarm snoozed · {mins}m left "),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans.push(text);
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// Format an epoch-ms timestamp as local `MM-DD HH:MM`.

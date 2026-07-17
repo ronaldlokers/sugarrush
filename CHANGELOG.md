@@ -6,8 +6,17 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- The dashboard footer now shows a **snooze indicator** with a countdown while
+  the audible alarm is silenced, so it's clear the alarm is off and for how long.
+
 ### Fixed
 
+- **Alarm responsiveness** — a sensor gap now escalates to a Stale alarm within
+  seconds (re-checked on the alarm tick) instead of waiting for the next full
+  refresh, and a failed escalation push (dead `push_url`) is surfaced instead of
+  swallowed silently.
 - **Alarm reliability** — the audible alarm could stop working silently in
   several cases, now fixed: the Nightscout client had no request timeout (a
   stalled connection froze input and the alarm), a total sensor dropout read as
