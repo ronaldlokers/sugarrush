@@ -253,38 +253,66 @@ fn draw_settings(f: &mut Frame, app: &App) {
     let inner = block.inner(chunks[1]);
     f.render_widget(block, chunks[1]);
 
-    // Scroll so the selected row stays visible when the list is taller than
-    // the pane.
+    // Build display rows: a dim section header whenever the group changes,
+    // then each field. Headers aren't selectable — navigation stays over
+    // Field::ALL, so `settings_sel` still indexes fields directly.
+    enum Row {
+        Header(&'static str),
+        Field(usize, Field),
+    }
+    let mut display: Vec<Row> = Vec::new();
+    let mut last_group = "";
+    for (i, &field) in Field::ALL.iter().enumerate() {
+        let g = field.group();
+        if g != last_group {
+            display.push(Row::Header(g));
+            last_group = g;
+        }
+        display.push(Row::Field(i, field));
+    }
+
+    // Scroll so the selected field (and ideally its header) stays visible.
     let height = inner.height.max(1) as usize;
-    let total = Field::ALL.len();
-    let offset = if app.settings_sel < height {
+    let sel_display = display
+        .iter()
+        .position(|r| matches!(r, Row::Field(i, _) if *i == app.settings_sel))
+        .unwrap_or(0);
+    let offset = if sel_display < height {
         0
     } else {
-        (app.settings_sel + 1 - height).min(total.saturating_sub(height))
+        (sel_display + 1 - height).min(display.len().saturating_sub(height))
     };
-    let rows: Vec<Line> = Field::ALL
+
+    let lines: Vec<Line> = display
         .iter()
-        .enumerate()
         .skip(offset)
         .take(height)
-        .map(|(i, &field)| {
-            let selected = i == app.settings_sel;
-            let marker = if selected { "▸ " } else { "  " };
-            let style = if selected {
+        .map(|row| match row {
+            Row::Header(name) => Line::from(Span::styled(
+                format!(" {name}"),
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            Line::from(Span::styled(
-                format!("{marker}{:<22}{}", field.label(), app.field_value(field)),
-                style,
-            ))
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Row::Field(i, field) => {
+                let selected = *i == app.settings_sel;
+                let marker = if selected { " ▸ " } else { "   " };
+                let style = if selected {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                Line::from(Span::styled(
+                    format!("{marker}{:<26}{}", field.label(), app.field_value(*field)),
+                    style,
+                ))
+            }
         })
         .collect();
-    f.render_widget(Paragraph::new(rows), inner);
+    f.render_widget(Paragraph::new(lines), inner);
 
     let footer = match &app.status {
         Some(msg) => Span::styled(format!(" {msg} "), Style::default().fg(Color::Green)),

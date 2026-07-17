@@ -115,6 +115,34 @@ impl Field {
         }
     }
 
+    /// The section this field belongs to. Fields are grouped contiguously in
+    /// `ALL`, so a header is drawn whenever this changes between rows.
+    pub fn group(self) -> &'static str {
+        match self {
+            Field::Units | Field::Refresh => "General",
+            Field::Desktop
+            | Field::Sound
+            | Field::Snooze
+            | Field::QuietHours
+            | Field::QuietStart
+            | Field::QuietEnd
+            | Field::QuietUrgentLow
+            | Field::Escalate => "Alarm",
+            Field::PredictHorizon => "Predictions",
+            Field::UrgentLow | Field::Low | Field::High | Field::UrgentHigh | Field::Stale => {
+                "Thresholds"
+            }
+            Field::GraphStyle | Field::MinimapEnabled | Field::MinimapSpan => "Graph",
+            Field::ThemeLow
+            | Field::ThemeInRange
+            | Field::ThemeHigh
+            | Field::ThemeUrgent
+            | Field::ThemePrediction
+            | Field::ThemeGraph
+            | Field::Colorblind => "Theme",
+        }
+    }
+
     /// For theme rows, the palette index (0..6) into the color roles.
     fn theme_index(self) -> Option<usize> {
         match self {
