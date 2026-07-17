@@ -12,15 +12,50 @@ use crate::nightscout::{DeviceStatus, Entry, Prediction, Treatment};
 use crate::sound;
 use crate::theme::{self, Theme, ThemeConfig};
 use crate::units::Units;
-use crate::view::View;
+use crate::view::{Span, View};
 
 const MS_PER_HOUR: i64 = 3_600_000;
+const MS_PER_DAY: i64 = 24 * MS_PER_HOUR;
 
 /// Which screen is currently shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Dashboard,
     Settings,
+}
+
+/// Which view fills the graph pane, selected by the tab bar above it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphView {
+    /// Live timeline at 3h zoom.
+    H3,
+    /// Live timeline at 24h zoom.
+    H24,
+    /// Ambulatory Glucose Profile — percentile bands folded over N days.
+    Agp,
+}
+
+impl GraphView {
+    pub const ALL: [GraphView; 3] = [GraphView::H3, GraphView::H24, GraphView::Agp];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GraphView::H3 => "3h",
+            GraphView::H24 => "24h",
+            GraphView::Agp => "AGP",
+        }
+    }
+
+    /// Position in `ALL`, used to highlight the tab.
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&v| v == self).unwrap_or(0)
+    }
+
+    /// Next/previous tab, wrapping. `dir` is +1 or -1.
+    pub fn cycle(self, dir: i32) -> Self {
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(self.index() as i32 + dir).rem_euclid(n) as usize]
+    }
 }
 
 /// Editable rows on the settings screen, in display order.
@@ -43,6 +78,7 @@ pub enum Field {
     UrgentHigh,
     Stale,
     GraphStyle,
+    AgpDays,
     MinimapEnabled,
     MinimapSpan,
     ThemeLow,
@@ -55,7 +91,7 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 26] = [
+    pub const ALL: [Field; 27] = [
         Field::Units,
         Field::Refresh,
         Field::Desktop,
@@ -73,6 +109,7 @@ impl Field {
         Field::UrgentHigh,
         Field::Stale,
         Field::GraphStyle,
+        Field::AgpDays,
         Field::MinimapEnabled,
         Field::MinimapSpan,
         Field::ThemeLow,
@@ -103,6 +140,7 @@ impl Field {
             Field::UrgentHigh => "Urgent high",
             Field::Stale => "Stale after",
             Field::GraphStyle => "Graph style",
+            Field::AgpDays => "AGP days",
             Field::MinimapEnabled => "Minimap",
             Field::MinimapSpan => "Minimap span",
             Field::ThemeLow => "Color: low",
@@ -132,7 +170,9 @@ impl Field {
             Field::UrgentLow | Field::Low | Field::High | Field::UrgentHigh | Field::Stale => {
                 "Thresholds"
             }
-            Field::GraphStyle | Field::MinimapEnabled | Field::MinimapSpan => "Graph",
+            Field::GraphStyle | Field::AgpDays | Field::MinimapEnabled | Field::MinimapSpan => {
+                "Graph"
+            }
             Field::ThemeLow
             | Field::ThemeInRange
             | Field::ThemeHigh
@@ -215,6 +255,12 @@ pub struct App {
     pub site_dirty: bool,
     /// How the graph draws readings.
     pub graph_style: GraphStyle,
+    /// Which view fills the graph pane (tab bar selection).
+    pub graph_view: GraphView,
+    /// Readings folded into the AGP profile, newest first (AGP view only).
+    pub agp_entries: Vec<Entry>,
+    /// How many days of history the AGP view folds over.
+    pub agp_days: u32,
 
     // Minimap navigator.
     pub minimap_enabled: bool,
@@ -275,6 +321,9 @@ impl App {
             site_idx: 0,
             site_dirty: false,
             graph_style: cfg.graph_style,
+            graph_view: GraphView::H3,
+            agp_entries: Vec::new(),
+            agp_days: cfg.agp_days.clamp(1, 90),
             minimap_enabled: cfg.minimap.enabled,
             minimap_span_ms: cfg.minimap.span_hours.max(1) as i64 * MS_PER_HOUR,
             minimap_entries: Vec::new(),
@@ -311,6 +360,43 @@ impl App {
     /// True when an offline connection is due for a backoff retry.
     pub fn should_retry(&self, now_ms: i64) -> bool {
         !self.online && self.view.is_live() && self.next_retry_at.is_some_and(|t| now_ms >= t)
+    }
+
+    /// True when the graph pane shows the AGP profile rather than the timeline.
+    pub fn is_agp(&self) -> bool {
+        self.graph_view == GraphView::Agp
+    }
+
+    /// Select a graph-pane view. The timeline presets snap the window to their
+    /// zoom at the live edge; AGP leaves the timeline untouched.
+    pub fn set_graph_view(&mut self, v: GraphView) {
+        self.graph_view = v;
+        match v {
+            GraphView::H3 => {
+                self.view.span = Span::H3;
+                self.view.follow();
+            }
+            GraphView::H24 => {
+                self.view.span = Span::H24;
+                self.view.follow();
+            }
+            GraphView::Agp => {}
+        }
+    }
+
+    /// Move to the next/previous graph-pane tab (`dir` is +1 / -1).
+    pub fn cycle_graph_view(&mut self, dir: i32) {
+        self.set_graph_view(self.graph_view.cycle(dir));
+    }
+
+    /// The AGP lookback window in milliseconds.
+    pub fn agp_span_ms(&self) -> i64 {
+        self.agp_days as i64 * MS_PER_DAY
+    }
+
+    /// Entries to request to fill the AGP window (5-min cadence, with slack).
+    pub fn agp_fetch_count(&self) -> usize {
+        self.agp_days as usize * 24 * 12 + 200
     }
 
     /// Handle a mouse press/drag over the minimap at screen column `col`:
@@ -630,6 +716,10 @@ impl App {
                 self.alerts.urgent_high = clamp_bg(self.alerts.urgent_high + d * step_mgdl)
             }
             Field::GraphStyle => self.graph_style = self.graph_style.cycle(dir),
+            Field::AgpDays => {
+                let next = self.agp_days as i64 + dir as i64;
+                self.agp_days = next.clamp(1, 90) as u32;
+            }
             Field::MinimapEnabled => self.minimap_enabled = !self.minimap_enabled,
             Field::MinimapSpan => {
                 let next = self.minimap_span_ms / MS_PER_HOUR + dir as i64 * 6;
@@ -714,6 +804,7 @@ impl App {
                 graph: Some(self.theme_names[5].clone()),
             },
             graph_style: self.graph_style,
+            agp_days: self.agp_days,
             minimap: MinimapConfig {
                 enabled: self.minimap_enabled,
                 span_hours: (self.minimap_span_ms / MS_PER_HOUR) as u32,
@@ -771,6 +862,7 @@ impl App {
             Field::High => self.threshold(self.alerts.high),
             Field::UrgentHigh => self.threshold(self.alerts.urgent_high),
             Field::GraphStyle => self.graph_style.label().to_string(),
+            Field::AgpDays => format!("{} days", self.agp_days),
             Field::MinimapEnabled => if self.minimap_enabled { "on" } else { "off" }.to_string(),
             Field::MinimapSpan => format!("{}h", self.minimap_span_ms / MS_PER_HOUR),
             Field::Colorblind => if self.is_colorblind() { "on" } else { "off" }.to_string(),

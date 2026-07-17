@@ -30,6 +30,9 @@ pub struct Config {
     /// How the graph draws readings.
     #[serde(default)]
     pub graph_style: GraphStyle,
+    /// How many days of history the AGP view folds over.
+    #[serde(default = "default_agp_days")]
+    pub agp_days: u32,
     /// Minimap navigator settings.
     #[serde(default)]
     pub minimap: MinimapConfig,
@@ -255,6 +258,9 @@ impl Alerts {
 fn default_units() -> Units {
     Units::Mmol
 }
+fn default_agp_days() -> u32 {
+    14
+}
 fn default_refresh() -> u64 {
     30
 }
@@ -285,6 +291,7 @@ impl Config {
             alerts: AlertsConfig::default(),
             theme: ThemeConfig::default(),
             graph_style: GraphStyle::default(),
+            agp_days: default_agp_days(),
             minimap: MinimapConfig::default(),
         }
     }

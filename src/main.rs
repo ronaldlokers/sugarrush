@@ -1,3 +1,4 @@
+mod agp;
 mod alert;
 mod app;
 mod bigfont;
@@ -244,27 +245,36 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
         KeyCode::Char('s') => app.toggle_settings(),
         KeyCode::Char('u') => app.toggle_units(),
         KeyCode::Char('r') => refresh(app, client).await,
-        KeyCode::Char('h') | KeyCode::Left => {
+        KeyCode::Tab => {
+            app.cycle_graph_view(1);
+            refresh(app, client).await;
+        }
+        KeyCode::BackTab => {
+            app.cycle_graph_view(-1);
+            refresh(app, client).await;
+        }
+        // Pan / zoom / jump operate on the timeline, not the AGP profile.
+        KeyCode::Char('h') | KeyCode::Left if !app.is_agp() => {
             app.view.pan_back(now_ms());
             refresh(app, client).await;
         }
-        KeyCode::Char('l') | KeyCode::Right => {
+        KeyCode::Char('l') | KeyCode::Right if !app.is_agp() => {
             app.view.pan_forward(now_ms());
             refresh(app, client).await;
         }
-        KeyCode::Char('+') | KeyCode::Char('=') => {
+        KeyCode::Char('+') | KeyCode::Char('=') if !app.is_agp() => {
             app.view.zoom_in();
             refresh(app, client).await;
         }
-        KeyCode::Char('-') | KeyCode::Char('_') => {
+        KeyCode::Char('-') | KeyCode::Char('_') if !app.is_agp() => {
             app.view.zoom_out();
             refresh(app, client).await;
         }
-        KeyCode::Char('f') | KeyCode::Home => {
+        KeyCode::Char('f') | KeyCode::Home if !app.is_agp() => {
             app.view.follow();
             refresh(app, client).await;
         }
-        KeyCode::Char('g') => app.begin_date_input(),
+        KeyCode::Char('g') if !app.is_agp() => app.begin_date_input(),
         KeyCode::Char('n') => app.next_site(),
         KeyCode::Char('a') => app.snooze_alarm(now_ms()),
         _ => {}
@@ -348,6 +358,9 @@ async fn refresh(app: &mut App, client: &Client) {
         if app.minimap_enabled {
             app.minimap_entries = demo::entries(now - app.minimap_span_ms, now);
         }
+        if app.is_agp() {
+            app.agp_entries = demo::entries(now - app.agp_span_ms(), now);
+        }
         return;
     }
     match client
@@ -397,6 +410,16 @@ async fn refresh(app: &mut App, client: &Client) {
         }
     } else {
         app.predictions.clear();
+    }
+
+    // AGP folds many days of history; fetch its own wider window on demand.
+    if app.is_agp() {
+        if let Ok(entries) = client
+            .entries_range(now - app.agp_span_ms(), now, app.agp_fetch_count())
+            .await
+        {
+            app.agp_entries = entries;
+        }
     }
 
     // Refresh the trailing overview only at the live edge; while dragging into

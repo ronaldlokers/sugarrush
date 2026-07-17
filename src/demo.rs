@@ -24,10 +24,12 @@ pub fn entries(start_ms: i64, end_ms: i64) -> Vec<Entry> {
     out
 }
 
-/// mg/dL at time `t` — two sine waves for a natural-looking wander.
+/// mg/dL at time `t` — a daily rhythm plus shorter waves for a natural-looking
+/// wander. The day-period term gives the AGP profile a real time-of-day shape.
 fn curve(t: i64) -> f64 {
     let m = t as f64 / 60_000.0; // minutes
-    let v = 135.0 + 60.0 * (m / 47.0).sin() + 18.0 * (m / 11.0).cos();
+    let day = (m / 1440.0 * std::f64::consts::TAU).sin(); // ~24h circadian swing
+    let v = 130.0 + 30.0 * day + 45.0 * (m / 47.0).sin() + 15.0 * (m / 11.0).cos();
     v.clamp(45.0, 320.0)
 }
 
