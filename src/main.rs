@@ -2,6 +2,7 @@ mod alert;
 mod app;
 mod bigfont;
 mod config;
+mod demo;
 mod nightscout;
 mod predict;
 mod sound;
@@ -34,8 +35,9 @@ use nightscout::Client;
 
 /// How the binary was invoked.
 enum Mode {
-    /// Run the interactive TUI, starting on the given screen.
-    Tui(Screen),
+    /// Run the interactive TUI, starting on the given screen; `demo` uses
+    /// synthetic data with no config/network.
+    Tui { screen: Screen, demo: bool },
     /// Print one Waybar JSON line and exit.
     Waybar,
     /// Print version/about info (and a desktop notification) and exit.
@@ -45,12 +47,14 @@ enum Mode {
 fn parse_args() -> Mode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut screen = Screen::Dashboard;
+    let mut demo = false;
     let mut mode: Option<Mode> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "waybar" => mode = Some(Mode::Waybar),
             "about" => mode = Some(Mode::About),
+            "--demo" => demo = true,
             "--screen" => {
                 i += 1;
                 if args.get(i).map(String::as_str) == Some("settings") {
@@ -61,7 +65,7 @@ fn parse_args() -> Mode {
         }
         i += 1;
     }
-    mode.unwrap_or(Mode::Tui(screen))
+    mode.unwrap_or(Mode::Tui { screen, demo })
 }
 
 #[tokio::main]
@@ -76,31 +80,36 @@ async fn main() -> Result<()> {
             println!("{}", waybar::line(&cfg).await);
             Ok(())
         }
-        Mode::Tui(screen) => run_tui(screen).await,
+        Mode::Tui { screen, demo } => run_tui(screen, demo).await,
     }
 }
 
-async fn run_tui(screen: Screen) -> Result<()> {
-    // No config yet: guide the user through setup on a terminal, or point them
-    // at the file when running non-interactively.
-    let path = Config::path()?;
-    if !path.exists() {
-        if std::io::stdin().is_terminal() {
-            wizard::run().await?;
-        } else {
-            anyhow::bail!(
-                "no config at {}. Copy config.example.toml there (set url + token), \
-                 or run sugarrush in a terminal for guided setup.",
-                path.display()
-            );
+async fn run_tui(screen: Screen, demo: bool) -> Result<()> {
+    let cfg = if demo {
+        Config::demo()
+    } else {
+        // No config yet: guide the user through setup on a terminal, or point
+        // them at the file when running non-interactively.
+        let path = Config::path()?;
+        if !path.exists() {
+            if std::io::stdin().is_terminal() {
+                wizard::run().await?;
+            } else {
+                anyhow::bail!(
+                    "no config at {}. Copy config.example.toml there (set url + token), \
+                     or run sugarrush in a terminal for guided setup.",
+                    path.display()
+                );
+            }
         }
-    }
-    let cfg = Config::load()?;
+        Config::load()?
+    };
     let sites = cfg.resolve_sites()?;
     let alerts = cfg.alerts.resolve(cfg.units);
     let mut app = App::new(&cfg, alerts, sites);
     app.screen = screen;
-    app.perm_warning = Config::perms_too_open();
+    app.demo = demo;
+    app.perm_warning = !demo && Config::perms_too_open();
 
     install_panic_hook();
     let mut terminal = setup_terminal(app.minimap_enabled)?;
@@ -323,6 +332,24 @@ async fn refresh(app: &mut App, client: &Client) {
     let (start, end) = app.view.bounds(now);
     app.view_start = start;
     app.view_end = end;
+
+    // Demo mode: synthesize everything locally, no network.
+    if app.demo {
+        app.entries = demo::entries(start, end);
+        app.mark_online(now);
+        app.evaluate_alert(now);
+        if app.view.is_live() {
+            app.predictions = predict::ar2(&app.entries);
+            app.device = demo::device();
+            app.treatments = demo::treatments(now);
+        } else {
+            app.predictions.clear();
+        }
+        if app.minimap_enabled {
+            app.minimap_entries = demo::entries(now - app.minimap_span_ms, now);
+        }
+        return;
+    }
     match client
         .entries_range(start, end, app.view.span.fetch_count())
         .await

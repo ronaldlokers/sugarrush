@@ -198,6 +198,8 @@ pub struct App {
     /// `Cell` so the immutable draw pass can record it.
     pub minimap_rect: Cell<Option<Rect>>,
 
+    /// Running on synthetic data (`--demo`).
+    pub demo: bool,
     /// Set when the config file permissions are too open (token is plaintext).
     pub perm_warning: bool,
     /// Whether the last fetch reached Nightscout.
@@ -249,6 +251,7 @@ impl App {
             minimap_span_ms: cfg.minimap.span_hours.max(1) as i64 * MS_PER_HOUR,
             minimap_entries: Vec::new(),
             minimap_rect: Cell::new(None),
+            demo: false,
             perm_warning: false,
             online: true,
             last_ok_ms: None,
