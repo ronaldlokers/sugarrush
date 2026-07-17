@@ -8,6 +8,9 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- A **keybinding help overlay** — press `?` for a full cheatsheet. The footer
+  now falls back to a terse hint set on narrow terminals (it previously clipped
+  silently, hiding settings/site/snooze) while always keeping `? help` visible.
 - The dashboard footer now shows a **snooze indicator** with a countdown while
   the audible alarm is silenced, so it's clear the alarm is off and for how long.
 
