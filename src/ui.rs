@@ -497,6 +497,14 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
     let bounds_x = [app.view_start as f64, right as f64];
     let mid_x = (app.view_start + right) / 2;
 
+    // A dim vertical rule at the latest reading marks the boundary between
+    // actual readings and the forecast — only when it's within the window.
+    let now_line = app
+        .latest()
+        .map(|e| e.date as f64)
+        .filter(|x| *x >= app.view_start as f64 && *x <= right as f64)
+        .map(|x| [(x, bounds_y[0]), (x, bounds_y[1])]);
+
     let (marker, gtype) = match app.graph_style {
         GraphStyle::Line => (symbols::Marker::Braille, GraphType::Line),
         GraphStyle::Dots => (symbols::Marker::Dot, GraphType::Scatter),
@@ -507,6 +515,15 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
         .graph_type(gtype)
         .style(Style::default().fg(app.theme.graph))
         .data(&points)];
+    if let Some(nl) = &now_line {
+        datasets.push(
+            Dataset::default()
+                .marker(symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(Color::DarkGray))
+                .data(nl),
+        );
+    }
     if !pred.is_empty() {
         datasets.push(
             Dataset::default()
