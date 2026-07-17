@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 
 use crate::alert::{self, Alert};
 use crate::config::{Alerts, AlertsConfig, Config, GraphStyle, MinimapConfig, Site};
-use crate::nightscout::{DeviceStatus, Entry, Treatment};
+use crate::nightscout::{DeviceStatus, Entry, Prediction, Treatment};
 use crate::sound;
 use crate::theme::{self, Theme, ThemeConfig};
 use crate::units::Units;
@@ -169,7 +169,7 @@ pub struct App {
     /// When `Some`, a date-jump prompt is open holding the typed buffer.
     pub date_input: Option<String>,
     /// Forecast points `(epoch_ms, mg/dL)`, live mode only.
-    pub predictions: Vec<(i64, f64)>,
+    pub predictions: Vec<Prediction>,
     /// Uploader/device metadata + IOB/COB (live mode only).
     pub device: DeviceStatus,
     /// Carb/insulin treatments within the current window.
@@ -420,12 +420,14 @@ impl App {
         if self.alert != Alert::InRange {
             return None;
         }
-        for &(t, mgdl) in &self.predictions {
-            if mgdl <= self.alerts.low {
-                return Some((false, ((t - now_ms) / 60_000).max(0)));
+        // The cone warns on the worst plausible path: its low edge for a low,
+        // its high edge for a high.
+        for p in &self.predictions {
+            if p.low <= self.alerts.low {
+                return Some((false, ((p.at_ms - now_ms) / 60_000).max(0)));
             }
-            if mgdl >= self.alerts.high {
-                return Some((true, ((t - now_ms) / 60_000).max(0)));
+            if p.high >= self.alerts.high {
+                return Some((true, ((p.at_ms - now_ms) / 60_000).max(0)));
             }
         }
         None
