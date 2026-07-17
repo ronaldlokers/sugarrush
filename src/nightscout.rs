@@ -167,6 +167,67 @@ impl Client {
                 .max()
         }))
     }
+
+    /// Fetch carb/insulin treatments whose `created_at` falls within
+    /// `[start_ms, end_ms]`.
+    pub async fn treatments(&self, start_ms: i64, end_ms: i64) -> Result<Vec<Treatment>> {
+        let since = DateTime::from_timestamp_millis(start_ms)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default();
+        let url = format!("{}/api/v1/treatments.json", self.base_url);
+        let value: Value = self
+            .http
+            .get(&url)
+            .query(&[
+                ("find[created_at][$gte]", since.as_str()),
+                ("count", "300"),
+                ("token", self.token.as_str()),
+            ])
+            .send()
+            .await
+            .context("treatments request failed")?
+            .error_for_status()
+            .context("Nightscout returned an error status")?
+            .json()
+            .await
+            .context("failed to parse treatments response")?;
+        Ok(value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|t| {
+                        let at = t.get("mills").and_then(Value::as_i64).or_else(|| {
+                            t.get("created_at")
+                                .and_then(Value::as_str)
+                                .and_then(parse_iso)
+                        })?;
+                        if at < start_ms || at > end_ms {
+                            return None;
+                        }
+                        let carbs = t.get("carbs").and_then(Value::as_f64).filter(|c| *c > 0.0);
+                        let insulin = t
+                            .get("insulin")
+                            .and_then(Value::as_f64)
+                            .filter(|i| *i > 0.0);
+                        (carbs.is_some() || insulin.is_some()).then_some(Treatment {
+                            at_ms: at,
+                            carbs,
+                            insulin,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+}
+
+/// A carb and/or insulin treatment.
+#[derive(Debug, Clone)]
+pub struct Treatment {
+    pub at_ms: i64,
+    pub carbs: Option<f64>,
+    pub insulin: Option<f64>,
 }
 
 /// Uploader / device metadata, best-effort.
@@ -178,6 +239,10 @@ pub struct DeviceStatus {
     pub device: Option<String>,
     /// When this status was recorded (epoch ms).
     pub last_ms: Option<i64>,
+    /// Insulin on board, units.
+    pub iob: Option<f64>,
+    /// Carbs on board, grams.
+    pub cob: Option<f64>,
 }
 
 fn parse_device_status(item: &Value) -> DeviceStatus {
@@ -195,10 +260,25 @@ fn parse_device_status(item: &Value) -> DeviceStatus {
             .and_then(Value::as_str)
             .and_then(parse_iso)
     });
+    // Loop: loop.iob.iob / loop.cob.cob. OpenAPS: openaps.suggested.IOB / .COB.
+    let l = item.get("loop");
+    let s = item.get("openaps").and_then(|o| o.get("suggested"));
+    let iob = l
+        .and_then(|l| l.get("iob"))
+        .and_then(|i| i.get("iob"))
+        .or_else(|| s.and_then(|s| s.get("IOB")))
+        .and_then(Value::as_f64);
+    let cob = l
+        .and_then(|l| l.get("cob"))
+        .and_then(|c| c.get("cob"))
+        .or_else(|| s.and_then(|s| s.get("COB")))
+        .and_then(Value::as_f64);
     DeviceStatus {
         battery,
         device,
         last_ms,
+        iob,
+        cob,
     }
 }
 
