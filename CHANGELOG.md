@@ -13,6 +13,9 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Setup** — the first-run wizard now asks for the display unit (mmol/L or
+  mg/dL) instead of always defaulting to mmol/L, so mg/dL users aren't dropped
+  into the wrong unit.
 - **Accessibility** — the colourblind-safe palette now uses named ANSI colours
   instead of truecolor hex, so it renders correctly on 16/256-colour terminals,
   tmux, and SSH sessions that lack truecolor (where it previously collapsed

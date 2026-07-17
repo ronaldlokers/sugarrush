@@ -38,7 +38,8 @@ pub async fn run() -> Result<()> {
         match test(&site).await {
             Ok(()) => {
                 println!("ok");
-                write_config(&path, &url, &token)?;
+                let units = prompt_units()?;
+                write_config(&path, &url, &token, units)?;
                 println!("\n  Saved to {}. Launching…\n", path.display());
                 return Ok(());
             }
@@ -65,6 +66,17 @@ fn prompt(label: &str) -> Result<String> {
     Ok(line.trim().to_string())
 }
 
+/// Ask for the display unit; defaults to mmol/L. Toggleable later with `u`.
+fn prompt_units() -> Result<&'static str> {
+    let ans = prompt("  Units — [1] mmol/L   [2] mg/dL   (default 1): ")?;
+    let a = ans.to_lowercase();
+    Ok(if a == "2" || a == "mgdl" || a == "mg/dl" {
+        "mgdl"
+    } else {
+        "mmol"
+    })
+}
+
 /// Verify the site by fetching one recent entry.
 async fn test(site: &Site) -> Result<()> {
     let client = Client::for_site(site)?;
@@ -74,7 +86,7 @@ async fn test(site: &Site) -> Result<()> {
 }
 
 /// Write a minimal config.toml with restrictive permissions.
-fn write_config(path: &Path, url: &str, token: &str) -> Result<()> {
+fn write_config(path: &Path, url: &str, token: &str, units: &str) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("failed to create {}", dir.display()))?;
@@ -83,7 +95,7 @@ fn write_config(path: &Path, url: &str, token: &str) -> Result<()> {
         "# sugarrush config — created by first-run setup\n\
          url = \"{url}\"\n\
          token = \"{token}\"\n\
-         units = \"mmol\"\n\
+         units = \"{units}\"\n\
          refresh_secs = 30\n",
     );
     std::fs::write(path, body).with_context(|| format!("failed to write {}", path.display()))?;
