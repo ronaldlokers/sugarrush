@@ -18,6 +18,13 @@ All notable changes to sugarrush are documented here. The format is based on
 - The dashboard footer now shows a **snooze indicator** with a countdown while
   the audible alarm is silenced, so it's clear the alarm is off and for how long.
 
+### Changed
+
+- **Dashboard polish** — the range bar now shows all four zones (urgent-low /
+  low / in-range / high / urgent-high) and uses integer mg/dL labels; IOB and
+  COB stand out from the dimmed device line; and the graph labels its carb and
+  bolus markers with a small legend.
+
 ### Fixed
 
 - **Graph theming** — the shaded in-range band is now derived from the in-range
