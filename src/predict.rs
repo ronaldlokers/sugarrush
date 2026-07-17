@@ -5,7 +5,7 @@
 //! simple AR2-style projection from the two most recent readings — the same
 //! model Nightscout uses for its short-term forecast.
 
-use crate::nightscout::Entry;
+use crate::nightscout::{Entry, Prediction};
 
 const BG_REF: f64 = 140.0;
 /// AR2 autoregression coefficients (Nightscout's ar2 plugin).
@@ -16,9 +16,13 @@ const STEPS: usize = 6;
 const BG_MIN: f64 = 36.0;
 const BG_MAX: f64 = 400.0;
 
-/// Project the next 30 minutes from the latest two readings. Returns
-/// `(epoch_ms, mg/dL)` future points, or empty if there isn't enough data.
-pub fn ar2(entries: &[Entry]) -> Vec<(i64, f64)> {
+/// Uncertainty half-width (mg/dL) added per 5-min step, so the AR2 projection
+/// fans into a cone the further out it reaches.
+const SPREAD_PER_STEP: f64 = 4.0;
+
+/// Project the next 30 minutes from the latest two readings as a widening
+/// low–high band, or empty if there isn't enough data.
+pub fn ar2(entries: &[Entry]) -> Vec<Prediction> {
     let (latest, prev) = match (entries.first(), entries.get(1)) {
         (Some(a), Some(b)) => (a, b),
         _ => return Vec::new(),
@@ -33,8 +37,13 @@ pub fn ar2(entries: &[Entry]) -> Vec<(i64, f64)> {
         let y_next = AR[0] * y0 + AR[1] * y1;
         y0 = y1;
         y1 = y_next;
-        let bg = (BG_REF * y_next.exp()).clamp(BG_MIN, BG_MAX);
-        out.push((latest.date + i * STEP_MS, bg));
+        let center = BG_REF * y_next.exp();
+        let spread = SPREAD_PER_STEP * i as f64;
+        out.push(Prediction {
+            at_ms: latest.date + i * STEP_MS,
+            low: (center - spread).clamp(BG_MIN, BG_MAX),
+            high: (center + spread).clamp(BG_MIN, BG_MAX),
+        });
     }
     out
 }
@@ -58,15 +67,20 @@ mod tests {
     }
 
     #[test]
-    fn projects_six_future_points_five_min_apart() {
+    fn projects_six_widening_bands_five_min_apart() {
         let now = 1_000_000_000_000;
         let out = ar2(&[entry(120.0, now), entry(115.0, now - STEP_MS)]);
         assert_eq!(out.len(), STEPS);
-        assert_eq!(out[0].0, now + STEP_MS);
-        assert_eq!(out[5].0, now + 6 * STEP_MS);
-        // A steady value in should forecast a steady value (AR coeffs sum ~1).
+        assert_eq!(out[0].at_ms, now + STEP_MS);
+        assert_eq!(out[5].at_ms, now + 6 * STEP_MS);
+        // The band widens with the horizon.
+        let w0 = out[0].high - out[0].low;
+        let w5 = out[5].high - out[5].low;
+        assert!(w5 > w0);
+        // A steady value in should forecast a steady band centre.
         let flat = ar2(&[entry(100.0, now), entry(100.0, now - STEP_MS)]);
-        assert!((flat[0].1 - 100.0).abs() < 1.0);
+        let mid = (flat[0].low + flat[0].high) / 2.0;
+        assert!((mid - 100.0).abs() < 1.0);
     }
 
     #[test]
@@ -74,6 +88,8 @@ mod tests {
         let now = 0;
         // A steep rise must not project past BG_MAX.
         let out = ar2(&[entry(390.0, now), entry(300.0, now - STEP_MS)]);
-        assert!(out.iter().all(|&(_, bg)| (BG_MIN..=BG_MAX).contains(&bg)));
+        assert!(out
+            .iter()
+            .all(|p| (BG_MIN..=BG_MAX).contains(&p.low) && (BG_MIN..=BG_MAX).contains(&p.high)));
     }
 }

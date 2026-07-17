@@ -93,7 +93,7 @@ impl Client {
     /// Fetch uploader-published forecasts from `/api/v1/devicestatus` (Loop's
     /// `loop.predicted` or OpenAPS's `openaps.suggested.predBGs`). Returns
     /// `(epoch_ms, mg/dL)` points, or `None` when no device predictions exist.
-    pub async fn predictions(&self) -> Result<Option<Vec<(i64, f64)>>> {
+    pub async fn predictions(&self) -> Result<Option<Vec<Prediction>>> {
         let url = format!("{}/api/v1/devicestatus.json", self.base_url);
         let value: Value = self
             .http
@@ -283,41 +283,67 @@ fn parse_device_status(item: &Value) -> DeviceStatus {
 }
 
 /// Extract a predicted SGV series from one devicestatus record.
-fn parse_predicted(item: &Value) -> Option<Vec<(i64, f64)>> {
-    // Loop: loop.predicted { startDate, values: [mg/dL, …] }
+/// One forecast step: a low–high band (mg/dL) at a time.
+#[derive(Debug, Clone, Copy)]
+pub struct Prediction {
+    pub at_ms: i64,
+    pub low: f64,
+    pub high: f64,
+}
+
+fn parse_predicted(item: &Value) -> Option<Vec<Prediction>> {
+    // Loop: loop.predicted { startDate, values } — a single curve.
     if let Some(pred) = item.get("loop").and_then(|l| l.get("predicted")) {
         let start = pred
             .get("startDate")
             .and_then(Value::as_str)
             .and_then(parse_iso)?;
         let values = pred.get("values")?.as_array()?;
-        return Some(space(start, values));
+        return Some(envelope(start, &[values]));
     }
-    // OpenAPS: openaps.suggested { timestamp, predBGs: { COB|IOB|ZT: [...] } }
+    // OpenAPS: openaps.suggested.predBGs { IOB, ZT, COB, UAM, … } — the cone is
+    // the min/max envelope across all published curves.
     if let Some(sug) = item.get("openaps").and_then(|o| o.get("suggested")) {
         let start = sug
             .get("timestamp")
             .and_then(Value::as_str)
             .and_then(parse_iso)?;
-        let pred_bgs = sug.get("predBGs")?;
-        let arr = ["COB", "IOB", "ZT"]
-            .iter()
-            .find_map(|k| pred_bgs.get(k).and_then(Value::as_array))?;
-        return Some(space(start, arr));
+        let curves: Vec<&Vec<Value>> = sug
+            .get("predBGs")?
+            .as_object()?
+            .values()
+            .filter_map(Value::as_array)
+            .collect();
+        if curves.is_empty() {
+            return None;
+        }
+        return Some(envelope(start, &curves));
     }
     None
 }
 
-/// Turn a start time plus a 5-minute-spaced value array into timed points.
-fn space(start_ms: i64, values: &[Value]) -> Vec<(i64, f64)> {
-    values
-        .iter()
-        .enumerate()
-        .filter_map(|(i, v)| {
-            v.as_f64()
-                .map(|bg| (start_ms + i as i64 * PRED_STEP_MS, bg))
-        })
-        .collect()
+/// Per-timestep min/max across the given 5-min-spaced curves.
+fn envelope(start_ms: i64, curves: &[&Vec<Value>]) -> Vec<Prediction> {
+    let max_len = curves.iter().map(|c| c.len()).max().unwrap_or(0);
+    let mut out = Vec::with_capacity(max_len);
+    for i in 0..max_len {
+        let mut lo = f64::MAX;
+        let mut hi = f64::MIN;
+        for c in curves {
+            if let Some(v) = c.get(i).and_then(Value::as_f64) {
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+        if lo <= hi {
+            out.push(Prediction {
+                at_ms: start_ms + i as i64 * PRED_STEP_MS,
+                low: lo,
+                high: hi,
+            });
+        }
+    }
+    out
 }
 
 fn parse_iso(s: &str) -> Option<i64> {

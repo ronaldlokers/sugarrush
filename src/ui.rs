@@ -587,29 +587,33 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
         .map(|e| (e.date as f64, app.units.from_mgdl(e.sgv)))
         .collect();
 
-    // Forecast series, anchored to the latest actual reading for continuity.
-    let pred: Vec<(f64, f64)> = if app.predictions.is_empty() {
-        Vec::new()
-    } else {
-        let anchor = app
-            .latest()
-            .map(|e| (e.date as f64, app.units.from_mgdl(e.sgv)));
-        anchor
-            .into_iter()
-            .chain(
-                app.predictions
-                    .iter()
-                    .map(|(t, mgdl)| (*t as f64, app.units.from_mgdl(*mgdl))),
-            )
-            .collect()
-    };
+    // Forecast cone: low / high bound lines + a centre, anchored to the latest
+    // actual reading so the cone grows out of the current value.
+    let (mut pred_center, mut pred_low, mut pred_high) = (Vec::new(), Vec::new(), Vec::new());
+    if !app.predictions.is_empty() {
+        if let Some(e) = app.latest() {
+            let a = (e.date as f64, app.units.from_mgdl(e.sgv));
+            pred_center.push(a);
+            pred_low.push(a);
+            pred_high.push(a);
+        }
+        for p in &app.predictions {
+            let t = p.at_ms as f64;
+            let lo = app.units.from_mgdl(p.low);
+            let hi = app.units.from_mgdl(p.high);
+            pred_low.push((t, lo));
+            pred_high.push((t, hi));
+            pred_center.push((t, (lo + hi) / 2.0));
+        }
+    }
 
     // Threshold rails (in display units) — always kept in view for reference.
     let low_y = app.units.from_mgdl(app.alerts.low);
     let high_y = app.units.from_mgdl(app.alerts.high);
     let (min_y, max_y) = points
         .iter()
-        .chain(pred.iter())
+        .chain(pred_low.iter())
+        .chain(pred_high.iter())
         .fold((f64::MAX, f64::MIN), |(lo, hi), (_, y)| {
             (lo.min(*y), hi.max(*y))
         });
@@ -617,9 +621,10 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
     let pad = ((max_y - min_y) * 0.1).max(app.units.from_mgdl(10.0));
     let bounds_y = [min_y - pad, max_y + pad];
     // Anchor x to the requested window; extend right to cover any forecast.
-    let right = pred
+    let right = app
+        .predictions
         .last()
-        .map(|(x, _)| *x as i64)
+        .map(|p| p.at_ms)
         .unwrap_or(app.view_end)
         .max(app.view_end);
     let bounds_x = [app.view_start as f64, right as f64];
@@ -739,13 +744,31 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
                 .data(&bolus_pts),
         );
     }
-    if !pred.is_empty() {
+    // Forecast cone: dim low/high bounds bracket a bright centre line.
+    if !pred_center.is_empty() {
+        let bound = Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::DIM);
+        datasets.push(
+            Dataset::default()
+                .marker(symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(bound)
+                .data(&pred_low),
+        );
+        datasets.push(
+            Dataset::default()
+                .marker(symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(bound)
+                .data(&pred_high),
+        );
         datasets.push(
             Dataset::default()
                 .marker(symbols::Marker::Braille)
                 .graph_type(GraphType::Line)
                 .style(Style::default().fg(app.theme.prediction))
-                .data(&pred),
+                .data(&pred_center),
         );
     }
 
