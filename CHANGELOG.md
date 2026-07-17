@@ -25,13 +25,6 @@ All notable changes to sugarrush are documented here. The format is based on
   high/low band (the plausible range) instead of a single line; the
   time-to-low/high ETA warns on the worst plausible path.
 
-### Fixed
-
-- **AUR publishing** — trigger the publish from the Release workflow's
-  `workflow_run` (plus a manual dispatch) since token-created releases never
-  fire the `release` event, and download the release asset via the GitHub API
-  rather than the browser URL (which 404s for dist-created releases).
-
 ## [2026.7.1] - 2026-07-17
 
 First public release. A fast, keyboard-driven terminal UI for viewing
