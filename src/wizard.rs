@@ -16,6 +16,8 @@ use crate::nightscout::Client;
 pub async fn run() -> Result<()> {
     let path = Config::path()?;
     println!("\n  sugarrush — first-run setup");
+    println!("  ⚠ Not a medical device. Don't use it for treatment decisions —");
+    println!("  always confirm with your meter, pump, or official app.\n");
     println!("  No config found. Let's connect to your Nightscout site.");
     println!("  Use a read-only token (Nightscout → Admin Tools → Subject with the");
     println!("  `readable` role). Not your API_SECRET.\n");

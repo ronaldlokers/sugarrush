@@ -1,8 +1,6 @@
 //! Alert evaluation: classify the latest reading against configured thresholds
 //! and flag stale data.
 
-use ratatui::style::Color;
-
 use crate::config::Alerts;
 
 const MS_PER_MIN: i64 = 60_000;
@@ -51,16 +49,6 @@ impl Alert {
             Alert::High => "high",
             Alert::UrgentHigh => "urgent-high",
             Alert::Stale => "stale",
-        }
-    }
-
-    /// Colour for the in-TUI banner.
-    pub fn color(self) -> Color {
-        match self {
-            Alert::UrgentLow | Alert::UrgentHigh => Color::Red,
-            Alert::Low | Alert::High => Color::Yellow,
-            Alert::Stale => Color::Magenta,
-            Alert::InRange => Color::Green,
         }
     }
 
