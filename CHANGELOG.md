@@ -20,6 +20,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Changed
 
+- **In-app safety note** — the "not a medical device" reminder now appears in
+  the running app (a dim note in the header, and up front in the first-run
+  wizard), not only in the README and `about`.
+- **Alert banner** now follows the theme/colourblind palette (it was hardcoded
+  red/yellow), and the selected settings row is highlighted full-width.
 - **Dashboard polish** — the range bar now shows all four zones (urgent-low /
   low / in-range / high / urgent-high) and uses integer mg/dL labels; IOB and
   COB stand out from the dimmed device line; and the graph labels its carb and

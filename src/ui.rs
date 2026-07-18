@@ -398,10 +398,15 @@ fn draw_settings(f: &mut Frame, app: &App) {
                 } else {
                     Style::default()
                 };
-                Line::from(Span::styled(
-                    format!("{marker}{:<26}{}", field.label(), app.field_value(*field)),
-                    style,
-                ))
+                let text = format!("{marker}{:<26}{}", field.label(), app.field_value(*field));
+                // Pad the selected row to full width so its highlight fills the
+                // line instead of ending ragged mid-text.
+                let text = if selected {
+                    format!("{text:<width$}", width = inner.width as usize)
+                } else {
+                    text
+                };
+                Line::from(Span::styled(text, style))
             }
         })
         .collect();
@@ -415,7 +420,16 @@ fn draw_settings(f: &mut Frame, app: &App) {
 }
 
 fn draw_banner(f: &mut Frame, area: Rect, app: &App) {
-    let color = app.alert.color();
+    use crate::alert::Alert;
+    // Route the banner background through the theme so the colourblind preset
+    // (and any custom palette) recolours the most safety-critical widget.
+    let color = match app.alert {
+        Alert::UrgentLow | Alert::UrgentHigh => app.theme.urgent,
+        Alert::Low => app.theme.low,
+        Alert::High => app.theme.high,
+        Alert::Stale => Color::Magenta,
+        Alert::InRange => app.theme.in_range,
+    };
     let line = Line::from(Span::styled(
         format!(" ⚠ {} ", app.alert.label()),
         Style::default()
@@ -478,6 +492,12 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ));
     }
+    // Standing reminder in the daily-use surface (it's disclaimed in the README
+    // and `about`, but a user who only ever runs the TUI should see it too).
+    spans.push(Span::styled(
+        " · not a medical device",
+        Style::default().fg(Color::DarkGray),
+    ));
     let title = Line::from(spans);
     let p = Paragraph::new(title).block(Block::default().borders(Borders::ALL));
     f.render_widget(p, area);
