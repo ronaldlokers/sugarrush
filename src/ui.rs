@@ -836,15 +836,28 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
     if let (Some(e), Some(first)) = (app.latest(), app.predictions.first()) {
         let anchor_y = app.units.from_mgdl(e.sgv);
         let first_mid = app.units.from_mgdl((first.low + first.high) / 2.0);
+        // Nudge the forecast so its *start* sits on the current reading, but let
+        // the correction decay to zero across the horizon — so the fan emanates
+        // from the dot yet still reaches the model's true endpoint (the AR2
+        // fallback amplifies the recent trend on its first step; a constant
+        // shift would drag the whole projection off). Uploader curves start near
+        // the current value, so the correction is tiny for them anyway.
         let shift = anchor_y - first_mid;
+        let n = app.predictions.len();
         let a = (e.date as f64, anchor_y);
         pred_center.push(a);
         pred_low.push(a);
         pred_high.push(a);
-        for p in &app.predictions {
+        for (j, p) in app.predictions.iter().enumerate() {
+            let decay = if n > 1 {
+                (n - 1 - j) as f64 / (n - 1) as f64
+            } else {
+                0.0
+            };
+            let s = shift * decay;
             let t = p.at_ms as f64;
-            let lo = app.units.from_mgdl(p.low) + shift;
-            let hi = app.units.from_mgdl(p.high) + shift;
+            let lo = app.units.from_mgdl(p.low) + s;
+            let hi = app.units.from_mgdl(p.high) + s;
             pred_low.push((t, lo));
             pred_high.push((t, hi));
             pred_center.push((t, (lo + hi) / 2.0));
