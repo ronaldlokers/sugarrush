@@ -758,7 +758,7 @@ fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
 
     let lo_lab = fmt_disp(app.units, bounds_y[0]);
     let hi_lab = fmt_disp(app.units, bounds_y[1]);
-    let ylab_w = lo_lab.len().max(hi_lab.len()) as u16;
+    let gutter = chart_gutter(&[&lo_lab, &hi_lab], "00:00");
 
     let chart = Chart::new(datasets)
         .block(block)
@@ -775,7 +775,7 @@ fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
                 .labels(vec![Span::raw(lo_lab), Span::raw(hi_lab)]),
         );
     f.render_widget(chart, area);
-    tint_agp_fan(f, area, bounds_y, ylab_w, &bands, &conv, app.theme.graph);
+    tint_agp_fan(f, area, bounds_y, gutter, &bands, &conv, app.theme.graph);
 }
 
 /// A braille line dataset over `data`, styled. Free fn so the borrow of `data`
@@ -1015,12 +1015,13 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
 
     let lo_lab = fmt_disp(app.units, bounds_y[0]);
     let hi_lab = fmt_disp(app.units, bounds_y[1]);
-    let ylab_w = lo_lab.len().max(hi_lab.len()) as u16;
+    let first_x = fmt_time(app.view_start);
+    let gutter = chart_gutter(&[&lo_lab, &hi_lab], &first_x);
 
     let chart = Chart::new(datasets)
         .block(block)
         .x_axis(Axis::default().bounds(bounds_x).labels(vec![
-            Span::raw(fmt_time(app.view_start)),
+            Span::raw(first_x.clone()),
             Span::raw(fmt_time(mid_x)),
             Span::raw(fmt_time(right)),
         ]))
@@ -1030,14 +1031,14 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
                 .labels(vec![Span::raw(lo_lab), Span::raw(hi_lab)]),
         );
     f.render_widget(chart, area);
-    tint_in_range_band(f, area, bounds_y, ylab_w, low_y, high_y, app.theme.in_range);
+    tint_in_range_band(f, area, bounds_y, gutter, low_y, high_y, app.theme.in_range);
     // Fill the forecast cone's low–high band, leaving the centre line on top.
     if pred_low.len() > 1 {
         tint_band(
             f,
             area,
             (bounds_x, bounds_y),
-            ylab_w,
+            gutter,
             &pred_low,
             &pred_high,
             tint_bg(app.theme.prediction, 0.32),
@@ -1078,9 +1079,23 @@ fn tint_bg(c: Color, scale: f32) -> Color {
     )
 }
 
-/// Geometry of a `Chart`'s plotting rect inside `area`: the columns/rows that
-/// hold data, excluding the block border, the left y-label gutter, and the
-/// bottom x-label row. `ylab_w` is the widest y-label.
+/// The widest left-gutter reservation a `Chart` makes for its y-axis, matching
+/// ratatui: the max y-label width, but at least the first (left-aligned) x-label
+/// overhanging left of the y-axis by all but its last character.
+fn chart_gutter(y_labels: &[&str], first_x_label: &str) -> u16 {
+    let ymax = y_labels
+        .iter()
+        .map(|s| s.chars().count())
+        .max()
+        .unwrap_or(0) as u16;
+    let x_overhang = (first_x_label.chars().count() as u16).saturating_sub(1);
+    ymax.max(x_overhang)
+}
+
+/// Geometry of a `Chart`'s plotting rect inside `area`, replicating ratatui's
+/// layout so background tints line up with the chart's own lines/points:
+/// exclude the block border, the left gutter + a y-axis line column, and the
+/// bottom two rows (the x-axis line and its labels).
 struct Plot {
     x0: u16,
     x1: u16,
@@ -1090,12 +1105,12 @@ struct Plot {
 }
 
 impl Plot {
-    fn new(area: Rect, bounds_y: [f64; 2], ylab_w: u16) -> Option<Self> {
+    fn new(area: Rect, bounds_y: [f64; 2], gutter: u16) -> Option<Self> {
         let inner = area.inner(Margin::new(1, 1));
-        let x0 = inner.x.saturating_add(ylab_w + 1);
+        let x0 = inner.x.saturating_add(gutter + 1); // gutter + y-axis line
         let x1 = inner.x + inner.width;
         let top = inner.y;
-        let bot = inner.y + inner.height.saturating_sub(1);
+        let bot = inner.y + inner.height.saturating_sub(3); // x-axis line + labels
         (bot > top && x1 > x0).then_some(Self {
             x0,
             x1,
@@ -1120,12 +1135,12 @@ fn tint_in_range_band(
     f: &mut Frame,
     area: Rect,
     bounds_y: [f64; 2],
-    ylab_w: u16,
+    gutter: u16,
     low_y: f64,
     high_y: f64,
     in_range: Color,
 ) {
-    let Some(plot) = Plot::new(area, bounds_y, ylab_w) else {
+    let Some(plot) = Plot::new(area, bounds_y, gutter) else {
         return;
     };
     let (y0, y1) = (plot.row_of(high_y), plot.row_of(low_y));
@@ -1161,13 +1176,13 @@ fn tint_band(
     f: &mut Frame,
     area: Rect,
     bounds: ([f64; 2], [f64; 2]),
-    ylab_w: u16,
+    gutter: u16,
     low: &[(f64, f64)],
     high: &[(f64, f64)],
     bg: Color,
 ) {
     let (bounds_x, bounds_y) = bounds;
-    let Some(plot) = Plot::new(area, bounds_y, ylab_w) else {
+    let Some(plot) = Plot::new(area, bounds_y, gutter) else {
         return;
     };
     if low.len() < 2 || high.len() < 2 {
@@ -1199,12 +1214,12 @@ fn tint_agp_fan(
     f: &mut Frame,
     area: Rect,
     bounds_y: [f64; 2],
-    ylab_w: u16,
+    gutter: u16,
     bands: &[agp::Band],
     conv: &dyn Fn(f64) -> f64,
     base: Color,
 ) {
-    let Some(plot) = Plot::new(area, bounds_y, ylab_w) else {
+    let Some(plot) = Plot::new(area, bounds_y, gutter) else {
         return;
     };
     if bands.len() < 2 {
