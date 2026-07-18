@@ -257,9 +257,13 @@ pub struct App {
     pub graph_style: GraphStyle,
     /// Which view fills the graph pane (tab bar selection).
     pub graph_view: GraphView,
-    /// Readings folded into the AGP profile, newest first (AGP view only).
+    /// Last `agp_days` of readings, newest first. Feeds the AGP profile and
+    /// the stats panel's clinical-window TIR/mean/GMI.
     pub agp_entries: Vec<Entry>,
-    /// How many days of history the AGP view folds over.
+    /// When `agp_entries` was last fetched (ms since epoch), to throttle the
+    /// heavy history fetch outside the AGP view.
+    pub agp_fetched_ms: i64,
+    /// How many days of history the AGP view and stats window fold over.
     pub agp_days: u32,
 
     // Minimap navigator.
@@ -325,6 +329,7 @@ impl App {
             graph_style: cfg.graph_style,
             graph_view: GraphView::H3,
             agp_entries: Vec::new(),
+            agp_fetched_ms: 0,
             agp_days: cfg.agp_days.clamp(1, 90),
             minimap_enabled: cfg.minimap.enabled,
             minimap_span_ms: cfg.minimap.span_hours.max(1) as i64 * MS_PER_HOUR,
@@ -733,6 +738,9 @@ impl App {
             Field::AgpDays => {
                 let next = self.agp_days as i64 + dir as i64;
                 self.agp_days = next.clamp(1, 90) as u32;
+                // The window changed, so the shared AGP/stats history buffer
+                // must be refetched on the next refresh.
+                self.agp_fetched_ms = 0;
             }
             Field::MinimapEnabled => self.minimap_enabled = !self.minimap_enabled,
             Field::MinimapSpan => {

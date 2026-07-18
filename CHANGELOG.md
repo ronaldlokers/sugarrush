@@ -6,6 +6,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stats are now clinical, not cosmetic** — time-in-range, mean, and GMI are
+  computed over a fixed window of the last N days (the `AGP days` setting,
+  default 14 — the clinical standard) instead of whatever slice of the graph
+  happened to be on screen, so panning or zooming no longer changes them. The
+  stats panel title names the window (e.g. `stats · 14d`).
+
 ## [2026.7.3] - 2026-07-18
 
 This release hardens the safety-critical alarm path and reworks the graphs. The

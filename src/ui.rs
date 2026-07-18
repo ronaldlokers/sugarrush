@@ -207,13 +207,19 @@ fn draw_minimap(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::ALL).title(" stats ");
+    // TIR / mean / GMI are computed over a fixed clinical window (the last
+    // `agp_days` days, reusing the AGP history buffer), not the visible graph
+    // window — panning/zooming must not change the clinical numbers. The
+    // title names the window so it can't be misread as "what's on screen".
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" stats · {}d ", app.agp_days));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let u = app.units;
     // Time-in-range as a stacked zone bar with the in-range % alongside.
-    let tir_line = match stats::tir(&app.entries, app.alerts.low, app.alerts.high) {
+    let tir_line = match stats::tir(&app.agp_entries, app.alerts.low, app.alerts.high) {
         Some(t) => {
             let bar_w = (inner.width as usize).saturating_sub(22).clamp(8, 40);
             let rc = (t.low / 100.0 * bar_w as f64).round() as usize;
@@ -233,8 +239,9 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
         None => Line::from("  TIR  —"),
     };
 
-    // Mean + a sparkline of recent readings + estimated A1c.
-    let avg_line = match stats::mean_mgdl(&app.entries) {
+    // Mean + estimated A1c over the clinical window; the sparkline stays on
+    // recent readings (it's a trend glance, not a statistic).
+    let avg_line = match stats::mean_mgdl(&app.agp_entries) {
         Some(mean) => {
             // Newest-first entries → oldest→newest for the sparkline.
             let mut spark: Vec<f64> = app.entries.iter().take(16).map(|e| e.sgv).collect();
