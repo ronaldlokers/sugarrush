@@ -36,6 +36,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Chart background tints now line up with the chart.** The in-range band, the
+  AGP fan, and the forecast fill are painted onto the terminal buffer, and the
+  plot-rect geometry didn't match ratatui's — it was two rows too tall and used
+  the wrong left gutter, so the shading spilled past the axes and sat offset from
+  the lines/points it shades (the forecast fan looked detached from the current
+  reading). The geometry now replicates ratatui's chart layout exactly.
 - **Graph theming** — the shaded in-range band is now derived from the in-range
   palette colour (it was hardcoded green, so it broke the colourblind preset),
   and the y-axis shows integer mg/dL values instead of spurious decimals.
