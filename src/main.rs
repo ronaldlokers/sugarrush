@@ -370,9 +370,9 @@ async fn refresh(app: &mut App, client: &Client) {
         if app.minimap_enabled {
             app.minimap_entries = demo::entries(now - app.minimap_span_ms, now);
         }
-        if app.is_agp() {
-            app.agp_entries = demo::entries(now - app.agp_span_ms(), now);
-        }
+        // Always synthesized: the stats panel reads this clinical-window
+        // buffer even outside the AGP view.
+        app.agp_entries = demo::entries(now - app.agp_span_ms(), now);
         return;
     }
     match client
@@ -411,13 +411,18 @@ async fn refresh(app: &mut App, client: &Client) {
             app.predictions.clear();
         }
 
-        // AGP folds many days of history; fetch its own wider window on demand.
-        if app.is_agp() {
+        // The `agp_days` history buffer feeds both the AGP view and the stats
+        // panel's clinical TIR/mean/GMI, so it's kept warm in every view — but
+        // it's a heavy fetch (up to 90 days of readings), so outside the AGP
+        // view it only refreshes when empty or older than 15 minutes.
+        let agp_stale = now - app.agp_fetched_ms > 15 * 60 * 1000;
+        if app.is_agp() || app.agp_entries.is_empty() || agp_stale {
             if let Ok(entries) = client
                 .entries_range(now - app.agp_span_ms(), now, app.agp_fetch_count())
                 .await
             {
                 app.agp_entries = entries;
+                app.agp_fetched_ms = now;
             }
         }
 

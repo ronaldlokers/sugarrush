@@ -30,8 +30,9 @@ That's the recording above. When you're ready, point it at your own site
 **At a glance**
 - Big, colour-coded current value with trend arrow, delta, and a plain-text
   range label (readable without colour)
-- Time-in-range, mean glucose + GMI (estimated A1c), and device status
-  (battery, sensor age, last seen)
+- Time-in-range, mean glucose + GMI (estimated A1c) over a fixed clinical
+  window (last 14 days by default), and device status (battery, sensor age,
+  last seen)
 - Insulin-on-board / carbs-on-board, with carb & bolus markers on the graph
 
 **History & forecast**
