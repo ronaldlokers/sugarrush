@@ -21,7 +21,9 @@ All notable changes to sugarrush are documented here. The format is based on
 ### Changed
 
 - The **forecast cone** on the timeline is now a filled low–high band (matching
-  the AGP fan) with the centre line drawn on top, instead of two dim edge lines.
+  the AGP fan) with the centre line drawn on top, instead of two dim edge lines,
+  and it emanates from the last reading (the AR2 fallback's initial jump no
+  longer leaves the fan floating above the current dot).
 - **In-app safety note** — the "not a medical device" reminder now appears in
   the running app (a dim note in the header, and up front in the first-run
   wizard), not only in the README and `about`.
