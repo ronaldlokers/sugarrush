@@ -23,6 +23,34 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  # Force the README demo to stay current: if a PR changes the rendering source
+  # or the tape, it must also regenerate assets/demo.gif. Non-visual edits to
+  # those files can bypass with "[skip-demo]" in the PR title.
+  demo-current:
+    name: demo gif current
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.title, '[skip-demo]')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: demo.gif regenerated when the UI changes
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE"
+          changed=$(git diff --name-only "origin/$BASE"...HEAD)
+          ui=$(echo "$changed" | grep -E '^(src/ui\.rs|src/theme\.rs|src/bigfont\.rs|assets/demo\.tape)$' || true)
+          if [ -n "$ui" ] && ! echo "$changed" | grep -qx 'assets/demo.gif'; then
+            echo "::error::UI/rendering changed but assets/demo.gif was not regenerated:"
+            echo "$ui"
+            echo "Run: mise x vhs ttyd -- vhs assets/demo.tape   then commit assets/demo.gif"
+            echo "If the change is not visible in --demo, add '[skip-demo]' to the PR title."
+            exit 1
+          fi
+          echo "demo.gif is current"
+
   # Build + test on every platform we ship to, so platform-specific breakage
   # (notify-rust, sound.rs, terminal handling) is caught here, not at tag time.
   test:

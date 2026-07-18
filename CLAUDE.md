@@ -169,6 +169,11 @@ Any change that adds or alters a **user-visible feature** must, in the same PR:
      mise x vhs ttyd -- vhs assets/demo.tape   # writes assets/demo.gif
      ```
 
+   **CI enforces this**: the `demo gif current` job fails a PR that changes
+   `src/ui.rs`, `src/theme.rs`, `src/bigfont.rs`, or `assets/demo.tape` without
+   also committing a regenerated `assets/demo.gif`. For a non-visual edit to one
+   of those files, bypass it with `[skip-demo]` in the PR title.
+
 Internal-only changes (refactors, tests, CI, docs) need neither.
 
 ## Keep the README current
