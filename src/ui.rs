@@ -984,25 +984,9 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
                 .data(&bolus_pts),
         );
     }
-    // Forecast cone: dim low/high bounds bracket a bright centre line.
+    // Forecast cone: the low–high band is a filled tint (below); draw only the
+    // bright centre line on top.
     if !pred_center.is_empty() {
-        let bound = Style::default()
-            .fg(Color::Magenta)
-            .add_modifier(Modifier::DIM);
-        datasets.push(
-            Dataset::default()
-                .marker(symbols::Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(bound)
-                .data(&pred_low),
-        );
-        datasets.push(
-            Dataset::default()
-                .marker(symbols::Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(bound)
-                .data(&pred_high),
-        );
         datasets.push(
             Dataset::default()
                 .marker(symbols::Marker::Braille)
@@ -1030,6 +1014,18 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
         );
     f.render_widget(chart, area);
     tint_in_range_band(f, area, bounds_y, ylab_w, low_y, high_y, app.theme.in_range);
+    // Fill the forecast cone's low–high band, leaving the centre line on top.
+    if pred_low.len() > 1 {
+        tint_band(
+            f,
+            area,
+            (bounds_x, bounds_y),
+            ylab_w,
+            &pred_low,
+            &pred_high,
+            tint_bg(app.theme.prediction, 0.32),
+        );
+    }
 }
 
 /// Approximate RGB for a `Color`, so background tints can be derived from the
@@ -1122,6 +1118,58 @@ fn tint_in_range_band(
         for xx in plot.x0..plot.x1 {
             if let Some(cell) = buf.cell_mut((xx, yy)) {
                 cell.set_bg(band);
+            }
+        }
+    }
+}
+
+/// Interpolate the `y` of a sorted `(x, y)` series at `x` (clamped to the ends).
+fn interp_xy(pts: &[(f64, f64)], x: f64) -> f64 {
+    match pts.iter().position(|p| p.0 >= x) {
+        Some(0) => pts[0].1,
+        Some(i) => {
+            let (a, b) = (pts[i - 1], pts[i]);
+            let span = (b.0 - a.0).max(1.0);
+            a.1 + (b.1 - a.1) * ((x - a.0) / span)
+        }
+        None => pts.last().map(|p| p.1).unwrap_or(0.0),
+    }
+}
+
+/// Fill the band between a `low` and `high` `(x_data, y_display)` series by
+/// tinting cell backgrounds per column — used for the forecast cone. `x_data`
+/// is in the chart's x-bounds space (epoch ms); columns outside the series'
+/// x-range are left untouched, so only the forecast region is shaded.
+fn tint_band(
+    f: &mut Frame,
+    area: Rect,
+    bounds: ([f64; 2], [f64; 2]),
+    ylab_w: u16,
+    low: &[(f64, f64)],
+    high: &[(f64, f64)],
+    bg: Color,
+) {
+    let (bounds_x, bounds_y) = bounds;
+    let Some(plot) = Plot::new(area, bounds_y, ylab_w) else {
+        return;
+    };
+    if low.len() < 2 || high.len() < 2 {
+        return;
+    }
+    let (xmin, xmax) = (low[0].0, low[low.len() - 1].0);
+    let xspan = (bounds_x[1] - bounds_x[0]).max(1.0);
+    let pw = (plot.x1 - plot.x0).max(1) as f64;
+    let buf = f.buffer_mut();
+    for xx in plot.x0..plot.x1 {
+        let x = bounds_x[0] + (xx - plot.x0) as f64 / pw * xspan;
+        if x < xmin || x > xmax {
+            continue;
+        }
+        let a = plot.row_of(interp_xy(high, x));
+        let b = plot.row_of(interp_xy(low, x));
+        for yy in a.min(b)..=a.max(b) {
+            if let Some(cell) = buf.cell_mut((xx, yy)) {
+                cell.set_bg(bg);
             }
         }
     }
