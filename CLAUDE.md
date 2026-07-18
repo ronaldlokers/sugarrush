@@ -76,25 +76,6 @@ To ship a version:
 3. **Bump the version** in `Cargo.toml` to the same CalVer (`cargo build` to
    update `Cargo.lock`), on a branch → PR → merge.
 4. **Tag and push**: `git tag vYYYY.M.N && git push origin vYYYY.M.N`.
-5. **Rewrite the Release title and body to the house format** — cargo-dist
-   auto-generates both; overwrite them once the Release exists:
-
-   ```sh
-   gh release edit vYYYY.M.N --title "YYYY.M.N" --notes-file notes.md
-   ```
-
-   - **Title**: *just the version*, no `v` — e.g. `2026.7.2`, never `v2026.7.2`.
-     Never carry the date (cargo-dist inherits it from the changelog heading).
-   - **Body**: just the release notes — drop cargo-dist's auto-generated
-     *Install …* and *Download …* sections (GitHub already lists the assets,
-     and install instructions live in the README):
-
-     ```markdown
-     ## Release Notes
-
-     <this version's CHANGELOG section: the summary paragraph, then the
-     ### Added / ### Changed / ### Fixed groups>
-     ```
 
 That one tag fans out automatically:
 
@@ -106,6 +87,13 @@ That one tag fans out automatically:
 - **Publish to AUR** — runs after the Release completes (keyed off
   `workflow_run`, *not* `on: release`, since `GITHUB_TOKEN`-created releases
   don't fire release events); renders the PKGBUILD and pushes `sugarrush-bin`.
+- **Normalize release notes** — also runs after the Release completes and
+  rewrites the GitHub Release to the house format: the title becomes the bare
+  version (no `v`, no date) and the body becomes just this version's CHANGELOG
+  section under `## Release Notes` (dropping cargo-dist's auto Install/Download
+  sections). So there is **no manual step** to fix the release message — just
+  keep the CHANGELOG section good. Re-run for a tag with
+  `gh workflow run release-notes.yml -f tag=vYYYY.M.N`.
 
 Notes for future release work:
 
