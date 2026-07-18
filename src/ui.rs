@@ -827,20 +827,24 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
         .map(|e| (e.date as f64, app.units.from_mgdl(e.sgv)))
         .collect();
 
-    // Forecast cone: low / high bound lines + a centre, anchored to the latest
-    // actual reading so the cone grows out of the current value.
+    // Forecast cone, anchored to the latest actual reading so it emanates from
+    // the current dot. The whole band is shifted so its first centre sits on the
+    // reading — uploader curves already start near the current value (shift ≈ 0),
+    // so this mainly straightens the AR2 fallback's initial jump. Band width
+    // (the uncertainty) is preserved.
     let (mut pred_center, mut pred_low, mut pred_high) = (Vec::new(), Vec::new(), Vec::new());
-    if !app.predictions.is_empty() {
-        if let Some(e) = app.latest() {
-            let a = (e.date as f64, app.units.from_mgdl(e.sgv));
-            pred_center.push(a);
-            pred_low.push(a);
-            pred_high.push(a);
-        }
+    if let (Some(e), Some(first)) = (app.latest(), app.predictions.first()) {
+        let anchor_y = app.units.from_mgdl(e.sgv);
+        let first_mid = app.units.from_mgdl((first.low + first.high) / 2.0);
+        let shift = anchor_y - first_mid;
+        let a = (e.date as f64, anchor_y);
+        pred_center.push(a);
+        pred_low.push(a);
+        pred_high.push(a);
         for p in &app.predictions {
             let t = p.at_ms as f64;
-            let lo = app.units.from_mgdl(p.low);
-            let hi = app.units.from_mgdl(p.high);
+            let lo = app.units.from_mgdl(p.low) + shift;
+            let hi = app.units.from_mgdl(p.high) + shift;
             pred_low.push((t, lo));
             pred_high.push((t, hi));
             pred_center.push((t, (lo + hi) / 2.0));
