@@ -1,6 +1,6 @@
 [package]
 name = "sugarrush"
-version = "2026.7.2"
+version = "2026.7.3"
 edition = "2021"
 rust-version = "1.82"
 description = "A terminal UI for viewing Nightscout CGM (blood glucose sensor) data"

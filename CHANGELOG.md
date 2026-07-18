@@ -6,6 +6,18 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2026.7.3] - 2026-07-18
+
+This release hardens the safety-critical alarm path and reworks the graphs. The
+audible alarm can no longer stall silently — the Nightscout client now times
+out, a total sensor dropout raises a Stale alarm, sensor-error codes no longer
+fire a false urgent-low, and a wrong token says so instead of reading as
+"offline". Visually, both the AGP and the short-term forecast now render as
+filled percentile/uncertainty bands, chart shading lines up with the axes, the
+colourblind palette renders on every terminal (including tmux/SSH), and there's
+a `?` keybinding overlay. It also adds a first-run units prompt and an in-app
+"not a medical device" reminder.
+
 ### Added
 
 - The **AGP view** now renders as a filled percentile fan (a shaded 5–95 and a
@@ -127,6 +139,7 @@ self-hosted [Nightscout](https://nightscout.github.io/) CGM data.
 - **Distribution** — published to crates.io, the AUR (`sugarrush-bin`), and a
   Homebrew tap; prebuilt binaries + shell/PowerShell installers via cargo-dist.
 
-[Unreleased]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.2...HEAD
+[Unreleased]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.3...HEAD
+[2026.7.3]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.2...v2026.7.3
 [2026.7.2]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.1...v2026.7.2
 [2026.7.1]: https://github.com/ronaldlokers/sugarrush/releases/tag/v2026.7.1
