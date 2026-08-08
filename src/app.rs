@@ -231,6 +231,14 @@ pub struct App {
     pub units: Units,
     /// Entries loaded for the current window, newest first.
     pub entries: Vec<Entry>,
+    /// The newest live reading, kept up to date even while the graph is
+    /// showing history, so the alarm never follows the viewport.
+    pub live_edge: Option<Entry>,
+    /// When this app first evaluated an alert, so "never connected" can become
+    /// an alarm rather than an indefinite silence. Recorded on first use
+    /// rather than at construction, so it follows the same clock the alert
+    /// path is given instead of the wall clock.
+    first_seen_ms: Option<i64>,
     /// The visible time window over the history.
     pub view: View,
     /// Concrete window bounds (epoch ms) from the last fetch, for rendering.
@@ -333,6 +341,9 @@ pub struct App {
     pub watcher_seen: bool,
     /// Whether the last fetch reached Nightscout.
     pub online: bool,
+    /// Set when a desktop notification could not be delivered — no
+    /// notification daemon, or D-Bus refused it.
+    pub notify_failed: bool,
     /// Epoch ms of the last successful fetch.
     pub last_ok_ms: Option<i64>,
     /// Consecutive fetch failures, for backoff.
@@ -360,6 +371,8 @@ impl App {
         Self {
             units: cfg.units,
             entries: Vec::new(),
+            live_edge: None,
+            first_seen_ms: None,
             view: View::default(),
             view_start: 0,
             view_end: 0,
@@ -405,6 +418,7 @@ impl App {
             watcher_alive: false,
             watcher_seen: false,
             online: true,
+            notify_failed: false,
             last_ok_ms: None,
             fetch_fails: 0,
             config_fails: 0,
@@ -677,12 +691,27 @@ impl App {
         self.settings_dirty = true;
     }
 
-    /// Recompute the alert state from the latest reading. Alerts only apply
-    /// while following live data; browsing history never alerts. Returns the
-    /// new state so the caller can react to transitions.
+    /// The newest live reading, whatever the graph happens to be showing.
+    ///
+    /// The alarm must never depend on where the viewport is pointed: pressing
+    /// `[` to look at last night used to make `evaluate_alert` return InRange,
+    /// and — because the TUI keeps heartbeating — silenced the watch daemon
+    /// too, so the whole system went quiet while someone read history.
+    pub fn live_latest(&self) -> Option<&Entry> {
+        if self.view.is_live() {
+            self.entries.first()
+        } else {
+            self.live_edge.as_ref()
+        }
+    }
+
+    /// Recompute the alert state from the newest live reading. Only the graph
+    /// is historical when browsing; the alarm always tracks the present.
+    /// Returns the new state so the caller can react to transitions.
     pub fn evaluate_alert(&mut self, now_ms: i64) -> Alert {
-        self.alert = if self.view.is_live() {
-            match self.latest() {
+        let first_seen = *self.first_seen_ms.get_or_insert(now_ms);
+        self.alert = {
+            match self.live_latest() {
                 // Carry the previous state in so a value sitting on a threshold
                 // doesn't flap in and out of the alarm.
                 Some(e) => alert::evaluate_from(e.sgv, now_ms - e.date, &self.alerts, self.alert),
@@ -690,10 +719,14 @@ impl App {
                 // but only once we've seen data (don't alarm during first-run
                 // setup before any successful fetch).
                 None if self.last_ok_ms.is_some() => Alert::Stale,
+                // Never connected. Staying quiet is right for the seconds
+                // before the first fetch and wrong forever after: a watcher
+                // started with a bad token would otherwise report "in range"
+                // all night. After the staleness window with nothing at all,
+                // no data is a sensor gap like any other.
+                None if now_ms - first_seen > self.alerts.stale_minutes * 60_000 => Alert::Stale,
                 None => Alert::InRange,
             }
-        } else {
-            Alert::InRange
         };
         // An episode belongs to one urgent *state*, not to "urgent" in general.
         // Keying it on `is_urgent()` alone made Stale → UrgentLow one
@@ -1495,6 +1528,36 @@ mod tests {
         assert!(!a.alarm_active(later), "snooze was dropped mid-episode");
         assert_eq!(a.urgent_since(), Some(NOW), "escalation clock restarted");
         assert_eq!(a.take_push(later), None, "pushed twice for one episode");
+    }
+
+    #[test]
+    fn browsing_history_does_not_silence_the_alarm() {
+        let mut a = app();
+        // A live urgent low, and the graph pointed at yesterday.
+        a.entries = vec![entry(38.0, NOW)];
+        a.live_edge = Some(entry(38.0, NOW));
+        a.view.shift_day(-1, NOW);
+        assert!(!a.view.is_live());
+
+        assert_eq!(
+            a.evaluate_alert(NOW),
+            Alert::UrgentLow,
+            "the alarm followed the viewport instead of the clock"
+        );
+        assert!(a.alarm_active(NOW));
+    }
+
+    #[test]
+    fn a_site_that_never_connects_eventually_alarms() {
+        let mut a = app();
+        // Nothing fetched, ever — a watcher started with a bad token.
+        assert_eq!(a.evaluate_alert(NOW), Alert::InRange, "alarmed too early");
+
+        // Past the staleness window with still nothing, silence is wrong.
+        let later = NOW + (a.alerts.stale_minutes + 1) * 60_000;
+        assert_eq!(a.evaluate_alert(later), Alert::Stale);
+        a.update_urgent(later);
+        assert!(a.alarm_active(later));
     }
 
     #[test]

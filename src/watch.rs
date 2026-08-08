@@ -394,9 +394,9 @@ async fn react(w: &mut Watched, now_ms: i64, multi: bool) {
         println!("{} · {who}{msg}", stamp(now_ms));
         if app.alerts.desktop {
             if app.alerts.notify_content {
-                crate::notify_text(&msg);
+                let _ = crate::notify_text(&msg);
             } else {
-                crate::notify_text("alert — open sugarrush");
+                let _ = crate::notify_text("alert — open sugarrush");
             }
         }
     }
