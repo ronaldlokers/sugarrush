@@ -107,6 +107,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("H / L · PgUp/Dn", "pan a whole window"),
         ("+ / -", "zoom window (1h–24h)"),
         ("g", "jump to a date"),
+        ("[ / ]", "previous / next day"),
         ("End", "jump to the start of the overview"),
         ("f / Home / Esc", "return to live"),
         ("e", "export the clinical window (csv + summary)"),

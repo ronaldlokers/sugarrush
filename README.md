@@ -40,7 +40,7 @@ That's the recording above. When you're ready, point it at your own site
 - Switchable **graph views** (`Tab`) — a 3h or 24h timeline, or an **AGP**
   (ambulatory glucose profile) folding days of readings into a percentile band
 - Live braille/dot graph you can **pan** (`h`/`l`), **zoom** (`+`/`-`,
-  1h–24h), and **jump to a date** (`g`)
+  1h–24h), step **day by day** (`[`/`]`), and **jump to a date** (`g`)
 - A 24h **minimap** you click or drag to move the window
 - Short-term **forecast cone** (uploader predictions or a local AR2 fallback)
   showing the high/low uncertainty band, with a "now" line and a
@@ -143,6 +143,7 @@ design: file-only, documented.
 | `H` / `L` · `PgUp` / `PgDn` | Pan a whole window at a time |
 | `+` / `-` | Zoom window (1h/3h/6h/12h/24h) |
 | `g` | Jump to a date (`YYYY-MM-DD`) |
+| `[` / `]` | Previous / next day (same time of day) |
 | `End` | Jump to the start of the overview strip |
 | `f` / `Home` / `Esc` | Return to live |
 | `e` | Export the clinical window (CSV + summary) |

@@ -7,6 +7,7 @@
 use chrono::{Local, NaiveDate, TimeZone};
 
 const MS_PER_MIN: i64 = 60_000;
+const MS_PER_DAY: i64 = 24 * 60 * MS_PER_MIN;
 
 /// Selectable widths for the visible time window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +127,22 @@ impl View {
         if let Some(end) = self.end {
             let next = end + by;
             self.end = if next >= now_ms { None } else { Some(next) };
+        }
+    }
+
+    /// Step the window a whole day back or forward, keeping the same
+    /// time-of-day. Checking "how was last night?" or walking back through a
+    /// week shouldn't mean typing a date each time.
+    ///
+    /// From the live edge, going back a day anchors on now first, so the window
+    /// covers the same clock hours as the one you were just looking at.
+    pub fn shift_day(&mut self, days: i64, now_ms: i64) {
+        let by = days.abs() * MS_PER_DAY;
+        if days < 0 {
+            self.shift_back(now_ms, by);
+        } else {
+            // Already live: there's no tomorrow to go to.
+            self.shift_forward(now_ms, by);
         }
     }
 
@@ -265,6 +282,34 @@ mod tests {
         // An overview no wider than the window is already live.
         let mut v = View::default();
         v.jump_to_oldest(NOW, 60 * 60_000);
+        assert!(v.is_live());
+    }
+
+    #[test]
+    fn day_steps_keep_the_time_of_day() {
+        let mut v = View::default(); // 3h window, live
+        v.shift_day(-1, NOW);
+        // Same clock hours as the live window, 24h earlier.
+        let (start, end) = v.bounds(NOW);
+        assert_eq!(end, NOW - 24 * 60 * 60_000);
+        assert_eq!(end - start, 3 * 60 * 60_000);
+        // Two days back, then two forward, is where we started.
+        v.shift_day(-1, NOW);
+        v.shift_day(1, NOW);
+        v.shift_day(1, NOW);
+        assert!(v.is_live());
+    }
+
+    #[test]
+    fn there_is_no_tomorrow() {
+        let mut v = View::default();
+        // Going forward from live stays live rather than into the future.
+        v.shift_day(1, NOW);
+        assert!(v.is_live());
+        // And a step forward that would overshoot now snaps to live.
+        v.shift_day(-1, NOW);
+        v.pan_forward(NOW); // part-way back
+        v.shift_day(1, NOW);
         assert!(v.is_live());
     }
 }

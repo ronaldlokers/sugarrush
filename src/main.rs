@@ -426,6 +426,16 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
             refresh(app, client).await;
         }
         KeyCode::Char('g') if !app.is_agp() => app.begin_date_input(),
+        // Walk day by day without typing a date each time — "how was last
+        // night?" is the common case, and `g` makes you spell it out.
+        KeyCode::Char('[') if !app.is_agp() => {
+            app.view.shift_day(-1, now_ms());
+            refresh(app, client).await;
+        }
+        KeyCode::Char(']') if !app.is_agp() => {
+            app.view.shift_day(1, now_ms());
+            refresh(app, client).await;
+        }
         KeyCode::Char('n') => app.next_site(),
         KeyCode::Char('a') => app.snooze_alarm(now_ms()),
         KeyCode::Char('e') => app.export_window(now_ms()),
