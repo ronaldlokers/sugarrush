@@ -255,7 +255,18 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
     }
 
     match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+        KeyCode::Char('q') => app.should_quit = true,
+        // Esc backs out, everywhere: it closes the help overlay and cancels a
+        // prompt (handled above), and here it returns to the live edge. It used
+        // to quit the app outright, which is a lot to trigger by reflex.
+        KeyCode::Esc => {
+            if app.view.is_live() {
+                app.status = Some("press q to quit".to_string());
+            } else {
+                app.view.follow();
+                refresh(app, client).await;
+            }
+        }
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('s') => app.toggle_settings(),
         KeyCode::Char('u') => app.toggle_units(),
@@ -280,6 +291,21 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
         }
         KeyCode::Char('l') | KeyCode::Right if !app.is_agp() => {
             app.view.pan_forward(now_ms());
+            refresh(app, client).await;
+        }
+        // Whole-window paging and a jump to the far edge of the overview: the
+        // keyboard equivalents of dragging and clicking the minimap, which was
+        // otherwise mouse-only.
+        KeyCode::Char('H') | KeyCode::PageUp if !app.is_agp() => {
+            app.view.page_back(now_ms());
+            refresh(app, client).await;
+        }
+        KeyCode::Char('L') | KeyCode::PageDown if !app.is_agp() => {
+            app.view.page_forward(now_ms());
+            refresh(app, client).await;
+        }
+        KeyCode::End if !app.is_agp() => {
+            app.view.jump_to_oldest(now_ms(), app.minimap_span_ms);
             refresh(app, client).await;
         }
         KeyCode::Char('+') | KeyCode::Char('=') if !app.is_agp() => {

@@ -8,6 +8,9 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Keyboard navigation for the overview strip** — `H` / `L` (or `PgUp` /
+  `PgDn`) pan a whole window at a time and `End` jumps to the oldest edge of the
+  overview, so moving through history no longer needs a mouse.
 - **Clinical time-in-range.** The stats panel now splits readings across the
   five consensus bands (very low / low / in range / high / very high) instead of
   three, calls out the **time below range** percentage — the number that changes
@@ -36,6 +39,16 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **`Esc` no longer quits the app.** From the dashboard it returns to the live
+  edge (and closes the help overlay or a prompt, as before) — quitting is `q`,
+  which is what every other screen already did.
+- **The current-value pane keeps its range label when compact.** On a short
+  terminal the colour-independent label (`LOW`, `in range`) was pushed onto a
+  line that got clipped, leaving colour as the only cue; it now sits on the
+  headline next to the reading.
+- **The overview strip says why it's empty** — "loading overview…" before the
+  first fetch, "no readings in this window" after — instead of drawing a bare
+  box.
 - **The audible alarm falls back to the terminal bell** when no system audio
   player is available (headless boxes, minimal containers, a bare SSH login),
   instead of failing silently — silence is indistinguishable from "glucose is

@@ -125,22 +125,25 @@ design: file-only, documented.
 
 | Key | Action |
 |-----|--------|
-| `q` / `Esc` | Quit |
+| `q` | Quit |
 | `?` | Toggle the keybinding help overlay |
 | `r` | Refresh now (also resumes fetching after a token/URL error) |
 | `u` | Toggle mg/dL ↔ mmol/L |
 | `Tab` / `Shift+Tab` | Switch graph view (3h / 24h / AGP) |
 | `h` / `←` · `l` / `→` | Pan back / forward in time |
+| `H` / `L` · `PgUp` / `PgDn` | Pan a whole window at a time |
 | `+` / `-` | Zoom window (1h/3h/6h/12h/24h) |
 | `g` | Jump to a date (`YYYY-MM-DD`) |
-| `f` / `Home` | Return to live |
+| `End` | Jump to the start of the overview strip |
+| `f` / `Home` / `Esc` | Return to live |
 | `a` | Snooze the audible alarm |
 | `n` | Switch site (multi-site) |
 | `s` | Open / close settings |
 
 Settings screen: `↑`/`↓` select, `←`/`→` change, `Enter` edit (site URL / token),
 `w` save, `s`/`Esc` back.
-When the minimap is on, click or drag it to move the window.
+When the minimap is on, click or drag it to move the window — or use `H`/`L`
+and `End` for the same navigation from the keyboard.
 
 ## Waybar
 

@@ -98,20 +98,24 @@ pub fn draw(f: &mut Frame, app: &App) {
 /// footer can shrink on narrow terminals without hiding functionality.
 fn draw_help(f: &mut Frame, area: Rect) {
     let rows = [
-        ("q / Esc", "quit"),
+        ("q", "quit"),
         ("?", "toggle this help"),
         ("r", "refresh now"),
         ("u", "toggle mg/dL ↔ mmol/L"),
         ("Tab / ⇧Tab", "switch graph view (3h / 24h / AGP)"),
         ("h / l · ← / →", "pan back / forward"),
+        ("H / L · PgUp/Dn", "pan a whole window"),
         ("+ / -", "zoom window (1h–24h)"),
         ("g", "jump to a date"),
-        ("f / Home", "return to live"),
+        ("End", "jump to the start of the overview"),
+        ("f / Home / Esc", "return to live"),
         ("a", "snooze the audible alarm"),
         ("n", "switch site (multi-site)"),
         ("s", "open / close settings"),
     ];
-    let w = 52u16.min(area.width.saturating_sub(2));
+    // Two columns of key text now; keep the popup wide enough for the longest.
+    let key_w = 17usize;
+    let w = 56u16.min(area.width.saturating_sub(2));
     let h = (rows.len() as u16 + 4).min(area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
@@ -121,7 +125,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
     for (k, d) in rows {
         lines.push(Line::from(vec![
             Span::styled(
-                format!("  {k:<14}"),
+                format!("  {k:<key_w$}"),
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
@@ -160,6 +164,17 @@ fn draw_minimap(f: &mut Frame, area: Rect, app: &App) {
     let start = now - app.minimap_span_ms;
 
     if app.minimap_entries.is_empty() {
+        // An empty bordered box reads as "nothing happened"; say which it is —
+        // still loading, or genuinely no readings in the window.
+        let msg = if app.last_ok_ms.is_none() {
+            "  loading overview…"
+        } else {
+            "  no readings in this window"
+        };
+        f.render_widget(
+            Paragraph::new(Span::styled(msg, Style::default().fg(Color::DarkGray))),
+            inner,
+        );
         return;
     }
 
@@ -230,14 +245,24 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
             // Budget the line: the numbers are the point, the bar is what
             // gives. Without this the suffixes fall off the edge of a
             // half-width panel and the reader never learns they existed.
+            let width = inner.width as usize;
             let in_range = format!(" {:.0}% in range", t.in_range);
-            let below = if t.below() > 0.0 {
+            let mut below = if t.below() > 0.0 {
                 format!(" · {:.0}% below", t.below())
             } else {
                 String::new()
             };
-            let fixed = 6 + in_range.len() + below.len();
-            let bar_w = (inner.width as usize).saturating_sub(fixed).clamp(6, 40);
+            // Order of sacrifice as the pane narrows: the bar shrinks, then the
+            // below-range suffix goes whole, then the bar goes. A clipped
+            // "· 7%" is worse than no suffix — it reads as a different number.
+            const MIN_BAR: usize = 5;
+            if 6 + in_range.len() + below.len() + MIN_BAR > width {
+                below.clear();
+            }
+            let bar_w = width
+                .saturating_sub(6 + in_range.len() + below.len())
+                .min(40);
+            let bar_w = if bar_w < MIN_BAR { 0 } else { bar_w };
             // Cells are allocated to the urgent bands first: a single very-low
             // reading in two weeks rounds to 0% but is exactly what someone
             // scanning this panel needs to see, so give it a cell if it exists.
@@ -276,9 +301,20 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
     let avg_line = match stats::mean_mgdl(&app.agp_entries) {
         Some(mean) => {
             let head = format!("  avg  {} {}  ", u.format(mean), u.label());
-            let gmi = format!("  ·  GMI {:.1}%", stats::gmi(mean));
-            let cv = stats::cv_pct(&app.agp_entries);
-            let cv_text = cv.map(|c| format!("  ·  CV {c:.0}%")).unwrap_or_default();
+            let mut gmi = format!("  ·  GMI {:.1}%", stats::gmi(mean));
+            let mut cv = stats::cv_pct(&app.agp_entries);
+            let mut cv_text = cv.map(|c| format!("  ·  CV {c:.0}%")).unwrap_or_default();
+            // Same sacrifice order on this line: tighten the separators, then
+            // drop CV whole. GMI is the number people quote, so it stays.
+            let width = inner.width as usize;
+            if head.len() + gmi.len() + cv_text.len() > width {
+                gmi = gmi.replace("  ·  ", " · ");
+                cv_text = cv_text.replace("  ·  ", " · ");
+            }
+            if head.len() + gmi.len() + cv_text.len() > width {
+                cv = None;
+                cv_text.clear();
+            }
             // The sparkline is a trend glance, not a statistic — it yields the
             // width to GMI and CV rather than pushing them off the line.
             let room =
@@ -646,11 +682,19 @@ fn draw_current(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(Paragraph::new(big), cols[0]);
         f.render_widget(Paragraph::new(info), cols[1]);
     } else {
-        let mut lines = vec![Line::from(Span::styled(
-            format!("  {}  {}", value, e.arrow()),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ))];
-        lines.extend(info.into_iter().skip(1)); // drop the unit/arrow line (already shown)
+        // The range label rides on the headline rather than sitting on its own
+        // line: on a short pane the lines below get clipped, and that label is
+        // the only reading of the state that doesn't depend on seeing colour.
+        let range = crate::alert::from_value(e.sgv, &app.alerts).label();
+        let mut lines = vec![Line::from(vec![
+            Span::styled(
+                format!("  {}  {}", value, e.arrow()),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("  {range}"), Style::default().fg(color)),
+        ])];
+        // Drop the value line and the standalone range line — both are above.
+        lines.extend(info.into_iter().skip(2));
         f.render_widget(Paragraph::new(lines), content);
     }
 
