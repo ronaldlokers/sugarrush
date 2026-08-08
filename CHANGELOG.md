@@ -8,6 +8,40 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **No more "heading low" invented across a sensor gap.** The short-term
+  forecast assumed its two readings were five minutes apart and never checked,
+  so a pair either side of a dropout was extrapolated as if the change had
+  happened in five minutes — a flat trend across 40 minutes projected a low and
+  fired a prediction. When the spacing isn't right, there is now no forecast
+  rather than a fabricated one.
+- **The watcher polls once a minute instead of every few seconds.** It inherited
+  the dashboard's interval, which is tuned for a responsive screen — about
+  17,000 requests a day per site against a self-hosted Nightscout, and a radio
+  kept awake for readings that arrive every five minutes. It also now respects
+  its own retry backoff instead of hammering a site that is down.
+- **Another user on the same machine can't silence your alarm.** Without a
+  per-user runtime directory the alarm handshake used a shared path in `/tmp`,
+  where anyone could pose as a running dashboard and keep the watcher quiet
+  indefinitely. The path is now per-user, and a heartbeat that isn't ours is
+  ignored rather than obeyed.
+- **The watcher's saved state is written safely.** It was rewritten in place
+  every cycle, so an interrupted write left a truncated file that loaded as
+  "no state" — cancelling an active snooze and restarting an escalation timer,
+  the two things it exists to prevent. It's now written atomically and
+  owner-only, since in follower mode it names another person.
+- **Duplicate readings no longer flatten the delta.** A site fed by two
+  uploaders holds each reading twice, which made the change-since-last-reading
+  show 0 during a genuine rise and double-counted those minutes in the stats.
+- **Sensor age stops disappearing.** It was read from the newest 50 treatments
+  of any kind, which for a pump user covers about three days — while a sensor
+  lasts ten to fourteen, so the sensor-change event fell off the end. The
+  server is now asked for sensor events specifically.
+- **Two sites can't share a name.** Alarm state is tracked per site name, so a
+  duplicate meant announcing a low for one person marked it announced for the
+  other. Startup now says so instead.
+
+### Fixed
+
 - **Push alerts now say whose reading it is, and respect your privacy
   setting.** The webhook is the only channel that reaches a phone, and with
   several sites configured it sent a bare "URGENT LOW" with no way to tell

@@ -138,7 +138,15 @@ impl Client {
         let value: Value = self
             .http
             .get(&url)
-            .query(&[("count", "50"), ("token", self.token.as_str())])
+            // Filter server-side: a pump user logs 10-15 treatments a day, so
+            // the newest 50 of *any* type covers about three days while a
+            // sensor lasts ten to fourteen — the sensor event fell off the end
+            // and the age silently disappeared.
+            .query(&[
+                ("find[eventType][$regex]", "Sensor"),
+                ("count", "20"),
+                ("token", self.token.as_str()),
+            ])
             .send()
             .await
             .map_err(redact)
@@ -434,6 +442,10 @@ fn clean_newest_first(entries: Vec<Entry>) -> Vec<Entry> {
         .filter(|e| e.sgv >= MIN_PHYSIOLOGICAL_SGV)
         .collect();
     out.sort_by_key(|e| std::cmp::Reverse(e.date));
+    // A site fed by two uploaders (xDrip plus a bridge, say) holds the same
+    // reading twice. Left in, the delta between the newest two reads 0 during
+    // a genuine rise, and the stats double-count those minutes.
+    out.dedup_by_key(|e| e.date);
     out
 }
 
@@ -741,6 +753,19 @@ mod tests {
         )
         .unwrap();
         assert!(parse_sensor_start(&none).is_none());
+    }
+
+    #[test]
+    fn duplicate_timestamps_are_collapsed() {
+        // Two uploaders posting the same reading. Left in, the delta between
+        // the newest two is 0 during a real rise.
+        let out = clean_newest_first(vec![
+            entry(120.0, 2_000),
+            entry(120.0, 2_000),
+            entry(95.0, 1_000),
+        ]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].sgv - out[1].sgv, 25.0);
     }
 
     #[test]
