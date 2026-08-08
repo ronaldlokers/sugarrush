@@ -4,6 +4,7 @@ mod app;
 mod bigfont;
 mod config;
 mod demo;
+mod export;
 mod nightscout;
 mod predict;
 mod sound;
@@ -43,6 +44,8 @@ enum Mode {
     Waybar,
     /// Print version/about info (and a desktop notification) and exit.
     About,
+    /// Write a CSV + summary of the last `days` days and exit.
+    Export { days: u32, dir: Option<String> },
 }
 
 fn parse_args() -> Mode {
@@ -50,11 +53,22 @@ fn parse_args() -> Mode {
     let mut screen = Screen::Dashboard;
     let mut demo = false;
     let mut mode: Option<Mode> = None;
+    let mut export_days: Option<u32> = None;
+    let mut export_dir: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "waybar" => mode = Some(Mode::Waybar),
             "about" => mode = Some(Mode::About),
+            "export" => mode = Some(Mode::Export { days: 0, dir: None }),
+            "--days" => {
+                i += 1;
+                export_days = args.get(i).and_then(|v| v.parse().ok());
+            }
+            "--out" => {
+                i += 1;
+                export_dir = args.get(i).cloned();
+            }
             "--demo" => demo = true,
             "--screen" => {
                 i += 1;
@@ -66,7 +80,16 @@ fn parse_args() -> Mode {
         }
         i += 1;
     }
-    mode.unwrap_or(Mode::Tui { screen, demo })
+    match mode {
+        // `--days` / `--out` are only meaningful for export; fill them in here
+        // so the flags can appear on either side of the subcommand.
+        Some(Mode::Export { .. }) => Mode::Export {
+            days: export_days.unwrap_or(0),
+            dir: export_dir,
+        },
+        Some(m) => m,
+        None => Mode::Tui { screen, demo },
+    }
 }
 
 #[tokio::main]
@@ -81,8 +104,40 @@ async fn main() -> Result<()> {
             println!("{}", waybar::line(&cfg).await);
             Ok(())
         }
+        Mode::Export { days, dir } => run_export(days, dir).await,
         Mode::Tui { screen, demo } => run_tui(screen, demo).await,
     }
+}
+
+/// Headless export: fetch the clinical window and write both files, printing
+/// the paths. Useful in a cron job or right before an appointment.
+async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
+    let cfg = Config::load()?;
+    let days = if days == 0 { cfg.agp_days } else { days }.clamp(1, 90);
+    let alerts = cfg.alerts.resolve(cfg.units);
+    let sites = cfg.resolve_sites()?;
+    let client = Client::for_site(&sites[0])?;
+
+    let now = now_ms();
+    let start = now - days as i64 * 24 * 3_600_000;
+    let entries = client
+        .entries_range(start, now, days as usize * 24 * 12 + 200)
+        .await?;
+
+    let dir = dir.map(std::path::PathBuf::from).unwrap_or_default();
+    for (format, body) in [
+        (export::Format::Csv, export::csv(&entries, cfg.units)),
+        (
+            export::Format::Report,
+            export::report(&entries, &alerts, cfg.units, days, now),
+        ),
+    ] {
+        let path = dir.join(export::filename(format, now));
+        std::fs::write(&path, body)
+            .with_context(|| format!("failed to write {}", path.display()))?;
+        println!("{}", path.display());
+    }
+    Ok(())
 }
 
 async fn run_tui(screen: Screen, demo: bool) -> Result<()> {
@@ -323,6 +378,7 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
         KeyCode::Char('g') if !app.is_agp() => app.begin_date_input(),
         KeyCode::Char('n') => app.next_site(),
         KeyCode::Char('a') => app.snooze_alarm(now_ms()),
+        KeyCode::Char('e') => app.export_window(now_ms()),
         _ => {}
     }
 }

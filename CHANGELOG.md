@@ -6,6 +6,16 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Export what you're looking at.** Press `e` (or run `sugarrush export`) to
+  write two files for the clinical window: a CSV of every reading — oldest
+  first, in mg/dL *and* your display unit — and a plain-text summary with sensor
+  coverage, five-band time in range, time below range, mean, GMI, CV, and an
+  hour-by-hour median/spread profile. Meant for sending to a clinician or
+  opening in a spreadsheet, instead of screenshotting a terminal.
+  `sugarrush export --days 30 --out ~/` for a different window or directory.
+
 ### Fixed
 
 - **The declared minimum Rust version was wrong** — `rust-version` said 1.82,
