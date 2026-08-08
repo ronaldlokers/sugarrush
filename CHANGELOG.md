@@ -18,6 +18,13 @@ All notable changes to sugarrush are documented here. The format is based on
   time of day where a quarter of readings or more sit below target; "highs" is
   where the typical reading is above it. Runs shorter than 45 minutes aren't
   reported, and a gap in the data never joins two windows into one.
+- **Follow more than one person.** With several `[[sites]]` configured, `m`
+  opens a follower view listing everyone at once — value, trend, how old the
+  reading is, and the alert state — sorted worst first, with a header that names
+  whoever needs attention. A site that can't be read ranks with the urgent ones
+  rather than showing a blank row that reads like "fine". `sugarrush watch` now
+  watches every configured site too, each with its own independent alert
+  episode, naming the site in notifications and in the log.
 - **Status-bar output for bars other than Waybar.** `sugarrush status` prints
   one line in the syntax your bar speaks — `--format text` (no markup),
   `tmux`, `polybar`, `i3blocks`, or `waybar` — coloured from your configured

@@ -69,7 +69,8 @@ That's the recording above. When you're ready, point it at your own site
   and more live, then save back to `config.toml`; the **site URL and token** are
   editable there too, so a bad token is fixed without leaving the app
 - Configurable colours (incl. a colorblind-safe preset), graph style, and
-  **multiple sites** (`n` to switch)
+  **multiple sites** — `n` to switch between them, `m` for a **follower view**
+  that lists everyone you watch at once, worst first
 - **Status-bar output** for Waybar, tmux, polybar, i3blocks, or anything that
   takes plain text (see [Status bars](#status-bars))
 
@@ -151,6 +152,7 @@ design: file-only, documented.
 | `e` | Export the clinical window (CSV + summary) |
 | `a` | Snooze the audible alarm |
 | `n` | Switch site (multi-site) |
+| `m` | Follow all sites at once (caregiver view) |
 | `s` | Open / close settings |
 
 Settings screen: `↑`/`↓` select, `←`/`→` change, `Enter` edit (site URL / token),
@@ -208,6 +210,11 @@ classify, notify, sound, escalate, push — and logs each transition to stdout:
 ```bash
 sugarrush watch
 ```
+
+With more than one `[[sites]]` entry it watches **all of them**, each with its
+own independent alert state — a low for one person doesn't silence the
+announcement for another — and names whose reading it is in every notification
+and log line.
 
 It's safe to leave running alongside the TUI: both processes write a heartbeat,
 and the watcher goes quiet whenever the dashboard is on screen, so you never get

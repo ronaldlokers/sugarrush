@@ -5,6 +5,7 @@ mod bigfont;
 mod config;
 mod demo;
 mod export;
+mod follow;
 mod nightscout;
 mod predict;
 mod sound;
@@ -348,6 +349,17 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
         return;
     }
 
+    if app.screen == Screen::Followers {
+        match key.code {
+            KeyCode::Char('q') => app.should_quit = true,
+            KeyCode::Char('m') | KeyCode::Esc => app.toggle_followers(),
+            KeyCode::Char('s') => app.toggle_settings(),
+            KeyCode::Char('r') => refresh(app, client).await,
+            KeyCode::Char('?') => app.show_help = true,
+            _ => {}
+        }
+        return;
+    }
     if app.screen == Screen::Settings {
         handle_settings_key(app, key.code);
         return;
@@ -437,6 +449,14 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
             refresh(app, client).await;
         }
         KeyCode::Char('n') => app.next_site(),
+        KeyCode::Char('m') => {
+            app.toggle_followers();
+            // Fetch on entry: the list is the whole point of the screen, and
+            // waiting out the refresh interval to see it reads as broken.
+            if app.screen == Screen::Followers {
+                refresh(app, client).await;
+            }
+        }
         KeyCode::Char('a') => app.snooze_alarm(now_ms()),
         KeyCode::Char('e') => app.export_window(now_ms()),
         _ => {}
@@ -635,6 +655,12 @@ async fn refresh(app: &mut App, client: &Client) {
         app.set_partial(&missing);
     } else if !app.view.is_live() {
         app.predictions.clear();
+    }
+
+    // Followed sites: only worth the extra requests when there's more than one
+    // site to follow, and only while that screen is what's on display.
+    if app.sites.len() > 1 && app.screen == Screen::Followers {
+        app.followers = follow::poll(&app.sites, &app.alerts, now).await;
     }
 
     // Alert evaluation and notifications run every refresh, online or not, so a

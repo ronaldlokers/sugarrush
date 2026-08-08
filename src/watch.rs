@@ -99,18 +99,13 @@ fn is_fresh(stamp_ms: i64, now_ms: i64) -> bool {
     (0..HEARTBEAT_STALE_MS).contains(&(now_ms - stamp_ms))
 }
 
-/// The parts of an alert episode worth carrying across a restart.
+/// Persisted episode state, keyed by site name — a caregiver watching three
+/// people has three independent episodes, and a low for one of them must not
+/// silence the announcement for another.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct State {
-    /// The alert we last notified about, so a restart mid-low is silent.
-    pub last_notified: Option<String>,
-    /// When the current urgent episode began (epoch ms), for escalation.
-    pub urgent_since: Option<i64>,
-    pub pushed_episode: bool,
-    pub escalated: bool,
-    /// An active snooze outlives a restart — otherwise restarting the service
-    /// is a way to un-silence an alarm someone deliberately silenced.
-    pub snooze_until: Option<i64>,
+    #[serde(default)]
+    pub sites: std::collections::BTreeMap<String, Episode>,
 }
 
 impl State {
@@ -130,7 +125,23 @@ impl State {
         let body = serde_json::to_string_pretty(self).context("failed to serialize watch state")?;
         std::fs::write(&path, body).with_context(|| format!("failed to write {}", path.display()))
     }
+}
 
+/// The parts of one site's alert episode worth carrying across a restart.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Episode {
+    /// The alert we last notified about, so a restart mid-low is silent.
+    pub last_notified: Option<String>,
+    /// When the current urgent episode began (epoch ms), for escalation.
+    pub urgent_since: Option<i64>,
+    pub pushed_episode: bool,
+    pub escalated: bool,
+    /// An active snooze outlives a restart — otherwise restarting the service
+    /// is a way to un-silence an alarm someone deliberately silenced.
+    pub snooze_until: Option<i64>,
+}
+
+impl Episode {
     /// Read the episode state out of a running `App`.
     pub fn capture(app: &App) -> Self {
         Self {
@@ -175,22 +186,43 @@ pub async fn run() -> Result<()> {
     let cfg = Config::load()?;
     let alerts = cfg.alerts.resolve(cfg.units);
     let sites = cfg.resolve_sites()?;
-    let mut app = App::new(&cfg, alerts, sites);
-    State::load().restore(&mut app);
 
-    let client = Client::for_site(app.active_site())?;
+    // One pipeline per site. A caregiver watching three people needs three
+    // independent episodes — hysteresis, escalation, snooze and all — so the
+    // simplest correct thing is to run the same machinery per site rather than
+    // inventing a second, thinner alert path for the multi-site case.
+    let state = State::load();
+    let mut watched: Vec<Watched> = sites
+        .iter()
+        .map(|site| {
+            let mut app = App::new(&cfg, alerts.clone(), vec![site.clone()]);
+            if let Some(episode) = state.sites.get(&site.name) {
+                episode.restore(&mut app);
+            }
+            Ok(Watched {
+                name: site.name.clone(),
+                client: Client::for_site(site)?,
+                app,
+                last_logged: None,
+            })
+        })
+        .collect::<Result<_>>()?;
+
     println!(
         "sugarrush watch: {} · every {}s",
-        app.active_site().base_url(),
-        app.refresh_secs.max(5)
+        watched
+            .iter()
+            .map(|w| format!("{} ({})", w.name, w.app.active_site().base_url()))
+            .collect::<Vec<_>>()
+            .join(", "),
+        cfg.refresh_secs.max(5)
     );
 
-    // The state the journal last reported, so recoveries are logged too — the
-    // alarm ticker also calls evaluate_alert, so reading `app.alert` here would
-    // miss transitions that happened between fetches.
-    let mut last_logged: Option<Alert> = None;
+    // Whether we're following more than one person, which changes how the
+    // journal and notifications read.
+    let multi = watched.len() > 1;
 
-    let mut ticker = tokio::time::interval(Duration::from_secs(app.refresh_secs.max(5)));
+    let mut ticker = tokio::time::interval(Duration::from_secs(cfg.refresh_secs.max(5)));
     // The alarm re-sounds on its own cadence while an urgent state persists,
     // independent of how often we fetch.
     let mut alarm_ticker = tokio::time::interval(Duration::from_secs(3));
@@ -201,25 +233,64 @@ pub async fn run() -> Result<()> {
             _ = ticker.tick() => {
                 let now = now_ms();
                 heartbeat(Role::Watch, now);
-                if let Err(e) = poll(&mut app, &client, now).await {
-                    // Keep watching: an outage is exactly when the Stale alarm
-                    // matters, and it can only fire if we stay alive.
-                    eprintln!("sugarrush watch: {e}");
+                let mut state = State::default();
+                for w in watched.iter_mut() {
+                    if let Err(e) = poll(&mut w.app, &w.client, now).await {
+                        // Keep watching: an outage is exactly when the Stale
+                        // alarm matters, and it can only fire if we stay alive.
+                        eprintln!("sugarrush watch [{}]: {e}", w.name);
+                    }
+                    react(w, now, multi).await;
+                    state.sites.insert(w.name.clone(), Episode::capture(&w.app));
                 }
-                react(&mut app, now, &mut last_logged).await;
-                if let Err(e) = State::capture(&app).save() {
+                if let Err(e) = state.save() {
                     eprintln!("sugarrush watch: {e}");
                 }
             }
             _ = alarm_ticker.tick() => {
                 let now = now_ms();
-                app.evaluate_alert(now);
-                app.update_urgent(now);
-                if app.alarm_active(now) && !deferring(now) {
-                    sound::alarm(app.alarm_tone());
+                // Any site in an urgent state sounds the alarm; the tone comes
+                // from the worst of them, so a low is never masked by a high
+                // somewhere else.
+                let mut worst: Option<&App> = None;
+                for w in watched.iter_mut() {
+                    w.app.evaluate_alert(now);
+                    w.app.update_urgent(now);
+                    if w.app.alarm_active(now)
+                        && worst.is_none_or(|c| severity(w.app.alert) < severity(c.alert))
+                    {
+                        worst = Some(&w.app);
+                    }
+                }
+                if let Some(app) = worst {
+                    if !deferring(now) {
+                        sound::alarm(app.alarm_tone());
+                    }
                 }
             }
         }
+    }
+}
+
+/// One site being watched: its own client, its own alert pipeline, its own
+/// notion of what it last reported.
+struct Watched {
+    name: String,
+    client: Client,
+    app: App,
+    /// What the journal last said about this site, so recoveries are logged.
+    last_logged: Option<Alert>,
+}
+
+/// Ranking used to pick which site's tone to sound when several are urgent.
+fn severity(alert: Alert) -> u8 {
+    match alert {
+        Alert::UrgentLow => 0,
+        Alert::UrgentHigh => 1,
+        Alert::Stale => 2,
+        Alert::Low => 3,
+        Alert::High => 4,
+        Alert::InRange => 5,
     }
 }
 
@@ -257,7 +328,16 @@ async fn poll(app: &mut App, client: &Client, now_ms: i64) -> Result<()> {
 }
 
 /// Classify and act: notify, push, and warn about a forecast crossing.
-async fn react(app: &mut App, now_ms: i64, last_logged: &mut Option<Alert>) {
+async fn react(w: &mut Watched, now_ms: i64, multi: bool) {
+    // Whose reading this is only matters when there's more than one person
+    // being watched; prefixing every line with "default" otherwise is noise.
+    let who = if multi {
+        format!("[{}] ", w.name)
+    } else {
+        String::new()
+    };
+    let app = &mut w.app;
+    let last_logged = &mut w.last_logged;
     let state = app.evaluate_alert(now_ms);
     app.update_urgent(now_ms);
 
@@ -275,18 +355,24 @@ async fn react(app: &mut App, now_ms: i64, last_logged: &mut Option<Alert>) {
     // with `desktop = false` (push only, or just the audible alarm) still needs
     // a journal that says what happened and when.
     if let Some(a) = app.take_notification() {
-        println!("{} · {}", stamp(now_ms), a.label());
+        println!("{} · {who}{}", stamp(now_ms), a.label());
         if app.alerts.desktop {
-            crate::notify(
-                a,
-                app.latest().map(|e| e.sgv),
-                app.units,
-                app.alerts.notify_content,
-            );
+            // The notification names the site, or a caregiver gets "URGENT
+            // LOW" with no idea whose it is.
+            if multi && app.alerts.notify_content {
+                crate::notify_text(&format!("{}: {}", w.name, a.label()));
+            } else {
+                crate::notify(
+                    a,
+                    app.latest().map(|e| e.sgv),
+                    app.units,
+                    app.alerts.notify_content,
+                );
+            }
         }
     }
     if let Some(msg) = app.take_predictive(now_ms) {
-        println!("{} · {msg}", stamp(now_ms));
+        println!("{} · {who}{msg}", stamp(now_ms));
         if app.alerts.desktop {
             if app.alerts.notify_content {
                 crate::notify_text(&msg);
@@ -298,7 +384,7 @@ async fn react(app: &mut App, now_ms: i64, last_logged: &mut Option<Alert>) {
     // An alarm that ends is news too: a journal with "URGENT LOW" and nothing
     // after it doesn't say whether it lasted two minutes or all night.
     if last_logged.is_some_and(Alert::is_alerting) && !state.is_alerting() {
-        println!("{} · recovered · {}", stamp(now_ms), state.label());
+        println!("{} · {who}recovered · {}", stamp(now_ms), state.label());
     }
     *last_logged = Some(state);
 
@@ -310,7 +396,7 @@ async fn react(app: &mut App, now_ms: i64, last_logged: &mut Option<Alert>) {
         }
     }
     if state == Alert::Stale && !app.online {
-        println!("{} · offline", stamp(now_ms));
+        println!("{} · {who}offline", stamp(now_ms));
     }
 }
 
@@ -356,16 +442,22 @@ mod tests {
 
     #[test]
     fn state_survives_a_round_trip_through_json() {
-        let state = State {
+        let episode = Episode {
             last_notified: Some(Alert::UrgentLow.class().to_string()),
             urgent_since: Some(NOW - 600_000),
             pushed_episode: true,
             escalated: false,
             snooze_until: Some(NOW + 300_000),
         };
+        // Stored per site, so two people's episodes never collide.
+        let mut state = State::default();
+        state.sites.insert("alice".into(), episode.clone());
+        state.sites.insert("bob".into(), Episode::default());
         let raw = serde_json::to_string(&state).unwrap();
         let back: State = serde_json::from_str(&raw).unwrap();
         assert_eq!(back, state);
+        assert_eq!(back.sites["alice"], episode);
+        assert_eq!(back.sites["bob"], Episode::default());
     }
 
     #[test]
@@ -375,14 +467,14 @@ mod tests {
         let sites = cfg.resolve_sites().unwrap();
         let mut app = App::new(&cfg, alerts, sites);
 
-        let state = State {
+        Episode {
             last_notified: Some(Alert::UrgentLow.class().to_string()),
             urgent_since: Some(NOW - 600_000),
             pushed_episode: true,
             escalated: false,
             snooze_until: Some(NOW + 300_000),
-        };
-        state.restore(&mut app);
+        }
+        .restore(&mut app);
 
         // Same urgent state as before the restart: nothing new to announce,
         // nothing new to push, and the snooze still holds.
@@ -398,7 +490,7 @@ mod tests {
         assert!(!app.alarm_active(NOW));
         // And the escalation timer continues from the original onset rather
         // than restarting — 10 minutes in, not 0.
-        assert_eq!(State::capture(&app).urgent_since, Some(NOW - 600_000));
+        assert_eq!(Episode::capture(&app).urgent_since, Some(NOW - 600_000));
     }
 
     #[test]
@@ -408,7 +500,7 @@ mod tests {
         let sites = cfg.resolve_sites().unwrap();
         let mut app = App::new(&cfg, alerts, sites);
         // Restored state says the last thing announced was an in-range reading.
-        State {
+        Episode {
             last_notified: Some(Alert::InRange.class().to_string()),
             ..Default::default()
         }
@@ -421,5 +513,45 @@ mod tests {
         }];
         app.evaluate_alert(NOW);
         assert_eq!(app.take_notification(), Some(Alert::UrgentLow));
+    }
+
+    #[test]
+    fn two_sites_keep_independent_episodes() {
+        // The bug this guards: one map for everyone means announcing a low for
+        // alice marks it announced for bob too, and bob's low is never said.
+        let mut state = State::default();
+        state.sites.insert(
+            "alice".into(),
+            Episode {
+                last_notified: Some(Alert::UrgentLow.class().to_string()),
+                urgent_since: Some(NOW - 600_000),
+                ..Default::default()
+            },
+        );
+
+        let cfg = Config::demo();
+        let alerts = cfg.alerts.resolve(cfg.units);
+        let sites = cfg.resolve_sites().unwrap();
+        let mut bob = App::new(&cfg, alerts, sites);
+        // Nothing stored for bob: his low is still news.
+        if let Some(e) = state.sites.get("bob") {
+            e.restore(&mut bob);
+        }
+        bob.entries = vec![crate::nightscout::Entry {
+            sgv: 45.0,
+            date: NOW,
+            direction: None,
+        }];
+        bob.evaluate_alert(NOW);
+        assert_eq!(bob.take_notification(), Some(Alert::UrgentLow));
+    }
+
+    #[test]
+    fn the_worst_site_picks_the_alarm_tone() {
+        // A high somewhere must not mask a low: lows rank first.
+        assert!(severity(Alert::UrgentLow) < severity(Alert::UrgentHigh));
+        assert!(severity(Alert::UrgentHigh) < severity(Alert::Stale));
+        assert!(severity(Alert::Stale) < severity(Alert::Low));
+        assert!(severity(Alert::InRange) > severity(Alert::High));
     }
 }

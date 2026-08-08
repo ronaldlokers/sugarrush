@@ -27,6 +27,10 @@ fn fmt_disp(units: Units, v: f64) -> String {
 }
 
 pub fn draw(f: &mut Frame, app: &App) {
+    if app.screen == Screen::Followers {
+        draw_followers(f, app);
+        return;
+    }
     if app.screen == Screen::Settings {
         draw_settings(f, app);
         return;
@@ -113,6 +117,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("e", "export the clinical window (csv + summary)"),
         ("a", "snooze the audible alarm"),
         ("n", "switch site (multi-site)"),
+        ("m", "follow all sites at once"),
         ("s", "open / close settings"),
     ];
     // Two columns of key text now; keep the popup wide enough for the longest.
@@ -554,6 +559,99 @@ fn draw_settings(f: &mut Frame, app: &App) {
         )),
     };
     f.render_widget(Paragraph::new(footer), chunks[2]);
+}
+
+/// Every followed site at once: one row each, worst first.
+///
+/// Deliberately a list of rows rather than several graphs — a caregiver checks
+/// this to answer "is anyone in trouble", and graphs make that a slower
+/// question, not a faster one.
+fn draw_followers(f: &mut Frame, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // header
+            Constraint::Min(3),    // rows
+            Constraint::Length(1), // footer
+        ])
+        .split(f.area());
+
+    // The header answers the only question this screen exists for — is anyone
+    // in trouble — without making you read the rows.
+    let mut title = vec![Span::styled(
+        format!(" following {} sites ", app.sites.len()),
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if let Some(worst) = crate::follow::worst(&app.followers) {
+        let (text, color) = if worst.alert.is_alerting() {
+            (
+                format!("· {} needs attention: {} ", worst.name, worst.alert.label()),
+                app.theme.urgent,
+            )
+        } else {
+            ("· all in range ".to_string(), app.theme.in_range)
+        };
+        title.push(Span::styled(text, Style::default().fg(color)));
+    }
+    let header = Paragraph::new(Line::from(title)).block(Block::default().borders(Borders::ALL));
+    f.render_widget(header, chunks[0]);
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let block = Block::default().borders(Borders::ALL);
+    let inner = block.inner(chunks[1]);
+    f.render_widget(block, chunks[1]);
+
+    let lines: Vec<Line> = if app.followers.is_empty() {
+        vec![Line::from("  loading…")]
+    } else {
+        app.followers
+            .iter()
+            .map(|s| {
+                let color = match s.alert {
+                    crate::alert::Alert::UrgentLow | crate::alert::Alert::UrgentHigh => {
+                        app.theme.urgent
+                    }
+                    crate::alert::Alert::Low => app.theme.low,
+                    crate::alert::Alert::High => app.theme.high,
+                    crate::alert::Alert::Stale => Color::DarkGray,
+                    crate::alert::Alert::InRange => app.theme.in_range,
+                };
+                // The age is what tells you whether to trust the value, so it
+                // sits next to it rather than at the end of the row.
+                let age = match s.age_min(now) {
+                    Some(m) => format!("{m}m ago"),
+                    None => s.error.clone().unwrap_or_else(|| "no data".into()),
+                };
+                Line::from(vec![
+                    Span::styled(
+                        format!("  {:<12}", s.name),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("{:>6} {} ", s.value(app.units), s.arrow()),
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(format!("{:>6}  ", s.delta_text(app.units))),
+                    // The label repeats what the colour says, for anyone who
+                    // can't rely on the colour.
+                    Span::styled(
+                        format!("{:<28}", s.alert.label()),
+                        Style::default().fg(color),
+                    ),
+                    Span::styled(age, Style::default().fg(Color::DarkGray)),
+                ])
+            })
+            .collect()
+    };
+    f.render_widget(Paragraph::new(lines), inner);
+
+    let footer = match &app.status {
+        Some(msg) => Span::styled(format!(" {msg} "), Style::default().fg(Color::Green)),
+        None => Span::raw(" m / esc dashboard · r refresh · s settings · q quit "),
+    };
+    f.render_widget(Paragraph::new(Line::from(footer)), chunks[2]);
 }
 
 fn draw_banner(f: &mut Frame, area: Rect, app: &App) {
