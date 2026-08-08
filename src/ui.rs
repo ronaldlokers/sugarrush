@@ -1561,6 +1561,10 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         ),
         // A cleartext site leaks the token and the readings to anything on the
         // path. Not fatal — a LAN self-host is a real setup — but never silent.
+        None if app.notify_failed => Span::styled(
+            " ⚠ desktop notifications aren't reaching a notification daemon ",
+            Style::default().fg(Color::Yellow),
+        ),
         None if !app.demo && app.active_site().is_insecure() => Span::styled(
             " ⚠ unencrypted http:// site — the token is sent in clear (settings › site URL) ",
             Style::default().fg(Color::Yellow),

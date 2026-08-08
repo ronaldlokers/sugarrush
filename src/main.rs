@@ -298,7 +298,13 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                 let now = now_ms();
                 // Tell a running `sugarrush watch` that the dashboard is up, so
                 // it stays quiet instead of alarming alongside us.
-                if !app.demo {
+                // Only claim the alarm when this window actually covers
+                // everything the daemon would. The TUI alerts on the active
+                // site alone, so with several configured it must not silence a
+                // watcher that is handling all of them — that hole meant a
+                // caregiver's other sites went unalarmed while the dashboard
+                // was open.
+                if !app.demo && app.sites.len() == 1 {
                     watch::heartbeat(watch::Role::Tui, now);
                     // Read the other side of the handshake too: until now
                     // nothing ever did, so a dead watcher and a quiet night
@@ -579,6 +585,9 @@ async fn refresh(app: &mut App, client: &Client) {
         .await
     {
         Ok(entries) => {
+            if app.view.is_live() {
+                app.live_edge = entries.first().cloned();
+            }
             app.entries = entries;
             app.mark_online(now);
         }
@@ -671,6 +680,15 @@ async fn refresh(app: &mut App, client: &Client) {
         app.predictions.clear();
     }
 
+    // While browsing history the primary fetch is a historical window, so the
+    // live edge has to be fetched separately — the alarm must not go quiet
+    // just because someone is looking at last night.
+    if app.online && !app.view.is_live() {
+        if let Ok(live) = client.entries_range(now - 3_600_000, now, 24).await {
+            app.live_edge = live.first().cloned();
+        }
+    }
+
     // Followed sites: only worth the extra requests when there's more than one
     // site to follow, and only while that screen is what's on display.
     if app.sites.len() > 1 && app.screen == Screen::Followers {
@@ -682,9 +700,13 @@ async fn refresh(app: &mut App, client: &Client) {
     app.evaluate_alert(now);
     if app.alerts.desktop {
         if let Some(a) = app.take_notification() {
-            notify(
+            // A discarded result meant "Desktop: on" could be a lie: with no
+            // notification daemon running the D-Bus call fails and nothing is
+            // shown, which — paired with a failing audio player — is two dead
+            // channels reported as healthy.
+            app.notify_failed = !notify(
                 a,
-                app.latest().map(|e| e.sgv),
+                app.live_latest().map(|e| e.sgv),
                 app.units,
                 app.alerts.notify_content,
             );
@@ -703,37 +725,41 @@ async fn refresh(app: &mut App, client: &Client) {
     if let Some(msg) = app.take_predictive(now) {
         if app.alerts.desktop {
             if app.alerts.notify_content {
-                notify_text(&msg);
+                let _ = notify_text(&msg);
             } else {
-                notify_text("alert — open sugarrush");
+                let _ = notify_text("alert — open sugarrush");
             }
         }
     }
 }
 
 /// Fire a best-effort desktop notification for an alert.
-pub(crate) fn notify(alert: alert::Alert, sgv: Option<f64>, units: units::Units, content: bool) {
+pub(crate) fn notify(
+    alert: alert::Alert,
+    sgv: Option<f64>,
+    units: units::Units,
+    content: bool,
+) -> bool {
     // Content-free mode still fires — and still as critical, so it breaks
     // through Do Not Disturb — but says nothing a lock screen shouldn't show.
     if !content {
-        desktop_notify("alert — open sugarrush", alert.urgency() == "critical");
-        return;
+        return desktop_notify("alert — open sugarrush", alert.urgency() == "critical");
     }
     let body = match sgv {
         Some(v) => format!("{} · {} {}", alert.label(), units.format(v), units.label()),
         None => alert.label().to_string(),
     };
-    desktop_notify(&body, alert.urgency() == "critical");
+    desktop_notify(&body, alert.urgency() == "critical")
 }
 
 /// Fire a plain desktop notification (used for predictive alerts).
-pub(crate) fn notify_text(body: &str) {
-    desktop_notify(body, false);
+pub(crate) fn notify_text(body: &str) -> bool {
+    desktop_notify(body, false)
 }
 
 /// Cross-platform desktop notification (Linux / macOS / Windows) via
 /// notify-rust. Best-effort — errors are ignored.
-fn desktop_notify(body: &str, critical: bool) {
+fn desktop_notify(body: &str, critical: bool) -> bool {
     let mut n = notify_rust::Notification::new();
     n.summary("sugarrush").body(body).appname("sugarrush");
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -748,7 +774,7 @@ fn desktop_notify(body: &str, critical: bool) {
     {
         let _ = critical;
     }
-    let _ = n.show();
+    n.show().is_ok()
 }
 
 /// POST an alert message to a webhook / ntfy topic. Returns whether the request

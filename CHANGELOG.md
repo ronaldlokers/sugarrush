@@ -8,6 +8,30 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Looking at yesterday no longer silences today's alarm.** Panning or jumping
+  into history made the app classify the *historical* reading, so an urgent low
+  happening right now read as "in range" — and because the dashboard tells the
+  watch daemon to stay quiet while it's open, the whole system went silent for
+  as long as you were reading history. Only the graph is historical now; the
+  alarm always follows the live edge.
+- **A site that has never connected now raises the alarm.** A watcher started
+  with a wrong token, or against a site that was never reachable, reported
+  "in range" indefinitely — indistinguishable from a healthy quiet night. After
+  the staleness window with nothing received at all, that's now a sensor gap
+  like any other.
+- **With several sites configured, the dashboard no longer silences the
+  watcher.** The dashboard alerts on the site you're viewing, but it was
+  telling `sugarrush watch` — which covers *every* configured site — to stand
+  down, so a caregiver's other people went unalarmed whenever the dashboard was
+  open. It now only claims the alarm when it genuinely covers everything.
+- **An undelivered desktop notification is reported instead of assumed.** If no
+  notification daemon is running the D-Bus call fails silently, so "Desktop:
+  on" could be a lie — and paired with a failing audio player, that's two dead
+  channels both reporting healthy. The footer now says when notifications
+  aren't getting through.
+
+### Fixed
+
 - **The Nightscout token can no longer leak into an error message.** Because
   Nightscout takes the token as a URL query parameter, and the HTTP client
   included the full URL in its errors, `sugarrush export` printed the token in
