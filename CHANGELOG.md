@@ -6,6 +6,18 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The declared minimum Rust version was wrong** — `rust-version` said 1.82,
+  but the dependency tree hasn't built on anything below **1.89** for a while,
+  so `cargo install` could fail with a confusing dependency error instead of a
+  clear "your toolchain is too old". CI now builds against the declared MSRV
+  every run, so it can't drift again.
+- **Half the uploader requests are gone.** Each refresh fetched
+  `/devicestatus` twice — once for battery/IOB/COB and once for the forecast.
+  It's now one request, which also rules out the two halves coming from
+  different records if the uploader posts in between.
+
 ## [2026.8.1] - 2026-08-08
 
 This release is about trusting what's on screen. The alarm path got a

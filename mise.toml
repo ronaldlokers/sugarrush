@@ -1,2 +1,5 @@
+# Pinned so a local build matches CI and a toolchain release can't change the
+# result of `cargo build` under you. Bump deliberately; the MSRV promise lives
+# in Cargo.toml's `rust-version` and is checked separately in CI.
 [tools]
-rust = "latest"
+rust = "1.97.1"

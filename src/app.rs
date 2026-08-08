@@ -1543,6 +1543,98 @@ mod tests {
         assert_eq!(a.build_config().alerts.notify_content, Some(false));
     }
 
+    /// CLAUDE.md's rule: anything user-editable must round-trip through
+    /// `build_config`. This asserts it instead of trusting the reviewer to
+    /// notice a field that was added to the settings screen but never written.
+    #[test]
+    fn every_edited_setting_round_trips_through_the_config() {
+        let mut a = app();
+        // Move every value off its default, in the direction the UI allows.
+        a.units = Units::Mgdl;
+        a.refresh_secs = 45;
+        a.alerts.desktop = false;
+        a.alerts.notify_content = false;
+        a.alerts.sound = false;
+        a.alerts.snooze_minutes = 7;
+        a.alerts.quiet_start = Some(23 * 60);
+        a.alerts.quiet_end = Some(7 * 60);
+        a.alerts.quiet_urgent_low = false;
+        a.alerts.escalate_minutes = 20;
+        a.alerts.push_url = Some("https://ntfy.sh/topic".into());
+        a.alerts.push_enabled = false;
+        a.alerts.predict_horizon_minutes = 45;
+        a.alerts.urgent_low = 50.0;
+        a.alerts.low = 72.0;
+        a.alerts.high = 170.0;
+        a.alerts.urgent_high = 240.0;
+        a.alerts.stale_minutes = 9;
+        a.graph_style = GraphStyle::Blocks;
+        a.agp_days = 30;
+        a.minimap_enabled = false;
+        a.minimap_span_ms = 48 * MS_PER_HOUR;
+        a.sites[0].url = "https://ns.example.com".into();
+        a.sites[0].token = "tok".into();
+
+        // Serialize as `w` does, then read it back the way startup does.
+        let written = toml::to_string_pretty(&a.build_config()).unwrap();
+        let cfg: Config = toml::from_str(&written).unwrap();
+        let alerts = cfg.alerts.resolve(cfg.units);
+        let sites = cfg.resolve_sites().unwrap();
+
+        assert_eq!(cfg.units, a.units);
+        assert_eq!(cfg.refresh_secs, a.refresh_secs);
+        assert_eq!(cfg.graph_style, a.graph_style);
+        assert_eq!(cfg.agp_days, a.agp_days);
+        assert_eq!(cfg.minimap.enabled, a.minimap_enabled);
+        assert_eq!(
+            cfg.minimap.span_hours as i64,
+            a.minimap_span_ms / MS_PER_HOUR
+        );
+        assert_eq!(sites[0].url, a.sites[0].url);
+        assert_eq!(sites[0].token, a.sites[0].token);
+
+        assert_eq!(alerts.desktop, a.alerts.desktop);
+        assert_eq!(alerts.notify_content, a.alerts.notify_content);
+        assert_eq!(alerts.sound, a.alerts.sound);
+        assert_eq!(alerts.snooze_minutes, a.alerts.snooze_minutes);
+        assert_eq!(alerts.quiet_start, a.alerts.quiet_start);
+        assert_eq!(alerts.quiet_end, a.alerts.quiet_end);
+        assert_eq!(alerts.quiet_urgent_low, a.alerts.quiet_urgent_low);
+        assert_eq!(alerts.escalate_minutes, a.alerts.escalate_minutes);
+        assert_eq!(alerts.push_url, a.alerts.push_url);
+        assert_eq!(alerts.push_enabled, a.alerts.push_enabled);
+        assert_eq!(
+            alerts.predict_horizon_minutes,
+            a.alerts.predict_horizon_minutes
+        );
+        assert_eq!(alerts.stale_minutes, a.alerts.stale_minutes);
+        // Thresholds are stored in mg/dL and written in display units, so they
+        // survive the conversion round trip rather than being bit-identical.
+        for (got, want) in [
+            (alerts.urgent_low, a.alerts.urgent_low),
+            (alerts.low, a.alerts.low),
+            (alerts.high, a.alerts.high),
+            (alerts.urgent_high, a.alerts.urgent_high),
+        ] {
+            assert!((got - want).abs() < 0.5, "{got} != {want}");
+        }
+    }
+
+    /// Every settings row must render something and belong to a section — a
+    /// row added to `Field::ALL` without a `field_value` arm shows up here.
+    #[test]
+    fn every_settings_row_renders() {
+        let a = app();
+        let mut seen: Vec<Field> = Vec::new();
+        for f in Field::ALL {
+            assert!(!seen.contains(&f), "{f:?} appears twice in Field::ALL");
+            seen.push(f);
+            assert!(!f.label().is_empty(), "{f:?} has no label");
+            assert!(!f.group().is_empty(), "{f:?} has no group");
+            assert!(!a.field_value(f).is_empty(), "{f:?} renders nothing");
+        }
+    }
+
     #[test]
     fn transient_failures_keep_retrying() {
         let mut a = app();

@@ -39,6 +39,19 @@ mise exec -- cargo fmt --all
 CI (`.github/workflows/ci.yml`) gates on **fmt `--check`, `clippy -D warnings`,
 build, and test** — all four must pass. Run them locally before pushing.
 
+It also enforces what used to be prose here:
+
+- `scripts/check-process.sh` — every `Field` is in `Field::ALL`, and every key
+  `build_config` persists appears in `config.example.toml`. Run it locally too.
+- a `CHANGELOG.md` entry whenever `src/` changes (bypass: `[skip-changelog]`
+  in the PR title, for genuinely non-user-visible work)
+- `cargo check` against the `rust-version` in `Cargo.toml`
+- the existing demo-gif gate (bypass: `[skip-demo]`)
+
+Config round-tripping and settings-row completeness are covered by tests in
+`src/app.rs` (`every_edited_setting_round_trips_through_the_config`,
+`every_settings_row_renders`).
+
 ## Conventions
 
 - **Commits**: conventional-commit style (`feat:`, `fix:`, `docs:`…), lowercase

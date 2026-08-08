@@ -26,4 +26,14 @@ jobs:
             echo "CARGO_REGISTRY_TOKEN not set — skipping crates.io publish."
             exit 0
           fi
-          cargo publish
+          # The tag is the release; if Cargo.toml disagrees with it, the crate
+          # published under this tag would be a different version than every
+          # other channel ships. Stop rather than publish the mismatch.
+          tag_version="${GITHUB_REF_NAME#v}"
+          crate_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$tag_version" != "$crate_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $crate_version"
+            exit 1
+          fi
+          # --locked: publish exactly the dependency versions that CI tested.
+          cargo publish --locked

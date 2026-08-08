@@ -1,0 +1,33 @@
+version: 2
+updates:
+  # Cargo dependencies. Grouped so a routine week is one PR, not eight; a
+  # major bump still comes on its own so it gets read.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # Don't chase a version the day it lands: a freshly published crate is
+    # where compromised releases and same-day yanks show up.
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "chore"
+
+  # Workflow actions. These run with repository secrets (crates.io, Homebrew,
+  # and AUR tokens), so keeping them current is a supply-chain concern, not
+  # housekeeping.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "ci"

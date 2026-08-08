@@ -75,9 +75,45 @@ jobs:
             packaging/aur/PKGBUILD.in > packaging/aur/PKGBUILD
           echo "----- PKGBUILD -----"; cat packaging/aur/PKGBUILD
 
+      # The PKGBUILD's source= URL is what every `yay -S sugarrush-bin` will
+      # fetch. Publishing one that 404s ships a package nobody can build, so
+      # check it resolves before pushing to the AUR.
+      - name: Verify the PKGBUILD source URL resolves
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          # source= interpolates ${pkgver}, which makepkg expands and curl
+          # doesn't — expand it here or this checks a URL nobody ever fetches.
+          ver="${TAG#v}"
+          url=$(sed -n 's/.*::\(https:[^"]*\)".*/\1/p' packaging/aur/PKGBUILD |
+            sed "s/\${pkgver}/${ver}/g")
+          test -n "$url" || { echo "::error::no source URL in the rendered PKGBUILD"; exit 1; }
+          case "$url" in
+            *'$'*) echo "::error::unexpanded variable left in the source URL: $url"; exit 1 ;;
+          esac
+          echo "checking $url"
+          for i in $(seq 1 12); do
+            if curl -fsSL --retry 2 -o /tmp/pkgsrc.tar.xz "$url"; then
+              # Same bytes the sha256sums line was computed from?
+              rendered=$(sed -n "s/^sha256sums=('\(.*\)')/\1/p" packaging/aur/PKGBUILD)
+              actual=$(sha256sum /tmp/pkgsrc.tar.xz | cut -d' ' -f1)
+              if [ "$rendered" != "$actual" ]; then
+                echo "::error::PKGBUILD checksum $rendered does not match the published asset ($actual)"
+                exit 1
+              fi
+              echo "source URL is live and matches the checksum"
+              exit 0
+            fi
+            echo "not available yet ($i)…"; sleep 10
+          done
+          echo "::error::PKGBUILD source URL never became available: $url"
+          exit 1
+
       - name: Publish
         if: steps.gate.outputs.ready == 'true'
-        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        # Pinned to the commit behind v2.7.2: this step holds the AUR SSH key,
+        # and a mutable tag can be repointed at any time.
+        uses: KSXGitHub/github-actions-deploy-aur@9dfe151cf48f26a957bbd0379c120e79cb990e13 # v2.7.2
         with:
           pkgname: sugarrush-bin
           pkgbuild: packaging/aur/PKGBUILD

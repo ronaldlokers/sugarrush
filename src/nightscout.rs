@@ -98,10 +98,15 @@ impl Client {
         Ok(clean_newest_first(entries))
     }
 
-    /// Fetch uploader-published forecasts from `/api/v1/devicestatus` (Loop's
-    /// `loop.predicted` or OpenAPS's `openaps.suggested.predBGs`). Returns
-    /// `(epoch_ms, mg/dL)` points, or `None` when no device predictions exist.
-    pub async fn predictions(&self) -> Result<Option<Vec<Prediction>>> {
+    /// Fetch the latest `/api/v1/devicestatus` record and read both things we
+    /// want from it: the uploader metadata (battery, IOB/COB, last seen) and
+    /// any published forecast (Loop's `loop.predicted`, OpenAPS's
+    /// `openaps.suggested.predBGs`).
+    ///
+    /// One request, not two. These used to be separate calls to the same
+    /// endpoint on every refresh — double the requests, and a chance of the two
+    /// halves coming from different records if the uploader posted in between.
+    pub async fn device_status(&self) -> Result<(DeviceStatus, Option<Vec<Prediction>>)> {
         let url = format!("{}/api/v1/devicestatus.json", self.base_url);
         let value: Value = self
             .http
@@ -115,32 +120,11 @@ impl Client {
             .json()
             .await
             .context("failed to parse devicestatus response")?;
-        Ok(value
-            .as_array()
-            .and_then(|items| items.first())
-            .and_then(parse_predicted))
-    }
-
-    /// Fetch uploader/device metadata from `/api/v1/devicestatus`.
-    pub async fn device_status(&self) -> Result<DeviceStatus> {
-        let url = format!("{}/api/v1/devicestatus.json", self.base_url);
-        let value: Value = self
-            .http
-            .get(&url)
-            .query(&[("count", "1"), ("token", self.token.as_str())])
-            .send()
-            .await
-            .context("devicestatus request failed")?
-            .error_for_status()
-            .context("Nightscout returned an error status")?
-            .json()
-            .await
-            .context("failed to parse devicestatus response")?;
-        Ok(value
-            .as_array()
-            .and_then(|items| items.first())
-            .map(parse_device_status)
-            .unwrap_or_default())
+        let latest = value.as_array().and_then(|items| items.first());
+        Ok((
+            latest.map(parse_device_status).unwrap_or_default(),
+            latest.and_then(parse_predicted),
+        ))
     }
 
     /// Epoch ms of the most recent sensor start/change treatment, if any.
@@ -158,22 +142,7 @@ impl Client {
             .json()
             .await
             .context("failed to parse treatments response")?;
-        Ok(value.as_array().and_then(|items| {
-            items
-                .iter()
-                .filter_map(|t| {
-                    let event = t.get("eventType")?.as_str()?;
-                    event
-                        .contains("Sensor")
-                        .then(|| {
-                            t.get("created_at")
-                                .and_then(Value::as_str)
-                                .and_then(parse_iso)
-                        })
-                        .flatten()
-                })
-                .max()
-        }))
+        Ok(parse_sensor_start(&value))
     }
 
     /// Fetch carb/insulin treatments whose `created_at` falls within
@@ -199,35 +168,64 @@ impl Client {
             .json()
             .await
             .context("failed to parse treatments response")?;
-        Ok(value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|t| {
-                        let at = t.get("mills").and_then(Value::as_i64).or_else(|| {
-                            t.get("created_at")
-                                .and_then(Value::as_str)
-                                .and_then(parse_iso)
-                        })?;
-                        if at < start_ms || at > end_ms {
-                            return None;
-                        }
-                        let carbs = t.get("carbs").and_then(Value::as_f64).filter(|c| *c > 0.0);
-                        let insulin = t
-                            .get("insulin")
-                            .and_then(Value::as_f64)
-                            .filter(|i| *i > 0.0);
-                        (carbs.is_some() || insulin.is_some()).then_some(Treatment {
-                            at_ms: at,
-                            carbs,
-                            insulin,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default())
+        Ok(parse_treatments(&value, start_ms, end_ms))
     }
+}
+
+/// The most recent sensor start/change from a `/treatments` payload. Nightscout
+/// spells these several ways ("Sensor Start", "Sensor Change"), so match on the
+/// shared word and take the newest.
+fn parse_sensor_start(value: &Value) -> Option<i64> {
+    value.as_array().and_then(|items| {
+        items
+            .iter()
+            .filter_map(|t| {
+                let event = t.get("eventType")?.as_str()?;
+                event
+                    .contains("Sensor")
+                    .then(|| {
+                        t.get("created_at")
+                            .and_then(Value::as_str)
+                            .and_then(parse_iso)
+                    })
+                    .flatten()
+            })
+            .max()
+    })
+}
+
+/// Carb/insulin treatments from a `/treatments` payload, within the window.
+/// Entries with neither carbs nor insulin (site changes, notes, temp basals)
+/// carry nothing to draw, so they're dropped.
+fn parse_treatments(value: &Value, start_ms: i64, end_ms: i64) -> Vec<Treatment> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|t| {
+                    let at = t.get("mills").and_then(Value::as_i64).or_else(|| {
+                        t.get("created_at")
+                            .and_then(Value::as_str)
+                            .and_then(parse_iso)
+                    })?;
+                    if at < start_ms || at > end_ms {
+                        return None;
+                    }
+                    let carbs = t.get("carbs").and_then(Value::as_f64).filter(|c| *c > 0.0);
+                    let insulin = t
+                        .get("insulin")
+                        .and_then(Value::as_f64)
+                        .filter(|i| *i > 0.0);
+                    (carbs.is_some() || insulin.is_some()).then_some(Treatment {
+                        at_ms: at,
+                        carbs,
+                        insulin,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// A carb and/or insulin treatment.
@@ -447,6 +445,135 @@ mod tests {
             vec![3_000, 2_000, 1_000]
         );
         assert_eq!(out[0].sgv, 120.0);
+    }
+
+    #[test]
+    fn entries_deserialize_from_a_nightscout_payload() {
+        // Shape as served by /api/v1/entries/sgv.json — extra fields and all.
+        let raw = r#"[
+          {"_id":"a","sgv":142,"date":1700000000000,"dateString":"2023-11-14T22:13:20.000Z",
+           "trend":4,"direction":"Flat","device":"share2","type":"sgv"},
+          {"_id":"b","sgv":138,"date":1699999700000,"direction":"FortyFiveDown","type":"sgv"}
+        ]"#;
+        let entries: Vec<Entry> = serde_json::from_str(raw).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].sgv, 142.0);
+        assert_eq!(entries[0].date, 1_700_000_000_000);
+        assert_eq!(entries[0].arrow(), "→");
+        assert_eq!(entries[1].arrow(), "↘");
+    }
+
+    #[test]
+    fn entry_survives_a_missing_direction() {
+        let e: Entry = serde_json::from_str(r#"{"sgv":95,"date":1}"#).unwrap();
+        assert!(e.direction.is_none());
+        assert_eq!(e.arrow(), "-");
+    }
+
+    #[test]
+    fn parses_a_loop_forecast() {
+        let raw = r#"{
+          "device":"loop://iPhone","created_at":"2023-11-14T22:10:00.000Z",
+          "loop":{"iob":{"iob":1.35},"cob":{"cob":18},
+                  "predicted":{"startDate":"2023-11-14T22:10:00.000Z",
+                               "values":[120,118,115,110]}}
+        }"#;
+        let item: Value = serde_json::from_str(raw).unwrap();
+        let preds = parse_predicted(&item).unwrap();
+        assert_eq!(preds.len(), 4);
+        // A single curve: the band collapses onto the curve itself.
+        assert_eq!(preds[0].low, 120.0);
+        assert_eq!(preds[0].high, 120.0);
+        assert_eq!(preds[3].low, 110.0);
+        // Steps are 5 minutes apart, starting at the published time.
+        assert_eq!(preds[1].at_ms - preds[0].at_ms, PRED_STEP_MS);
+
+        let status = parse_device_status(&item);
+        assert_eq!(status.iob, Some(1.35));
+        assert_eq!(status.cob, Some(18.0));
+        assert_eq!(status.device.as_deref(), Some("loop://iPhone"));
+    }
+
+    #[test]
+    fn parses_an_openaps_forecast_as_an_envelope() {
+        let raw = r#"{
+          "device":"openaps://rig","mills":1700000000000,
+          "openaps":{"suggested":{"timestamp":"2023-11-14T22:10:00.000Z","IOB":0.8,"COB":24,
+                                  "predBGs":{"IOB":[120,118,116],"ZT":[120,125,130],"UAM":[120,110,100]}}},
+          "uploader":{"battery":76}
+        }"#;
+        let item: Value = serde_json::from_str(raw).unwrap();
+        let preds = parse_predicted(&item).unwrap();
+        assert_eq!(preds.len(), 3);
+        // The cone is the min/max across every published curve at each step.
+        assert_eq!(preds[0].low, 120.0);
+        assert_eq!(preds[0].high, 120.0);
+        assert_eq!(preds[2].low, 100.0);
+        assert_eq!(preds[2].high, 130.0);
+
+        let status = parse_device_status(&item);
+        assert_eq!(status.iob, Some(0.8));
+        assert_eq!(status.cob, Some(24.0));
+        assert_eq!(status.battery, Some(76));
+        assert_eq!(status.last_ms, Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn device_status_falls_back_to_uploader_battery_field() {
+        let item: Value = serde_json::from_str(
+            r#"{"uploaderBattery":42,"created_at":"2023-11-14T22:10:00.000Z"}"#,
+        )
+        .unwrap();
+        let status = parse_device_status(&item);
+        assert_eq!(status.battery, Some(42));
+        assert!(status.last_ms.is_some()); // parsed from created_at
+        assert!(status.iob.is_none());
+    }
+
+    #[test]
+    fn no_forecast_when_the_uploader_publishes_none() {
+        let item: Value =
+            serde_json::from_str(r#"{"device":"share2","uploader":{"battery":90}}"#).unwrap();
+        assert!(parse_predicted(&item).is_none());
+    }
+
+    #[test]
+    fn treatments_are_filtered_to_the_window_and_to_real_doses() {
+        let raw = r#"[
+          {"eventType":"Meal Bolus","mills":1500,"carbs":45,"insulin":4.2},
+          {"eventType":"Correction Bolus","created_at":"1970-01-01T00:00:02.000Z","insulin":1.1},
+          {"eventType":"Note","mills":1600,"notes":"felt low"},
+          {"eventType":"Temp Basal","mills":1700,"carbs":0,"insulin":0},
+          {"eventType":"Meal Bolus","mills":99999,"carbs":30}
+        ]"#;
+        let value: Value = serde_json::from_str(raw).unwrap();
+        let t = parse_treatments(&value, 1000, 5000);
+        // The note and the all-zero temp basal carry nothing to draw; the last
+        // one is outside the window.
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].carbs, Some(45.0));
+        assert_eq!(t[0].insulin, Some(4.2));
+        assert_eq!(t[1].at_ms, 2000); // created_at parsed when mills is absent
+        assert_eq!(t[1].carbs, None);
+    }
+
+    #[test]
+    fn sensor_start_takes_the_newest_sensor_event() {
+        let raw = r#"[
+          {"eventType":"Sensor Start","created_at":"2023-11-01T08:00:00.000Z"},
+          {"eventType":"Site Change","created_at":"2023-11-12T08:00:00.000Z"},
+          {"eventType":"Sensor Change","created_at":"2023-11-11T07:30:00.000Z"}
+        ]"#;
+        let value: Value = serde_json::from_str(raw).unwrap();
+        let start = parse_sensor_start(&value).unwrap();
+        // The 11 Nov sensor change, not the newer (but unrelated) site change.
+        assert_eq!(start, parse_iso("2023-11-11T07:30:00.000Z").unwrap());
+        // Nothing sensor-related at all.
+        let none: Value = serde_json::from_str(
+            r#"[{"eventType":"Site Change","created_at":"2023-11-12T08:00:00.000Z"}]"#,
+        )
+        .unwrap();
+        assert!(parse_sensor_start(&none).is_none());
     }
 
     #[test]
