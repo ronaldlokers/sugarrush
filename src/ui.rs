@@ -851,15 +851,27 @@ fn draw_graph_tabs(f: &mut Frame, area: Rect, app: &App) {
 /// Ambulatory Glucose Profile: readings from the last N days folded onto one
 /// 24-hour clock, drawn as a percentile fan (median + 25/75 + 5/95 bands).
 fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
+    let bands = agp::profile(&app.agp_entries);
+    // Reading a pattern off a percentile fan is a skill; name the worst one in
+    // the title so it doesn't depend on having that skill. The rest are in the
+    // exported report, where there's room for all of them.
+    let headline = agp::insights(&bands, app.alerts.low, app.alerts.high)
+        .first()
+        .map(|i| format!("⚠ {} ", i.text(app.units)))
+        .unwrap_or_default();
     let block = Block::default().borders(Borders::ALL).title(format!(
-        " AGP · last {}d · target {}–{} {} · median + IQR + 5/95 ",
+        " AGP · last {}d · target {}–{} {} · {}",
         app.agp_days,
         fmt_disp(app.units, app.units.from_mgdl(app.alerts.low)),
         fmt_disp(app.units, app.units.from_mgdl(app.alerts.high)),
         app.units.label(),
+        if headline.is_empty() {
+            "median + IQR + 5/95 ".to_string()
+        } else {
+            headline
+        },
     ));
 
-    let bands = agp::profile(&app.agp_entries);
     if bands.is_empty() {
         f.render_widget(
             Paragraph::new("  gathering days of history…").block(block),

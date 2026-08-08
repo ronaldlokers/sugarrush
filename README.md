@@ -39,6 +39,8 @@ That's the recording above. When you're ready, point it at your own site
 **History & forecast**
 - Switchable **graph views** (`Tab`) — a 3h or 24h timeline, or an **AGP**
   (ambulatory glucose profile) folding days of readings into a percentile band
+  (median + IQR + 5/95), which also **names the pattern** it finds — e.g.
+  `⚠ lows 02:00–05:00 (down to 3.1 mmol/L)`
 - Live braille/dot graph you can **pan** (`h`/`l`), **zoom** (`+`/`-`,
   1h–24h), step **day by day** (`[`/`]`), and **jump to a date** (`g`)
 - A 24h **minimap** you click or drag to move the window
