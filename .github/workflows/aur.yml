@@ -113,7 +113,7 @@ jobs:
         if: steps.gate.outputs.ready == 'true'
         # Pinned to the commit behind v2.7.2: this step holds the AUR SSH key,
         # and a mutable tag can be repointed at any time.
-        uses: KSXGitHub/github-actions-deploy-aur@9dfe151cf48f26a957bbd0379c120e79cb990e13 # v2.7.2
+        uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
         with:
           pkgname: sugarrush-bin
           pkgbuild: packaging/aur/PKGBUILD
