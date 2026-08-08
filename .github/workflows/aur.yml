@@ -25,7 +25,9 @@ jobs:
   aur:
     # On workflow_run only proceed if the release actually produced artifacts
     # (host job succeeded); manual dispatch always proceeds.
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'cancelled' }}
+    # `failure` is not `cancelled`: the old check let a Release that broke
+    # partway still publish to the AUR from whatever assets had uploaded.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.inputs.tag || github.event.workflow_run.head_branch }}

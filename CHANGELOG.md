@@ -6,6 +6,38 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`sugarrush --help` and `--version`.** There were none: `--help` opened the
+  dashboard, and on a machine with no config it opened the *setup wizard* and
+  started asking for a Nightscout token. Unknown arguments now say so and exit
+  instead of being silently ignored.
+- **`sugarrush watch --install-unit`** writes a systemd user service pointing at
+  wherever your binary actually is, and prints the commands to enable it. The
+  old instructions told you to copy a file out of a git checkout — which four of
+  the five install methods never produce — and the unit hardcoded a path only
+  `cargo install` uses.
+- **A troubleshooting section and a command table in the README**, including
+  every reason the alarm can be silent, in the order worth checking.
+
+### Fixed
+
+- **The systemd unit now survives logging out.** It was tied to
+  `graphical-session.target`, which sway, Hyprland without uwsm, i3 and bare X
+  never activate — so `systemctl --user enable --now` appeared to work and then
+  never started again after a reboot. It now uses `default.target`, drops
+  `PartOf=`, and ships with hardening directives.
+- **`config.example.toml` set `refresh_secs` inside `[minimap]`**, where it
+  parsed as a minimap key and was silently ignored — so copying the example and
+  changing the refresh interval did nothing. A test now parses the shipped
+  example and asserts what it actually means.
+- **The keybinding overlay is sized from its contents.** It was a fixed 56
+  columns, which clipped its longest line and cut off "press any key to close",
+  so the overlay never said how to leave it. It also now mentions that
+  `watch`, `export` and `status` exist.
+- **A broken release can no longer publish to the AUR.** The job ran whenever
+  the release workflow wasn't *cancelled* — and a failure isn't a cancellation.
+
 ### Fixed
 
 - **Looking at yesterday no longer silences today's alarm.** Panning or jumping

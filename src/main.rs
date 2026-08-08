@@ -53,6 +53,13 @@ enum Mode {
     Export { days: u32, dir: Option<String> },
     /// Run the headless alarm watcher until killed.
     Watch,
+    /// Write a systemd user unit pointing at this binary, and explain how to
+    /// enable it.
+    InstallUnit,
+    /// Print usage and exit.
+    Help,
+    /// Print the version and exit.
+    Version,
 }
 
 fn parse_args() -> Mode {
@@ -79,6 +86,9 @@ fn parse_args() -> Mode {
             "about" => mode = Some(Mode::About),
             "export" => mode = Some(Mode::Export { days: 0, dir: None }),
             "watch" => mode = Some(Mode::Watch),
+            "--install-unit" => mode = Some(Mode::InstallUnit),
+            "help" | "--help" | "-h" => mode = Some(Mode::Help),
+            "--version" | "-V" => mode = Some(Mode::Version),
             "--days" => {
                 i += 1;
                 export_days = args.get(i).and_then(|v| v.parse().ok());
@@ -94,7 +104,14 @@ fn parse_args() -> Mode {
                     screen = Screen::Settings;
                 }
             }
-            _ => {}
+            // Silently ignoring an unrecognised argument meant `sugarrush
+            // --help` opened the TUI — and on an unconfigured machine, the
+            // first-run wizard, which then asked for a Nightscout token.
+            other => {
+                eprintln!("sugarrush: unknown argument '{other}'");
+                eprintln!("Try 'sugarrush --help'.");
+                std::process::exit(2);
+            }
         }
         i += 1;
     }
@@ -147,6 +164,15 @@ async fn main() -> Result<()> {
         }
         Mode::Export { days, dir } => run_export(days, dir).await,
         Mode::Watch => watch::run().await,
+        Mode::InstallUnit => install_unit(),
+        Mode::Help => {
+            print_help();
+            Ok(())
+        }
+        Mode::Version => {
+            println!("sugarrush {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         Mode::Tui { screen, demo } => run_tui(screen, demo).await,
     }
 }
@@ -227,6 +253,96 @@ async fn run_tui(screen: Screen, demo: bool) -> Result<()> {
         watch::clear_heartbeat(watch::Role::Tui);
     }
     res
+}
+
+/// Usage. Kept in one place so the README, the man page and this can't drift.
+fn print_help() {
+    println!(
+        "\
+sugarrush {version} — your Nightscout CGM data, in the terminal
+
+USAGE:
+    sugarrush [--demo] [--screen settings]   the dashboard
+    sugarrush watch                          headless alarm watcher (no terminal needed)
+    sugarrush export [--days N] [--out DIR]  CSV + a clinical summary
+    sugarrush status [--format FORMAT]       one line for a status bar
+    sugarrush waybar                         alias for --format waybar
+    sugarrush about                          version, repo and the safety note
+
+OPTIONS:
+    --demo                 synthetic data, no config and no network
+    --screen settings      open straight to the settings screen
+    --days N               export window in days (default: the AGP days setting)
+    --out DIR              where to write exports (default: the current directory)
+    --format FORMAT        {formats}
+    --install-unit         write a systemd user unit for `watch` and explain how to enable it
+    -h, --help             this
+    -V, --version          print the version
+
+Config lives at ~/.config/sugarrush/config.toml; the first run sets it up.
+sugarrush is not a medical device — don't use it for treatment decisions.",
+        version = env!("CARGO_PKG_VERSION"),
+        formats = status::Format::NAMES,
+    );
+}
+
+/// Write a systemd user unit that points at *this* binary.
+///
+/// The shipped unit hardcoded `~/.cargo/bin`, which is where only one of the
+/// five install methods puts it, and the README told people to copy a file out
+/// of a git checkout they never made. Both produced a service that enables
+/// cleanly and then fails at start.
+fn install_unit() -> Result<()> {
+    let exe = std::env::current_exe().context("could not find this binary's path")?;
+    let dir = dirs::config_dir()
+        .context("could not resolve the user config dir")?
+        .join("systemd/user");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join("sugarrush-watch.service");
+
+    let unit = format!(
+        "\
+[Unit]
+Description=sugarrush CGM alarm watcher
+Documentation=https://github.com/ronaldlokers/sugarrush
+
+[Service]
+Type=simple
+ExecStart={exe} watch
+Restart=always
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=10
+# Hardening: this reads a credential and talks to one host.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%S/sugarrush %t/sugarrush
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+# default.target, not graphical-session.target: the alarm should survive
+# logging out, and on sway/Hyprland/i3 without uwsm that target never
+# activates at all — the unit would enable cleanly and never start.
+WantedBy=default.target
+",
+        exe = exe.display()
+    );
+    std::fs::write(&path, unit).with_context(|| format!("failed to write {}", path.display()))?;
+
+    println!("Wrote {}", path.display());
+    println!();
+    println!("Enable it with:");
+    println!("    systemctl --user daemon-reload");
+    println!("    systemctl --user enable --now sugarrush-watch.service");
+    println!();
+    println!("To keep it running when you're not logged in:");
+    println!("    loginctl enable-linger $USER");
+    println!();
+    println!("Watch what it's doing:");
+    println!("    journalctl --user -fu sugarrush-watch");
+    Ok(())
 }
 
 /// Print name/version/repo and a not-a-medical-device note, and also fire a
