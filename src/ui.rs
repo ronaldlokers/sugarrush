@@ -706,6 +706,22 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::Blue),
         ));
     }
+    // Only speak up about the watcher once there is something to say: silence
+    // for someone who doesn't run it, confirmation while it's up, and a
+    // warning if it was up and then stopped.
+    if app.watcher_alive {
+        spans.push(Span::styled(
+            " ⚑ watcher up ",
+            Style::default().fg(app.theme.in_range),
+        ));
+    } else if app.watcher_seen {
+        spans.push(Span::styled(
+            " ⚠ watcher stopped ",
+            Style::default()
+                .fg(app.theme.urgent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if !app.online {
         let age = app
             .last_ok_ms

@@ -216,6 +216,13 @@ own independent alert state — a low for one person doesn't silence the
 announcement for another — and names whose reading it is in every notification
 and log line.
 
+The dashboard shows `⚑ watcher up` in its header while the watcher is running,
+and warns you with `⚠ watcher stopped` if it was running and then stopped — so
+"is my alarm actually on?" is answerable at a glance. The watcher also logs a
+line every 15 minutes even when nothing happens (`ok · 5.6 mmol/L · in range ·
+2m ago`), so a quiet journal is evidence it was watching rather than evidence
+of nothing.
+
 It's safe to leave running alongside the TUI: both processes write a heartbeat,
 and the watcher goes quiet whenever the dashboard is on screen, so you never get
 two alarms for one low. It also persists episode state, so restarting the

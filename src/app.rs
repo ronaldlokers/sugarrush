@@ -325,6 +325,12 @@ pub struct App {
     /// crossed bands). Shown in the footer — a silently corrected threshold is
     /// still a threshold the user thinks they set.
     pub config_warnings: Vec<String>,
+    /// Whether `sugarrush watch` is currently alive, and whether it has been
+    /// seen alive at all during this session. The pair matters: someone who
+    /// doesn't run the daemon should see nothing, while someone whose daemon
+    /// *died* must be told — those two are indistinguishable from one flag.
+    pub watcher_alive: bool,
+    pub watcher_seen: bool,
     /// Whether the last fetch reached Nightscout.
     pub online: bool,
     /// Epoch ms of the last successful fetch.
@@ -396,6 +402,8 @@ impl App {
             demo: false,
             perm_warning: false,
             config_warnings: Vec::new(),
+            watcher_alive: false,
+            watcher_seen: false,
             online: true,
             last_ok_ms: None,
             fetch_fails: 0,

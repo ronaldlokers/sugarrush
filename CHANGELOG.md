@@ -46,6 +46,18 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The dashboard now tells you whether the alarm watcher is running.** Nothing
+  ever read the watcher's heartbeat, so a dead `sugarrush watch` and a quiet
+  night looked exactly the same. The header shows `⚑ watcher up` while it's
+  alive and `⚠ watcher stopped` if it was running and then wasn't — and stays
+  quiet for anyone who doesn't use the daemon, so it's information rather than
+  nagging.
+- **`sugarrush watch` says it's alive even when nothing happens.** It logged
+  only alert transitions, so the morning after a missed alarm an empty journal
+  could mean "glucose was flat all night" *or* "the daemon was dead" with no
+  way to tell them apart. It now writes a line every 15 minutes —
+  `ok · 5.6 mmol/L · in range · 2m ago` — so a quiet journal proves it was
+  watching.
 - **Step through history a day at a time** with `[` and `]`, keeping the same
   time of day — checking "how was last night?" no longer means typing a date or
   panning there a half-window at a time.
