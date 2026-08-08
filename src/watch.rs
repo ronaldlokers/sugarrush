@@ -139,6 +139,10 @@ pub struct Episode {
     /// An active snooze outlives a restart — otherwise restarting the service
     /// is a way to un-silence an alarm someone deliberately silenced.
     pub snooze_until: Option<i64>,
+    /// Which urgent state this episode belongs to, so a restart mid-episode
+    /// isn't mistaken for a change of emergency.
+    #[serde(default)]
+    pub episode_kind: Option<String>,
 }
 
 impl Episode {
@@ -150,6 +154,7 @@ impl Episode {
             pushed_episode: app.pushed_episode(),
             escalated: app.escalated(),
             snooze_until: app.snooze_until(),
+            episode_kind: app.episode_kind().map(|a| a.class().to_string()),
         }
     }
 
@@ -162,6 +167,7 @@ impl Episode {
             self.pushed_episode,
             self.escalated,
             self.snooze_until,
+            self.episode_kind.as_deref().and_then(alert_from_class),
         );
     }
 }
@@ -449,6 +455,7 @@ mod tests {
             pushed_episode: true,
             escalated: false,
             snooze_until: Some(NOW + 300_000),
+            episode_kind: Some(Alert::UrgentLow.class().to_string()),
         };
         // Stored per site, so two people's episodes never collide.
         let mut state = State::default();
@@ -474,6 +481,7 @@ mod tests {
             pushed_episode: true,
             escalated: false,
             snooze_until: Some(NOW + 300_000),
+            episode_kind: Some(Alert::UrgentLow.class().to_string()),
         }
         .restore(&mut app);
 
