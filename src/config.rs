@@ -116,14 +116,25 @@ impl Site {
     /// but the local machine. The token is a query parameter, so anyone on the
     /// path can read it (and the glucose data with it).
     pub fn is_insecure(&self) -> bool {
-        let url = self.base_url();
-        let Some(rest) = url.strip_prefix("http://") else {
-            return false;
-        };
-        let host = rest.split('/').next().unwrap_or("");
-        let host = host.split(':').next().unwrap_or(host);
-        !matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
+        is_insecure_url(self.base_url())
     }
+}
+
+/// True when a webhook URL would send the alert in clear text.
+///
+/// `push_url` had none of the scrutiny the site URL gets — no wizard gate, no
+/// settings warning, no footer banner — despite being the one channel that
+/// leaves the machine. The documented example is a public ntfy topic, where
+/// anyone who learns the topic name is subscribed to a stranger's
+/// hypoglycaemia; over plain http it's readable by the network too.
+pub fn is_insecure_url(url: &str) -> bool {
+    let url = url.trim().trim_end_matches('/');
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let host = rest.split('/').next().unwrap_or("");
+    let host = host.split(':').next().unwrap_or(host);
+    !matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
 }
 
 /// Clean up a Nightscout URL as typed: trim it, default the scheme to HTTPS,
@@ -362,6 +373,23 @@ fn create_private(path: &Path) -> std::io::Result<File> {
 #[cfg(not(unix))]
 fn create_private(path: &Path) -> std::io::Result<File> {
     File::create(path)
+}
+
+/// Write a file only the owner can read. Used for anything holding personal
+/// data — the token, and exports of someone's glucose history.
+pub fn write_private(path: &Path, body: &str) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("failed to create {}", dir.display()))?;
+        }
+    }
+    let mut f =
+        create_private(path).with_context(|| format!("failed to create {}", path.display()))?;
+    f.write_all(body.as_bytes())
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    set_owner_only(path);
+    Ok(())
 }
 
 /// Restrict `path` to owner read/write (no-op off Unix).

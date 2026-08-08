@@ -30,6 +30,35 @@ impl Format {
     }
 }
 
+/// Write both files into `dir`, owner-only, returning their absolute paths.
+///
+/// Shared by the `e` key and the `export` subcommand, which had drifted: the
+/// CLI honoured `--out` while the in-app export wrote bare filenames into
+/// whatever directory the process happened to start in. Both used
+/// `std::fs::write`, i.e. 0644 — the config file holding a *read-only token*
+/// gets 0600, while a named person's 14-day glucose record did not.
+pub fn write_pair(
+    dir: &std::path::Path,
+    entries: &[Entry],
+    alerts: &Alerts,
+    units: Units,
+    days: u32,
+    now_ms: i64,
+) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    use anyhow::Context;
+    let mut written = Vec::new();
+    for (format, body) in [
+        (Format::Csv, csv(entries, units)),
+        (Format::Report, report(entries, alerts, units, days, now_ms)),
+    ] {
+        let path = dir.join(filename(format, now_ms));
+        crate::config::write_private(&path, &body)
+            .with_context(|| format!("failed to write {}", path.display()))?;
+        written.push(std::fs::canonicalize(&path).unwrap_or(path));
+    }
+    Ok(written)
+}
+
 /// `sugarrush-YYYYMMDD-HHMM.csv` — sortable, and obvious in a Downloads folder.
 pub fn filename(format: Format, now_ms: i64) -> String {
     let stamp = Local
@@ -44,6 +73,25 @@ pub fn filename(format: Format, now_ms: i64) -> String {
 /// charts. Both units are written out: mg/dL because that's what's stored and
 /// what every analysis tool expects, and the display unit because that's what
 /// the person exporting recognises.
+/// Quote a CSV field, and defuse anything a spreadsheet would execute.
+///
+/// `direction` is a free string from the Nightscout JSON — which, since
+/// follower mode, may be *someone else's* server. A comma or newline breaks
+/// the file structurally; a leading `=`, `+`, `-`, `@`, tab or CR is run as a
+/// formula by Excel, LibreOffice and Sheets. This file exists to be opened in
+/// a spreadsheet, so neither is theoretical.
+fn field(value: &str) -> String {
+    let needs_guard = value.starts_with(['=', '+', '-', '@', '\t', '\r']);
+    let escaped = value.replace('"', "\"\"");
+    if needs_guard {
+        format!("\"'{escaped}\"")
+    } else if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{escaped}\"")
+    } else {
+        escaped
+    }
+}
+
 pub fn csv(entries: &[Entry], units: Units) -> String {
     let mut out = String::from("timestamp,epoch_ms,mgdl,");
     out.push_str(match units {
@@ -63,7 +111,7 @@ pub fn csv(entries: &[Entry], units: Units) -> String {
             e.date,
             e.sgv,
             units.format(e.sgv),
-            e.direction.as_deref().unwrap_or("")
+            field(e.direction.as_deref().unwrap_or(""))
         ));
     }
     out
@@ -321,5 +369,41 @@ mod tests {
             csv_name.trim_end_matches(".csv"),
             txt_name.trim_end_matches(".txt")
         );
+    }
+
+    #[test]
+    fn csv_fields_cannot_break_the_file_or_run_in_a_spreadsheet() {
+        // A hostile or merely odd `direction` from the server.
+        let entries = vec![Entry {
+            sgv: 100.0,
+            date: NOW,
+            direction: Some("=cmd|'/c calc'!A1".into()),
+        }];
+        let out = csv(&entries, Units::Mgdl);
+        let row = out.lines().nth(1).unwrap();
+        assert!(row.ends_with("\"'=cmd|'/c calc'!A1\""), "{row}");
+
+        // A comma must not add a column.
+        let entries = vec![Entry {
+            sgv: 100.0,
+            date: NOW,
+            direction: Some("Flat,Extra".into()),
+        }];
+        let out = csv(&entries, Units::Mgdl);
+        let row = out.lines().nth(1).unwrap();
+        assert_eq!(row.matches(',').count(), 5, "field count changed: {row}");
+        assert!(row.ends_with("\"Flat,Extra\""), "{row}");
+
+        // The ordinary case stays unquoted and readable.
+        let entries = vec![Entry {
+            sgv: 100.0,
+            date: NOW,
+            direction: Some("Flat".into()),
+        }];
+        assert!(csv(&entries, Units::Mgdl)
+            .lines()
+            .nth(1)
+            .unwrap()
+            .ends_with(",Flat"));
     }
 }

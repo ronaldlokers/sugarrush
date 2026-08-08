@@ -842,38 +842,27 @@ impl App {
             self.status = Some("nothing to export yet — no readings loaded".to_string());
             return;
         }
-        let files = [
-            (
-                crate::export::Format::Csv,
-                crate::export::csv(&self.agp_entries, self.units),
-            ),
-            (
-                crate::export::Format::Report,
-                crate::export::report(
-                    &self.agp_entries,
-                    &self.alerts,
-                    self.units,
-                    self.agp_days,
-                    now_ms,
-                ),
-            ),
-        ];
-        let mut written = Vec::new();
-        for (format, body) in files {
-            let name = crate::export::filename(format, now_ms);
-            match std::fs::write(&name, body) {
-                Ok(()) => written.push(name),
-                Err(e) => {
-                    self.status = Some(format!("export failed: {e}"));
-                    return;
-                }
-            }
-        }
-        self.status = Some(format!(
-            "exported {} days to {}",
+        // Same writer the CLI uses, so the two can't drift again, and the
+        // absolute path is reported — a bare filename left the user guessing
+        // which directory their health data landed in.
+        match crate::export::write_pair(
+            std::path::Path::new("."),
+            &self.agp_entries,
+            &self.alerts,
+            self.units,
             self.agp_days,
-            written.join(" + ")
-        ));
+            now_ms,
+        ) {
+            Ok(paths) => {
+                let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+                self.status = Some(format!(
+                    "exported {} days to {}",
+                    self.agp_days,
+                    names.join(" + ")
+                ));
+            }
+            Err(e) => self.status = Some(format!("export failed: {e}")),
+        }
     }
 
     /// Silence the audible alarm for the configured snooze interval.
@@ -909,23 +898,36 @@ impl App {
         if !self.alert.is_urgent() {
             return None;
         }
-        let value = self
-            .latest()
-            .map(|e| format!(" · {} {}", self.units.format(e.sgv), self.units.label()))
-            .unwrap_or_default();
+        // The push is the only channel that leaves the machine, so it honours
+        // the privacy setting the desktop notification already did: with
+        // `notify_content` off, the reading is left out rather than shipped to
+        // a third-party broker in clear text.
+        let value = if self.alerts.notify_content {
+            self.live_latest()
+                .map(|e| format!(" · {} {}", self.units.format(e.sgv), self.units.label()))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        // Name whose reading it is. A caregiver watching three people gets
+        // "URGENT LOW" on their phone with no way to tell which one.
+        let who = if self.sites.len() > 1 {
+            format!("[{}] ", self.active_site().name)
+        } else {
+            String::new()
+        };
         if !self.pushed_episode {
             self.pushed_episode = true;
-            return Some(format!("sugarrush: {}{}", self.alert.label(), value));
+            return Some(format!("sugarrush: {who}{}{value}", self.alert.label()));
         }
         if self.alerts.escalate_minutes > 0 && !self.escalated {
             if let Some(s) = self.urgent_since {
                 if now_ms - s >= self.alerts.escalate_minutes * 60_000 {
                     self.escalated = true;
                     return Some(format!(
-                        "sugarrush: STILL {} after {} min{}",
+                        "sugarrush: {who}STILL {} after {} min{value}",
                         self.alert.label(),
                         self.alerts.escalate_minutes,
-                        value
                     ));
                 }
             }
@@ -1322,8 +1324,15 @@ impl App {
             .to_string(),
             Field::PushAlerts => match (&self.alerts.push_url, self.alerts.push_enabled) {
                 (None, _) => "not configured".to_string(),
-                (Some(url), true) => format!("on · {}", push_host(url)),
-                (Some(url), false) => format!("off · {}", push_host(url)),
+                (Some(url), on) => {
+                    let state = if on { "on" } else { "off" };
+                    let warn = if crate::config::is_insecure_url(url) {
+                        " ⚠ unencrypted"
+                    } else {
+                        ""
+                    };
+                    format!("{state} · {}{warn}", push_host(url))
+                }
             },
             Field::Stale => format!("{} min", self.alerts.stale_minutes),
             Field::UrgentLow => self.threshold(self.alerts.urgent_low),
@@ -1954,6 +1963,74 @@ mod tests {
             "a restarting site should keep being retried"
         );
         assert!(b.should_retry(NOW + 120_000));
+    }
+
+    #[test]
+    fn the_push_names_the_site_and_honours_the_privacy_switch() {
+        let mut a = app();
+        a.alerts.push_url = Some("https://ntfy.sh/topic".into());
+        a.sites.push(crate::config::Site {
+            name: "bob".into(),
+            url: "https://ns.example.com".into(),
+            token: "t".into(),
+        });
+        a.entries = vec![entry(40.0, NOW)];
+        a.live_edge = Some(entry(40.0, NOW));
+        a.evaluate_alert(NOW);
+        a.update_urgent(NOW);
+
+        let msg = a.take_push(NOW).expect("no push");
+        assert!(msg.contains("URGENT LOW"), "{msg}");
+        // Whose low is it? The only channel that reaches a phone must say.
+        assert!(msg.contains("[default]"), "no site name: {msg}");
+        // Demo config displays mmol/L, so 40 mg/dL reads as 2.2.
+        assert!(msg.contains("2.2"), "{msg}");
+
+        // With content off, the reading must not leave the machine.
+        let mut b = app();
+        b.alerts.push_url = Some("https://ntfy.sh/topic".into());
+        b.alerts.notify_content = false;
+        b.entries = vec![entry(40.0, NOW)];
+        b.live_edge = Some(entry(40.0, NOW));
+        b.evaluate_alert(NOW);
+        b.update_urgent(NOW);
+        let msg = b.take_push(NOW).expect("no push");
+        assert!(msg.contains("URGENT LOW"), "{msg}");
+        assert!(!msg.contains("2.2"), "the reading leaked: {msg}");
+        assert!(!msg.contains("mmol"), "the unit leaked: {msg}");
+    }
+
+    #[test]
+    fn an_unencrypted_webhook_is_flagged_in_settings() {
+        let mut a = app();
+        a.alerts.push_url = Some("http://ntfy.example.com/topic".into());
+        assert!(a.field_value(Field::PushAlerts).contains("⚠ unencrypted"));
+        // The topic path is still never shown.
+        assert!(!a.field_value(Field::PushAlerts).contains("topic"));
+
+        a.alerts.push_url = Some("https://ntfy.example.com/topic".into());
+        assert!(!a.field_value(Field::PushAlerts).contains("unencrypted"));
+    }
+
+    #[test]
+    fn exports_are_owner_only_and_report_where_they_went() {
+        let dir = std::env::temp_dir().join(format!("sugarrush-exp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = app();
+        let entries = vec![entry(100.0, NOW), entry(105.0, NOW - 300_000)];
+        let paths = crate::export::write_pair(&dir, &entries, &a.alerts, a.units, 14, NOW).unwrap();
+
+        assert_eq!(paths.len(), 2);
+        for p in &paths {
+            assert!(p.is_absolute(), "not an absolute path: {}", p.display());
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(p).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o600, "{} is {mode:o}", p.display());
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
