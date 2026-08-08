@@ -264,6 +264,9 @@ pub struct App {
     snooze_until: Option<i64>,
     /// When the current urgent episode began (for escalation timing).
     urgent_since: Option<i64>,
+    /// Which urgent state the current episode belongs to. An episode is tied to
+    /// one variant, not to "urgent" in general — see `evaluate_alert`.
+    episode_kind: Option<Alert>,
     /// Whether we've already pushed for the current urgent episode.
     pushed_episode: bool,
     /// Whether the current urgent episode has escalated.
@@ -367,6 +370,7 @@ impl App {
             last_notified: None,
             snooze_until: None,
             urgent_since: None,
+            episode_kind: None,
             pushed_episode: false,
             escalated: false,
             predicted_notified: false,
@@ -683,10 +687,21 @@ impl App {
         } else {
             Alert::InRange
         };
-        // A snooze only applies to the urgent episode that started it; once the
-        // state clears, re-arm so the next urgent event alarms again.
-        if !self.alert.is_urgent() {
+        // An episode belongs to one urgent *state*, not to "urgent" in general.
+        // Keying it on `is_urgent()` alone made Stale → UrgentLow one
+        // continuous episode, so snoozing a sensor gap silenced the low that
+        // arrived when the sensor came back, swallowed its onset push, and left
+        // the escalation clock running from the gap — reporting "STILL URGENT
+        // LOW after 20 min" for a low two minutes old.
+        //
+        // A different urgent state is a different emergency: re-arm everything.
+        let kind = self.alert.is_urgent().then_some(self.alert);
+        if kind != self.episode_kind {
             self.snooze_until = None;
+            self.urgent_since = None;
+            self.pushed_episode = false;
+            self.escalated = false;
+            self.episode_kind = kind;
         }
         self.alert
     }
@@ -904,6 +919,10 @@ impl App {
         self.urgent_since
     }
 
+    pub fn episode_kind(&self) -> Option<Alert> {
+        self.episode_kind
+    }
+
     pub fn pushed_episode(&self) -> bool {
         self.pushed_episode
     }
@@ -917,6 +936,7 @@ impl App {
     }
 
     /// Resume a previously-running alert episode.
+    #[allow(clippy::too_many_arguments)]
     pub fn restore_episode(
         &mut self,
         last_notified: Option<Alert>,
@@ -924,12 +944,16 @@ impl App {
         pushed_episode: bool,
         escalated: bool,
         snooze_until: Option<i64>,
+        episode_kind: Option<Alert>,
     ) {
         self.last_notified = last_notified;
         self.urgent_since = urgent_since;
         self.pushed_episode = pushed_episode;
         self.escalated = escalated;
         self.snooze_until = snooze_until;
+        // Without this the first evaluate_alert after a restart would see a
+        // "changed" variant and wipe the very episode we just restored.
+        self.episode_kind = episode_kind;
     }
 
     // ---- Settings screen ----
@@ -1388,6 +1412,81 @@ mod tests {
         a.entries = vec![entry(100.0, NOW)];
         a.evaluate_alert(NOW);
         assert!(a.snooze_remaining_min(NOW).is_none());
+    }
+
+    /// C1 of the review: an episode is one urgent *state*, not "urgent".
+    #[test]
+    fn snoozing_a_sensor_gap_does_not_silence_the_low_that_follows() {
+        let mut a = app();
+        a.last_ok_ms = Some(NOW);
+        a.entries.clear(); // a total dropout is a sensor gap
+        assert_eq!(a.evaluate_alert(NOW), Alert::Stale);
+        a.update_urgent(NOW);
+        assert!(a.alarm_active(NOW));
+
+        // 03:00 — silence the gap.
+        a.snooze_alarm(NOW);
+        assert!(!a.alarm_active(NOW));
+
+        // 03:02 — the sensor comes back at 40 mg/dL. Different emergency.
+        let later = NOW + 2 * 60_000;
+        a.entries = vec![entry(40.0, later)];
+        assert_eq!(a.evaluate_alert(later), Alert::UrgentLow);
+        a.update_urgent(later);
+        assert!(
+            a.alarm_active(later),
+            "the gap's snooze silenced the urgent low that followed it"
+        );
+        // The escalation clock restarts from the low, not from the gap.
+        assert_eq!(a.urgent_since(), Some(later));
+    }
+
+    #[test]
+    fn a_new_urgent_state_pushes_at_its_own_onset() {
+        let mut a = app();
+        a.alerts.push_url = Some("https://ntfy.sh/topic".into());
+        a.alerts.escalate_minutes = 20;
+
+        a.entries = vec![entry(40.0, NOW)];
+        a.evaluate_alert(NOW);
+        a.update_urgent(NOW);
+        assert!(a.take_push(NOW).is_some(), "no push at the low's onset");
+
+        // Recovers, then goes urgent-high two minutes later.
+        let t1 = NOW + 60_000;
+        a.entries = vec![entry(100.0, t1)];
+        a.evaluate_alert(t1);
+        a.update_urgent(t1);
+        let t2 = NOW + 120_000;
+        a.entries = vec![entry(300.0, t2)];
+        a.evaluate_alert(t2);
+        a.update_urgent(t2);
+
+        // Its own onset push, not an escalation inherited from the low.
+        let msg = a.take_push(t2).expect("no push at the high's onset");
+        assert!(msg.contains("URGENT HIGH"), "{msg}");
+        assert!(!msg.contains("STILL"), "escalated at onset: {msg}");
+    }
+
+    #[test]
+    fn the_same_urgent_state_keeps_its_episode() {
+        // The flip side: consecutive urgent-low readings must NOT re-arm, or
+        // the snooze would be useless and every reading would re-push.
+        let mut a = app();
+        a.alerts.push_url = Some("https://ntfy.sh/topic".into());
+        a.entries = vec![entry(40.0, NOW)];
+        a.evaluate_alert(NOW);
+        a.update_urgent(NOW);
+        a.take_push(NOW);
+        a.snooze_alarm(NOW);
+
+        let later = NOW + 60_000;
+        a.entries = vec![entry(38.0, later)];
+        assert_eq!(a.evaluate_alert(later), Alert::UrgentLow);
+        a.update_urgent(later);
+        assert!(!a.alarm_active(later), "snooze was dropped mid-episode");
+        assert_eq!(a.urgent_since(), Some(NOW), "escalation clock restarted");
+        assert_eq!(a.take_push(later), None, "pushed twice for one episode");
     }
 
     #[test]

@@ -23,6 +23,16 @@ All notable changes to sugarrush are documented here. The format is based on
   back in order, and each correction is reported on stderr and in the footer,
   naming the value and pointing at `units`. The settings screen has enforced
   these rules for a while; the config-file path now matches it.
+- **Snoozing a sensor gap no longer silences the low that follows it.** An
+  alert episode was tracked as "urgent or not" rather than as *which* urgent
+  state, so a sensor gap and the urgent low that arrived when the sensor came
+  back were treated as one continuous episode: silencing the gap at 03:00 also
+  silenced the 40 mg/dL reading two minutes later, swallowed its push, and left
+  the escalation timer running from the gap — announcing "STILL URGENT LOW
+  after 20 min" for a low that was two minutes old. A change of urgent state is
+  now a new emergency: it re-arms the alarm, pushes at its own onset, and
+  restarts its own escalation clock. Repeated readings of the *same* urgent
+  state still share one episode, so a snooze keeps working.
 
 ### Added
 
