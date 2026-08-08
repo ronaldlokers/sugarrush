@@ -49,7 +49,11 @@ pub struct Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            low: Color::Red,
+            // Distinct from `urgent`: with both red, the very-low and low
+            // bands of the TIR bar, the range bar and the followers list were
+            // indistinguishable without reading the text. The colourblind
+            // preset already got this right.
+            low: Color::LightRed,
             in_range: Color::Green,
             high: Color::Yellow,
             urgent: Color::Red,
@@ -65,7 +69,7 @@ fn pick(name: &Option<String>, fallback: Color) -> Color {
 
 /// The six color roles, in the order used by the settings screen and by
 /// [`theme_from_names`] / [`ThemeConfig`].
-pub const DEFAULT_NAMES: [&str; 6] = ["red", "green", "yellow", "red", "magenta", "cyan"];
+pub const DEFAULT_NAMES: [&str; 6] = ["lightred", "green", "yellow", "red", "magenta", "cyan"];
 
 /// A colorblind-safe palette, same role order as [`DEFAULT_NAMES`]:
 /// low / in-range / high / urgent / forecast / graph.
@@ -188,9 +192,28 @@ mod tests {
             "blue".to_string(),
         ];
         let t = theme_from_names(&names);
-        assert_eq!(t.low, Color::Red); // fell back
+        assert_eq!(t.low, Theme::default().low); // fell back
         assert_eq!(t.in_range, Color::Cyan);
         assert_eq!(t.graph, Color::Blue);
+    }
+
+    /// Five alert states need five distinguishable colours. `low` and `urgent`
+    /// were both plain red by default, so the very-low/low split that the TIR
+    /// bar, the range bar and the followers list all draw was invisible
+    /// without reading the text — while the colourblind preset got it right.
+    #[test]
+    fn no_two_alert_roles_share_a_colour() {
+        for t in [
+            Theme::default(),
+            theme_from_names(&COLORBLIND_NAMES.map(String::from)),
+        ] {
+            let roles = [t.low, t.in_range, t.high, t.urgent];
+            for (i, a) in roles.iter().enumerate() {
+                for b in roles.iter().skip(i + 1) {
+                    assert_ne!(a, b, "two alert roles share {a:?} in {t:?}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -202,7 +225,7 @@ mod tests {
             ..Default::default()
         }
         .resolve();
-        assert_eq!(t.low, Color::Red); // fallback default
+        assert_eq!(t.low, Theme::default().low); // fallback default
         assert_eq!(t.graph, Color::Rgb(0, 0, 0));
     }
 }

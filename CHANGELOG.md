@@ -8,6 +8,28 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **A warning no longer hides the way to fix it.** Any error or warning took
+  over the whole footer, including `? help` and `s settings` — and two of them
+  (a readable config file, an unencrypted site) never go away on their own, so
+  a user in that state never saw a keybinding hint again. Warnings now share
+  the line with `? help`, and are shortened with an ellipsis rather than being
+  cut off mid-sentence.
+- **The alarm banner is readable on every palette.** It drew black text on the
+  alert colour, which measured as low as 2.2:1 — worst of all on the
+  colourblind palette, the one chosen for legibility. The text colour is now
+  picked from the background it sits on. The banner also honours the theme for
+  *every* state; "no data" was hardcoded and ignored your palette entirely.
+- **Status-bar output says how bad it is, not just what colour.** Only the
+  Waybar format carried the alert state, so on tmux, polybar and i3blocks the
+  colour was the entire signal — and `--format text`, the one a shell prompt or
+  a screen reader reads, carried no state at all. Non-normal readings are now
+  prefixed `!!`, `!` or `?`.
+- **The default palette gives "low" and "urgent low" different colours.** Both
+  were plain red, so the split the time-in-range bar, the range bar and the
+  followers list all draw was invisible without reading the label.
+
+### Fixed
+
 - **No more "heading low" invented across a sensor gap.** The short-term
   forecast assumed its two readings were five minutes apart and never checked,
   so a pair either side of a dropout was extrapolated as if the change had

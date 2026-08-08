@@ -346,7 +346,7 @@ pub async fn run() -> Result<()> {
                     w.app.evaluate_alert(now);
                     w.app.update_urgent(now);
                     if w.app.alarm_active(now)
-                        && worst.is_none_or(|c| severity(w.app.alert) < severity(c.alert))
+                        && worst.is_none_or(|c| w.app.alert.severity() < c.alert.severity())
                     {
                         worst = Some(&w.app);
                     }
@@ -369,18 +369,6 @@ struct Watched {
     app: App,
     /// What the journal last said about this site, so recoveries are logged.
     last_logged: Option<Alert>,
-}
-
-/// Ranking used to pick which site's tone to sound when several are urgent.
-fn severity(alert: Alert) -> u8 {
-    match alert {
-        Alert::UrgentLow => 0,
-        Alert::UrgentHigh => 1,
-        Alert::Stale => 2,
-        Alert::Low => 3,
-        Alert::High => 4,
-        Alert::InRange => 5,
-    }
 }
 
 /// True when the dashboard is up: it is already showing and sounding this, so
@@ -662,15 +650,6 @@ mod tests {
         }];
         bob.evaluate_alert(NOW);
         assert_eq!(bob.take_notification(), Some(Alert::UrgentLow));
-    }
-
-    #[test]
-    fn the_worst_site_picks_the_alarm_tone() {
-        // A high somewhere must not mask a low: lows rank first.
-        assert!(severity(Alert::UrgentLow) < severity(Alert::UrgentHigh));
-        assert!(severity(Alert::UrgentHigh) < severity(Alert::Stale));
-        assert!(severity(Alert::Stale) < severity(Alert::Low));
-        assert!(severity(Alert::InRange) > severity(Alert::High));
     }
 
     #[test]
