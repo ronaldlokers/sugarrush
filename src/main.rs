@@ -194,16 +194,12 @@ async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
         .await?;
 
     let dir = dir.map(std::path::PathBuf::from).unwrap_or_default();
-    for (format, body) in [
-        (export::Format::Csv, export::csv(&entries, cfg.units)),
-        (
-            export::Format::Report,
-            export::report(&entries, &alerts, cfg.units, days, now),
-        ),
-    ] {
-        let path = dir.join(export::filename(format, now));
-        std::fs::write(&path, body)
-            .with_context(|| format!("failed to write {}", path.display()))?;
+    let dir = if dir.as_os_str().is_empty() {
+        std::path::PathBuf::from(".")
+    } else {
+        dir
+    };
+    for path in export::write_pair(&dir, &entries, &alerts, cfg.units, days, now)? {
         println!("{}", path.display());
     }
     Ok(())
@@ -918,6 +914,13 @@ pub(crate) async fn push(url: &str, message: &str) -> bool {
 pub(crate) fn warn_about_config(warnings: &[String]) {
     for w in warnings {
         eprintln!("sugarrush: config: {w}");
+    }
+    // The person running the daemon is the one least likely to open the TUI,
+    // and so the one who never learned their token file went group-readable.
+    if Config::perms_too_open() {
+        eprintln!(
+            "sugarrush: config.toml is readable by others — run: chmod 600 ~/.config/sugarrush/config.toml"
+        );
     }
 }
 

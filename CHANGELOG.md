@@ -6,6 +6,32 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Push alerts now say whose reading it is, and respect your privacy
+  setting.** The webhook is the only channel that reaches a phone, and with
+  several sites configured it sent a bare "URGENT LOW" with no way to tell
+  which person it was about. It also always spelled out the glucose value, even
+  with `Notification detail` set to *generic* — so a setting people turn on for
+  privacy was shipping their reading to a third-party broker anyway.
+- **An unencrypted webhook is now flagged**, the way an unencrypted site URL
+  already was. A `http://` push URL sends your alerts in clear text; the
+  settings row now says so. (The topic path is still never displayed — it's a
+  password in all but name.)
+- **Exports are written owner-only, and tell you where they went.** Files
+  holding two weeks of glucose readings were created world-readable, while the
+  config file holding a read-only token was carefully created `0600`. The
+  in-app `e` key also reported a bare filename, so it wasn't clear which
+  directory your health data had landed in; it now prints the full path.
+- **Exported CSVs can't corrupt or execute in a spreadsheet.** Fields are now
+  quoted and escaped, and a value that a spreadsheet would run as a formula is
+  neutralised — which matters because the trend value comes from the server,
+  and in follower mode that's someone else's server.
+- **The config-permissions warning now appears in every mode.** It only showed
+  in the dashboard, so the person running the headless watcher — the one least
+  likely to open the dashboard — never learned their token file had become
+  readable by others.
+
 ### Added
 
 - **`sugarrush --help` and `--version`.** There were none: `--help` opened the
