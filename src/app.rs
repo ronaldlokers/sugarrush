@@ -865,6 +865,50 @@ impl App {
         self.alert.is_alerting().then_some(self.alert)
     }
 
+    // ---- Episode state, for the headless watcher ----
+    //
+    // `sugarrush watch` persists these across restarts so a restarted service
+    // doesn't re-announce an ongoing low, restart an escalation timer, or
+    // cancel a snooze someone deliberately set. They're read-only accessors
+    // plus one restore hook rather than public fields, so the invariants stay
+    // in this file.
+
+    pub fn last_notified(&self) -> Option<Alert> {
+        self.last_notified
+    }
+
+    pub fn urgent_since(&self) -> Option<i64> {
+        self.urgent_since
+    }
+
+    pub fn pushed_episode(&self) -> bool {
+        self.pushed_episode
+    }
+
+    pub fn escalated(&self) -> bool {
+        self.escalated
+    }
+
+    pub fn snooze_until(&self) -> Option<i64> {
+        self.snooze_until
+    }
+
+    /// Resume a previously-running alert episode.
+    pub fn restore_episode(
+        &mut self,
+        last_notified: Option<Alert>,
+        urgent_since: Option<i64>,
+        pushed_episode: bool,
+        escalated: bool,
+        snooze_until: Option<i64>,
+    ) {
+        self.last_notified = last_notified;
+        self.urgent_since = urgent_since;
+        self.pushed_episode = pushed_episode;
+        self.escalated = escalated;
+        self.snooze_until = snooze_until;
+    }
+
     // ---- Settings screen ----
 
     /// Toggle between the dashboard and settings screens.

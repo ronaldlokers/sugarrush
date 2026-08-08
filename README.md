@@ -47,6 +47,8 @@ That's the recording above. When you're ready, point it at your own site
   *time-to-low/high* ETA
 
 **Alerts & safety**
+- A **headless watcher** (`sugarrush watch`) that keeps alarming with no
+  terminal open — the 3am case — and stays quiet while the dashboard is up
 - In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows),
   switchable to **content-free** so nothing readable lands on a lock screen
 - **Audible alarm** for urgent lows/highs with snooze, per-level tones,
@@ -158,6 +160,36 @@ and `End` for the same navigation from the keyboard.
 hourly sparkline tooltip, and a CSS class per alert state). Example assets in
 [`waybar/`](waybar/): the custom module, a Graph/Settings/About menu (Waybar
 ≥ 0.11.0), per-state CSS, and Hyprland float rules.
+
+## Always-on alarm
+
+The dashboard can only alarm while a terminal is open, which is the wrong shape
+for the job. `sugarrush watch` runs the same alert pipeline headless — fetch,
+classify, notify, sound, escalate, push — and logs each transition to stdout:
+
+```bash
+sugarrush watch
+```
+
+It's safe to leave running alongside the TUI: both processes write a heartbeat,
+and the watcher goes quiet whenever the dashboard is on screen, so you never get
+two alarms for one low. It also persists episode state, so restarting the
+service doesn't re-announce a low you already saw, reset an escalation timer, or
+cancel a snooze.
+
+To run it as a user service (example unit in
+[`packaging/systemd/`](packaging/systemd/sugarrush-watch.service)):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp packaging/systemd/sugarrush-watch.service ~/.config/systemd/user/
+systemctl --user enable --now sugarrush-watch.service
+journalctl --user -fu sugarrush-watch    # what it's seeing
+```
+
+> It's still not a medical device, and it's still only as reliable as the
+> machine it runs on, your network, and your Nightscout site. Treat it as one
+> layer, not the only one.
 
 ## Export
 
