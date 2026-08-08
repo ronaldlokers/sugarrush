@@ -8,6 +8,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Status-bar output for bars other than Waybar.** `sugarrush status` prints
+  one line in the syntax your bar speaks — `--format text` (no markup),
+  `tmux`, `polybar`, `i3blocks`, or `waybar` — coloured from your configured
+  theme, so the colourblind-safe palette carries over. `sugarrush waybar` is
+  unchanged and still prints the same JSON.
 - **An always-on alarm watcher.** `sugarrush watch` runs the alert pipeline
   headless — no terminal needed — so a nocturnal low still wakes you when the
   dashboard isn't open. It defers to a running dashboard (both write a

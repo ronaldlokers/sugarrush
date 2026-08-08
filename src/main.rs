@@ -9,6 +9,7 @@ mod nightscout;
 mod predict;
 mod sound;
 mod stats;
+mod status;
 mod theme;
 mod ui;
 mod units;
@@ -43,6 +44,8 @@ enum Mode {
     Tui { screen: Screen, demo: bool },
     /// Print one Waybar JSON line and exit.
     Waybar,
+    /// Print one status-bar line in the given format and exit.
+    Status { format: status::Format },
     /// Print version/about info (and a desktop notification) and exit.
     About,
     /// Write a CSV + summary of the last `days` days and exit.
@@ -57,11 +60,21 @@ fn parse_args() -> Mode {
     let mut demo = false;
     let mut mode: Option<Mode> = None;
     let mut export_days: Option<u32> = None;
+    let mut status_format: Option<String> = None;
     let mut export_dir: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "waybar" => mode = Some(Mode::Waybar),
+            "status" => {
+                mode = Some(Mode::Status {
+                    format: status::Format::Text,
+                })
+            }
+            "--format" => {
+                i += 1;
+                status_format = args.get(i).cloned();
+            }
             "about" => mode = Some(Mode::About),
             "export" => mode = Some(Mode::Export { days: 0, dir: None }),
             "watch" => mode = Some(Mode::Watch),
@@ -91,6 +104,20 @@ fn parse_args() -> Mode {
             days: export_days.unwrap_or(0),
             dir: export_dir,
         },
+        Some(Mode::Status { .. }) => Mode::Status {
+            format: status_format
+                .as_deref()
+                .map(|name| {
+                    status::Format::parse(name).unwrap_or_else(|| {
+                        eprintln!(
+                            "unknown --format '{name}'. Available: {}",
+                            status::Format::NAMES
+                        );
+                        std::process::exit(2)
+                    })
+                })
+                .unwrap_or(status::Format::Text),
+        },
         Some(m) => m,
         None => Mode::Tui { screen, demo },
     }
@@ -106,6 +133,11 @@ async fn main() -> Result<()> {
         Mode::Waybar => {
             let cfg = Config::load()?;
             println!("{}", waybar::line(&cfg).await);
+            Ok(())
+        }
+        Mode::Status { format } => {
+            let cfg = Config::load()?;
+            println!("{}", status::status(&cfg).await.render(format));
             Ok(())
         }
         Mode::Export { days, dir } => run_export(days, dir).await,
