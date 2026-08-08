@@ -21,10 +21,17 @@ pub enum Tone {
     Stale,
 }
 
-/// Play the alarm sound for `tone` once, if a player is available. Non-blocking.
+/// Play the alarm sound for `tone` once. Falls back to the terminal bell if no
+/// player actually produced sound.
 pub fn alarm(tone: Tone) {
-    if let Some(path) = wav_path(tone) {
-        play(&path);
+    let played = match wav_path(tone) {
+        Some(path) => play(&path),
+        // Even the WAV couldn't be written (read-only or full /tmp). Silence
+        // here would be indistinguishable from "glucose is fine".
+        None => false,
+    };
+    if !played {
+        bell();
     }
 }
 
@@ -77,13 +84,49 @@ impl Tone {
 /// (and the rest of the app's subprocesses) with it.
 static PLAYERS: Mutex<Vec<Child>> = Mutex::new(Vec::new());
 
+/// Players that spawned and then failed, so a broken one is tried once rather
+/// than every three seconds for the length of an overnight low.
+static FAILED: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+/// The player that last produced sound. Once one is proven, the startup check
+/// below is skipped, so the steady-state alarm path adds no delay at all.
+static WORKING: Mutex<Option<&'static str>> = Mutex::new(None);
+
+/// How long to watch a newly-tried player before believing it.
+const STARTUP_POLL: std::time::Duration = std::time::Duration::from_millis(15);
+const STARTUP_CHECKS: usize = 10;
+
 /// Wait on any finished players, keeping the ones still playing.
 fn reap(players: &mut Vec<Child>) {
     players.retain_mut(|c| matches!(c.try_wait(), Ok(None)));
 }
 
-/// Spawn the first available audio player on this platform, detached.
-fn play(path: &Path) {
+/// True if the player is still running (or exited cleanly) shortly after
+/// launch.
+///
+/// A successful `spawn` only means the binary exists on `$PATH` — it says
+/// nothing about whether the process reached an audio server. `paplay` is
+/// installed on essentially every PipeWire/PulseAudio system and exits non-zero
+/// within milliseconds when the server is unreachable (a user unit started
+/// before the session, SSH, a container). Its stderr is already discarded, so
+/// that failure was completely invisible: the alarm counted it as sounded and
+/// never reached the bell.
+///
+/// The sample is ~0.5s long, so a player that is genuinely playing is still
+/// alive when this returns.
+fn produced_sound(child: &mut Child) -> bool {
+    for _ in 0..STARTUP_CHECKS {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => std::thread::sleep(STARTUP_POLL),
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+/// Spawn the first working audio player on this platform, detached.
+/// Returns whether one of them actually produced sound.
+fn play(path: &Path) -> bool {
     // (program, args-before-file). The file path is appended last.
     let candidates: [(&str, &[&str]); 7] = [
         ("paplay", &[]),
@@ -94,7 +137,13 @@ fn play(path: &Path) {
         ("afplay", &[]),                // macOS
         ("cvlc", &["--play-and-exit", "--intf", "dummy"]),
     ];
+    let known_good = WORKING.lock().ok().and_then(|w| *w);
     for (prog, args) in candidates {
+        // Don't keep paying for a player that has already proven it can't
+        // reach the audio server here.
+        if FAILED.lock().is_ok_and(|f| f.contains(&prog)) {
+            continue;
+        }
         let mut cmd = Command::new(prog);
         if prog == "canberra-gtk-play" {
             cmd.arg(format!("--file={}", path.display()));
@@ -106,18 +155,28 @@ fn play(path: &Path) {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
-        if let Ok(child) = spawned {
-            if let Ok(mut players) = PLAYERS.lock() {
-                reap(&mut players);
-                players.push(child);
+        let Ok(mut child) = spawned else { continue };
+
+        // A player we've already seen work is trusted immediately, so the
+        // common path stays non-blocking.
+        if known_good != Some(prog) && !produced_sound(&mut child) {
+            if let Ok(mut failed) = FAILED.lock() {
+                failed.push(prog);
             }
-            return;
+            continue;
         }
+        if let Ok(mut working) = WORKING.lock() {
+            *working = Some(prog);
+        }
+        if let Ok(mut players) = PLAYERS.lock() {
+            reap(&mut players);
+            players.push(child);
+        }
+        return true;
     }
-    // No player at all — headless boxes, minimal containers, a bare SSH login.
-    // The terminal bell is feeble, but a feeble alarm beats a silent one, and
-    // silence here is indistinguishable from "glucose is fine".
-    bell();
+    // Nothing on this machine can play it — headless boxes, minimal
+    // containers, a bare SSH login, or an audio server that isn't answering.
+    false
 }
 
 /// Ring the terminal bell. Whether it makes a sound is the terminal's call
@@ -190,5 +249,50 @@ mod tests {
         // Declared data length matches the actual sample bytes.
         let declared = u32::from_le_bytes([wav[40], wav[41], wav[42], wav[43]]) as usize;
         assert_eq!(declared, wav.len() - 44);
+    }
+
+    /// The C3 failure: a player that exists on PATH, spawns fine, and exits
+    /// non-zero milliseconds later because no audio server is reachable.
+    #[test]
+    fn a_player_that_exits_nonzero_did_not_produce_sound() {
+        let mut child = Command::new("sh")
+            .args(["-c", "exit 1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("sh should exist");
+        assert!(
+            !produced_sound(&mut child),
+            "a failing player was counted as a sounded alarm"
+        );
+    }
+
+    #[test]
+    fn a_player_still_running_counts_as_sound() {
+        // Stands in for a player working through the ~0.5s sample.
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 2"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("sh should exist");
+        assert!(produced_sound(&mut child));
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn a_player_that_exits_cleanly_counts_as_sound() {
+        // Some players return promptly on a very short sample.
+        let mut child = Command::new("sh")
+            .args(["-c", "exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("sh should exist");
+        assert!(produced_sound(&mut child));
     }
 }

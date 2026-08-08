@@ -33,6 +33,16 @@ All notable changes to sugarrush are documented here. The format is based on
   now a new emergency: it re-arms the alarm, pushes at its own onset, and
   restarts its own escalation clock. Repeated readings of the *same* urgent
   state still share one episode, so a snooze keeps working.
+- **A failed audio player no longer counts as a sounded alarm.** sugarrush
+  picked the first player it could *launch* — but launching only proves the
+  program exists, not that it reached an audio server. `paplay` is installed
+  almost everywhere and exits immediately when the server isn't reachable (a
+  service started before the session, an SSH login, a container), with its
+  error already discarded — so the alarm was silent and the terminal-bell
+  fallback was never reached. sugarrush now checks that the player is still
+  playing shortly after launch, moves on to the next one if it isn't, and rings
+  the bell when none of them work. A player that fails is remembered, so it's
+  tried once rather than every few seconds all night.
 
 ### Added
 
