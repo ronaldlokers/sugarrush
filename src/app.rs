@@ -76,6 +76,7 @@ pub enum Field {
     QuietEnd,
     QuietUrgentLow,
     Escalate,
+    PushAlerts,
     PredictHorizon,
     UrgentLow,
     Low,
@@ -96,7 +97,7 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 27] = [
+    pub const ALL: [Field; 28] = [
         Field::Units,
         Field::Refresh,
         Field::Desktop,
@@ -107,6 +108,7 @@ impl Field {
         Field::QuietEnd,
         Field::QuietUrgentLow,
         Field::Escalate,
+        Field::PushAlerts,
         Field::PredictHorizon,
         Field::UrgentLow,
         Field::Low,
@@ -138,6 +140,7 @@ impl Field {
             Field::QuietEnd => "Quiet end",
             Field::QuietUrgentLow => "Quiet: urgent-low sounds",
             Field::Escalate => "Escalate after",
+            Field::PushAlerts => "Push alerts",
             Field::PredictHorizon => "Predict horizon",
             Field::UrgentLow => "Urgent low",
             Field::Low => "Low",
@@ -170,7 +173,8 @@ impl Field {
             | Field::QuietStart
             | Field::QuietEnd
             | Field::QuietUrgentLow
-            | Field::Escalate => "Alarm",
+            | Field::Escalate
+            | Field::PushAlerts => "Alarm",
             Field::PredictHorizon => "Predictions",
             Field::UrgentLow | Field::Low | Field::High | Field::UrgentHigh | Field::Stale => {
                 "Thresholds"
@@ -646,6 +650,9 @@ impl App {
     /// most once per trigger.
     pub fn take_push(&mut self, now_ms: i64) -> Option<String> {
         self.alerts.push_url.as_ref()?;
+        if !self.alerts.push_enabled {
+            return None;
+        }
         if !self.alert.is_urgent() {
             return None;
         }
@@ -778,13 +785,35 @@ impl App {
                 let next = self.alerts.stale_minutes + dir as i64;
                 self.alerts.stale_minutes = next.max(1);
             }
+            // Thresholds are clamped against their neighbours as well as the
+            // physiological range, so the four can never cross: a `low` above
+            // `high` (or below `urgent_low`) would silently disable a band and
+            // misclassify every reading in it.
             Field::UrgentLow => {
-                self.alerts.urgent_low = clamp_bg(self.alerts.urgent_low + d * step_mgdl)
+                self.alerts.urgent_low =
+                    clamp_bg(self.alerts.urgent_low + d * step_mgdl).min(self.alerts.low)
             }
-            Field::Low => self.alerts.low = clamp_bg(self.alerts.low + d * step_mgdl),
-            Field::High => self.alerts.high = clamp_bg(self.alerts.high + d * step_mgdl),
+            Field::Low => {
+                self.alerts.low = clamp_bg(self.alerts.low + d * step_mgdl)
+                    .clamp(self.alerts.urgent_low, self.alerts.high)
+            }
+            Field::High => {
+                self.alerts.high = clamp_bg(self.alerts.high + d * step_mgdl)
+                    .clamp(self.alerts.low, self.alerts.urgent_high)
+            }
             Field::UrgentHigh => {
-                self.alerts.urgent_high = clamp_bg(self.alerts.urgent_high + d * step_mgdl)
+                self.alerts.urgent_high =
+                    clamp_bg(self.alerts.urgent_high + d * step_mgdl).max(self.alerts.high)
+            }
+            Field::PushAlerts => {
+                // Only meaningful with a URL configured; say so rather than
+                // toggling a flag that can't do anything.
+                if self.alerts.push_url.is_some() {
+                    self.alerts.push_enabled = !self.alerts.push_enabled;
+                } else {
+                    self.status =
+                        Some("set push_url in config.toml to enable push alerts".to_string());
+                }
             }
             Field::GraphStyle => self.graph_style = self.graph_style.cycle(dir),
             Field::AgpDays => {
@@ -824,7 +853,8 @@ impl App {
         let result = Config::path().and_then(|p| {
             let body = toml::to_string_pretty(&self.build_config())
                 .context("failed to serialize config")?;
-            std::fs::write(&p, body).with_context(|| format!("failed to write {}", p.display()))?;
+            // Atomic + owner-only: this file holds the only copy of the token.
+            Config::write_atomic(&p, &body)?;
             Ok(p)
         });
         self.status = Some(match result {
@@ -867,6 +897,7 @@ impl App {
                 quiet_urgent_low: Some(self.alerts.quiet_urgent_low),
                 escalate_minutes: Some(self.alerts.escalate_minutes),
                 push_url: self.alerts.push_url.clone(),
+                push_enabled: Some(self.alerts.push_enabled),
                 predict_horizon_minutes: Some(self.alerts.predict_horizon_minutes),
             },
             theme: ThemeConfig {
@@ -930,6 +961,14 @@ impl App {
                     format!("{} min", self.alerts.predict_horizon_minutes)
                 }
             }
+            // Show where pushes go, but never the full URL — an ntfy topic or
+            // a webhook path is a secret, and the settings screen is the pane
+            // most likely to end up in a screenshot.
+            Field::PushAlerts => match (&self.alerts.push_url, self.alerts.push_enabled) {
+                (None, _) => "not configured".to_string(),
+                (Some(url), true) => format!("on · {}", push_host(url)),
+                (Some(url), false) => format!("off · {}", push_host(url)),
+            },
             Field::Stale => format!("{} min", self.alerts.stale_minutes),
             Field::UrgentLow => self.threshold(self.alerts.urgent_low),
             Field::Low => self.threshold(self.alerts.low),
@@ -967,6 +1006,15 @@ fn names_from_config(tc: &ThemeConfig) -> [String; 6] {
 
 fn clamp_bg(mgdl: f64) -> f64 {
     mgdl.clamp(20.0, 500.0)
+}
+
+/// The host part of a push URL, for display without leaking the topic/path.
+fn push_host(url: &str) -> &str {
+    url.split_once("://")
+        .map_or(url, |(_, rest)| rest)
+        .split('/')
+        .next()
+        .unwrap_or(url)
 }
 
 #[cfg(test)]
@@ -1106,6 +1154,50 @@ mod tests {
         a.mark_offline(NOW, "authentication failed".into(), true);
         a.mark_online(NOW);
         assert!(!a.fetch_paused);
+    }
+
+    #[test]
+    fn thresholds_cannot_cross() {
+        let mut a = app();
+        a.settings_sel = Field::ALL.iter().position(|&f| f == Field::Low).unwrap();
+        // Drive `low` down past `urgent_low`: it must stop there, not overtake.
+        for _ in 0..200 {
+            a.settings_adjust(-1);
+        }
+        assert!(a.alerts.low >= a.alerts.urgent_low);
+        // And up past `high`.
+        for _ in 0..400 {
+            a.settings_adjust(1);
+        }
+        assert!(a.alerts.low <= a.alerts.high);
+        assert!(a.alerts.urgent_low <= a.alerts.low);
+        assert!(a.alerts.high <= a.alerts.urgent_high);
+    }
+
+    #[test]
+    fn push_toggle_needs_a_url_and_round_trips() {
+        let mut a = app();
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::PushAlerts)
+            .unwrap();
+        // No URL configured: the row explains itself instead of toggling.
+        assert_eq!(a.field_value(Field::PushAlerts), "not configured");
+        a.settings_adjust(1);
+        assert!(a.alerts.push_enabled);
+
+        a.alerts.push_url = Some("https://ntfy.sh/secret-topic".into());
+        assert_eq!(a.field_value(Field::PushAlerts), "on · ntfy.sh"); // no topic leaked
+        a.settings_adjust(1);
+        assert!(!a.alerts.push_enabled);
+        assert!(a.alerts.push_url.is_some()); // disabling keeps the URL
+        assert_eq!(a.build_config().alerts.push_enabled, Some(false));
+
+        // Disabled means no push is emitted, even in an urgent episode.
+        a.entries = vec![entry(40.0, NOW)];
+        a.evaluate_alert(NOW);
+        a.update_urgent(NOW);
+        assert_eq!(a.take_push(NOW), None);
     }
 
     #[test]
