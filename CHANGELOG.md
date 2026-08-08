@@ -11,6 +11,13 @@ All notable changes to sugarrush are documented here. The format is based on
 - **Step through history a day at a time** with `[` and `]`, keeping the same
   time of day — checking "how was last night?" no longer means typing a date or
   panning there a half-window at a time.
+- **The AGP now names its patterns.** Reading a recurring overnight low off a
+  percentile fan is a skill; the AGP title now states the worst finding
+  outright — `⚠ lows 02:00–05:00 (down to 3.1 mmol/L)` — and the exported
+  summary lists every one under a **Patterns** section. A "lows" window is a
+  time of day where a quarter of readings or more sit below target; "highs" is
+  where the typical reading is above it. Runs shorter than 45 minutes aren't
+  reported, and a gap in the data never joins two windows into one.
 - **Status-bar output for bars other than Waybar.** `sugarrush status` prints
   one line in the syntax your bar speaks — `--format text` (no markup),
   `tmux`, `polybar`, `i3blocks`, or `waybar` — coloured from your configured

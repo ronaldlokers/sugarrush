@@ -218,6 +218,21 @@ pub fn report(entries: &[Entry], alerts: &Alerts, units: Units, days: u32, now_m
         ));
     }
 
+    // Patterns last: the numbers above are what a clinician checks first, and
+    // this is the "so when does it actually go wrong" follow-up.
+    let found = agp::insights(&bands, alerts.low, alerts.high);
+    if !found.is_empty() {
+        out.push_str("\nPatterns\n--------\n");
+        for i in &found {
+            out.push_str(&format!("{}\n", i.text(units)));
+        }
+        out.push_str(
+            "\n(A \"lows\" window is a time of day when a quarter of readings or\n\
+             more sit below target; \"highs\" is when the typical reading is above\n\
+             it. Runs shorter than 45 minutes aren't reported.)\n",
+        );
+    }
+
     out.push_str("\nsugarrush is not a medical device. These figures come from CGM\n");
     out.push_str("data as published by Nightscout and are for discussion, not\n");
     out.push_str("treatment decisions.\n");
