@@ -68,7 +68,8 @@ That's the recording above. When you're ready, point it at your own site
   editable there too, so a bad token is fixed without leaving the app
 - Configurable colours (incl. a colorblind-safe preset), graph style, and
   **multiple sites** (`n` to switch)
-- A **Waybar** module for your status bar (see [Waybar](#waybar))
+- **Status-bar output** for Waybar, tmux, polybar, i3blocks, or anything that
+  takes plain text (see [Status bars](#status-bars))
 
 ## Install
 
@@ -154,10 +155,44 @@ Settings screen: `↑`/`↓` select, `←`/`→` change, `Enter` edit (site URL 
 When the minimap is on, click or drag it to move the window — or use `H`/`L`
 and `End` for the same navigation from the keyboard.
 
-## Waybar
+## Status bars
 
-`sugarrush waybar` prints one Waybar JSON line (value + arrow + delta, an
-hourly sparkline tooltip, and a CSS class per alert state). Example assets in
+`sugarrush status` prints one line and exits — the reading, trend arrow, and
+delta, coloured by alert state — in whatever syntax your bar speaks:
+
+```bash
+sugarrush status                      # 5.6 → +0.2
+sugarrush status --format tmux        # #[fg=#98971a]5.6 → +0.2#[default]
+sugarrush status --format polybar     # %{F#98971a}5.6 → +0.2%{F-}
+sugarrush status --format i3blocks    # full text / short text / colour
+sugarrush status --format waybar      # {"text":…,"tooltip":…,"class":…}
+```
+
+Colours follow your configured theme, so the colourblind-safe palette carries
+over to the bar. Plain `text` has no markup at all — use it in a shell prompt,
+a macOS menu-bar helper, or anything that colours its own output.
+
+Wiring it up:
+
+```bash
+# tmux (~/.tmux.conf)
+set -g status-right '#(sugarrush status --format tmux) | %H:%M'
+set -g status-interval 60
+
+# polybar (config.ini)
+[module/glucose]
+type = custom/script
+exec = sugarrush status --format polybar
+interval = 60
+
+# i3blocks (~/.config/i3blocks/config)
+[glucose]
+command=sugarrush status --format i3blocks
+interval=60
+```
+
+`sugarrush waybar` still prints the same JSON it always has (it's
+`--format waybar` under the hood). Example Waybar assets in
 [`waybar/`](waybar/): the custom module, a Graph/Settings/About menu (Waybar
 ≥ 0.11.0), per-state CSS, and Hyprland float rules.
 
