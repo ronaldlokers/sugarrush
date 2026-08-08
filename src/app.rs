@@ -1855,6 +1855,44 @@ mod tests {
         }
     }
 
+    /// End to end: a real 401 from a real socket must pause fetching, and a
+    /// real 500 must not. This is the join between the client's error
+    /// classification and the app's retry policy — each half was tested, the
+    /// seam between them wasn't.
+    #[tokio::test]
+    async fn the_retry_policy_matches_what_the_server_actually_said() {
+        use crate::nightscout::{fake, Client};
+
+        let auth = fake::serve(401, "unauthorized").await;
+        let client = Client::for_site(&auth).unwrap();
+        let mut a = app();
+        for _ in 0..3 {
+            let err = client.entries_range(0, 1, 1).await.unwrap_err();
+            let permanent = err
+                .downcast_ref::<crate::nightscout::FetchError>()
+                .is_some();
+            a.mark_offline(NOW, err.to_string(), permanent);
+        }
+        assert!(a.fetch_paused, "a rejected token should stop the retries");
+        assert!(!a.should_auto_refresh());
+
+        let flaky = fake::serve(500, "boom").await;
+        let client = Client::for_site(&flaky).unwrap();
+        let mut b = app();
+        for _ in 0..5 {
+            let err = client.entries_range(0, 1, 1).await.unwrap_err();
+            let permanent = err
+                .downcast_ref::<crate::nightscout::FetchError>()
+                .is_some();
+            b.mark_offline(NOW, err.to_string(), permanent);
+        }
+        assert!(
+            !b.fetch_paused,
+            "a restarting site should keep being retried"
+        );
+        assert!(b.should_retry(NOW + 120_000));
+    }
+
     #[test]
     fn transient_failures_keep_retrying() {
         let mut a = app();

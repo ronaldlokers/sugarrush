@@ -1647,3 +1647,151 @@ fn color_for(sgv: f64, app: &App) -> Color {
         t.in_range
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // These are pure functions doing arithmetic. The repo's rule — "verify UI
+    // changes visually" — is right for `Chart` geometry and wrong for this;
+    // a terminal is not required to know what 90 minutes reads as.
+
+    #[test]
+    fn ages_read_the_way_a_person_would_say_them() {
+        assert_eq!(fmt_age(0), "0m");
+        assert_eq!(fmt_age(59_000), "0m");
+        assert_eq!(fmt_age(90 * 60_000), "1h 30m");
+        assert_eq!(fmt_age(24 * 3_600_000), "1d 0h");
+        assert_eq!(fmt_age(50 * 3_600_000), "2d 2h");
+        // A clock skew shouldn't render a negative age.
+        assert_eq!(fmt_age(-5_000), "0m");
+    }
+
+    #[test]
+    fn sparkline_spans_its_range_and_survives_a_flat_series() {
+        assert_eq!(sparkline_str(&[]), "");
+        let s = sparkline_str(&[100.0, 150.0, 200.0]);
+        assert_eq!(s.chars().count(), 3);
+        assert_eq!(s.chars().next(), Some('▁'));
+        assert_eq!(s.chars().last(), Some('█'));
+        // Flat input must not divide by zero or render garbage.
+        let flat = sparkline_str(&[100.0, 100.0, 100.0]);
+        assert_eq!(flat.chars().count(), 3);
+        assert!(flat.chars().all(|c| c == '▁'));
+    }
+
+    #[test]
+    fn the_chart_gutter_fits_the_widest_label_it_must_hold() {
+        // Wide y labels win.
+        assert_eq!(chart_gutter(&["10.6", "3.3"], "08-08 12:00"), 10);
+        // A long first x label overhangs the axis by all but one column.
+        assert_eq!(chart_gutter(&["10"], "08-08 12:00"), 10);
+        assert_eq!(chart_gutter(&["120", "60"], "12:00"), 4);
+        assert_eq!(chart_gutter(&[], ""), 0);
+    }
+
+    #[test]
+    fn interpolation_holds_flat_outside_the_series() {
+        let pts = [(0.0, 10.0), (10.0, 20.0)];
+        assert_eq!(interp_xy(&pts, -5.0), 10.0); // before the first point
+        assert_eq!(interp_xy(&pts, 0.0), 10.0);
+        assert_eq!(interp_xy(&pts, 5.0), 15.0); // midpoint
+        assert_eq!(interp_xy(&pts, 10.0), 20.0);
+        assert_eq!(interp_xy(&pts, 99.0), 20.0); // after the last point
+        assert_eq!(interp_xy(&[], 1.0), 0.0);
+    }
+
+    #[test]
+    fn tinting_moves_toward_the_colour_without_leaving_the_ground() {
+        // scale 0 is the background, scale 1 is the colour itself.
+        let (r, g, b) = rgb_of(tint_bg(Color::Rgb(200, 100, 50), 0.0));
+        assert!(
+            r < 30 && g < 30 && b < 30,
+            "({r},{g},{b}) is not near-black"
+        );
+        let full = rgb_of(tint_bg(Color::Rgb(200, 100, 50), 1.0));
+        assert_eq!(full, (200, 100, 50));
+        // A partial tint sits between the two.
+        let (r, _, _) = rgb_of(tint_bg(Color::Rgb(200, 100, 50), 0.5));
+        assert!((80..=140).contains(&r), "midpoint red was {r}");
+    }
+
+    /// Rendering must not panic at any plausible terminal size — including the
+    /// ones a tiling WM or a phone SSH client produces. This is the cheap half
+    /// of the "verify visually" rule that a machine can do.
+    #[test]
+    fn every_screen_renders_at_every_plausible_size() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        for (w, h) in [
+            (200u16, 60u16),
+            (120, 40),
+            (80, 24),
+            (60, 20),
+            (40, 15),
+            (20, 10),
+            (10, 5),
+        ] {
+            for screen in [Screen::Dashboard, Screen::Settings, Screen::Followers] {
+                let mut app = demo_app();
+                app.screen = screen;
+                let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+                term.draw(|f| draw(f, &app))
+                    .unwrap_or_else(|e| panic!("{screen:?} at {w}x{h}: {e}"));
+                // And with the help overlay up, which composites over the top.
+                app.show_help = true;
+                term.draw(|f| draw(f, &app))
+                    .unwrap_or_else(|e| panic!("{screen:?} + help at {w}x{h}: {e}"));
+            }
+        }
+    }
+
+    /// At a size anyone would call usable, the reading itself must be on
+    /// screen. This is the assertion that would have caught the class of bug
+    /// where a pane collapses and the glucose value silently disappears.
+    #[test]
+    fn the_reading_is_on_screen_at_usable_sizes() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        for (w, h) in [(200u16, 60u16), (120, 40), (80, 30), (60, 26)] {
+            let app = demo_app();
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| draw(f, &app)).unwrap();
+            let text: String = term
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect();
+            assert!(
+                text.contains("5.6"),
+                "the current reading is not in the buffer at {w}x{h}"
+            );
+            // And the state, as text — not only as a colour.
+            assert!(
+                text.contains("in range"),
+                "the range label is not in the buffer at {w}x{h}"
+            );
+        }
+    }
+
+    /// An app on demo config with one fixed, in-range reading.
+    fn demo_app() -> App {
+        let cfg = crate::config::Config::demo();
+        let alerts = cfg.alerts.resolve(cfg.units);
+        let sites = cfg.resolve_sites().unwrap();
+        let mut app = App::new(&cfg, alerts, sites);
+        app.demo = true;
+        let now = chrono::Utc::now().timestamp_millis();
+        app.entries = vec![crate::nightscout::Entry {
+            sgv: 100.0,
+            date: now,
+            direction: Some("Flat".into()),
+        }];
+        app.view_start = now - 3 * 3_600_000;
+        app.view_end = now;
+        app.evaluate_alert(now);
+        app
+    }
+}

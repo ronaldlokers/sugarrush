@@ -443,6 +443,62 @@ fn parse_iso(s: &str) -> Option<i64> {
         .map(|dt| dt.timestamp_millis())
 }
 
+/// A minimal Nightscout stand-in, served over a real socket.
+///
+/// The parser tests below cover shapes; this covers the wire — status codes,
+/// timeouts, and the `FetchError` classification the retry logic depends on.
+/// It is deliberately hand-rolled over `TcpListener` rather than pulling in a
+/// test HTTP server: the crate ships no dev-dependencies, and a dependency in
+/// the alarm path's test harness is a dependency in the alarm path.
+#[cfg(test)]
+pub mod fake {
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use crate::config::Site;
+
+    /// Serve `status` and `body` to every request, then return a `Site`
+    /// pointing at it. The server lives as long as the test.
+    pub async fn serve(status: u16, body: &'static str) -> Site {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let reason = match status {
+            200 => "OK",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "Not Found",
+            _ => "Internal Server Error",
+        };
+        let response = Arc::new(format!(
+            "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ));
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let response = Arc::clone(&response);
+                tokio::spawn(async move {
+                    // Read the request line so the client isn't writing into a
+                    // closed socket, then answer.
+                    let mut buf = [0u8; 2048];
+                    let _ = sock.read(&mut buf).await;
+                    let _ = sock.write_all(response.as_bytes()).await;
+                    let _ = sock.flush().await;
+                });
+            }
+        });
+        Site {
+            name: "fake".into(),
+            url: format!("http://127.0.0.1:{port}"),
+            token: "test-token".into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,6 +550,68 @@ mod tests {
             !chain.contains("token="),
             "query string leaked into the error chain:\n{chain}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_real_response_round_trips_over_the_wire() {
+        let body = r#"[{"sgv":142,"date":1700000000000,"direction":"Flat"},
+                       {"sgv":138,"date":1699999700000,"direction":"FortyFiveDown"}]"#;
+        let site = fake::serve(200, body).await;
+        let client = Client::for_site(&site).unwrap();
+        let entries = client
+            .entries_range(0, 1_800_000_000_000, 10)
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].sgv, 142.0); // newest first
+    }
+
+    #[tokio::test]
+    async fn a_401_is_permanent_so_the_client_stops_retrying() {
+        let site = fake::serve(401, "unauthorized").await;
+        let client = Client::for_site(&site).unwrap();
+        let err = client.entries_range(0, 1, 1).await.unwrap_err();
+        assert_eq!(err.downcast_ref::<FetchError>(), Some(&FetchError::Auth));
+    }
+
+    #[tokio::test]
+    async fn a_404_says_this_is_not_a_nightscout() {
+        let site = fake::serve(404, "nope").await;
+        let client = Client::for_site(&site).unwrap();
+        let err = client.entries_range(0, 1, 1).await.unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<FetchError>(),
+            Some(&FetchError::NotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_500_is_transient_so_the_backoff_keeps_trying() {
+        let site = fake::serve(500, "boom").await;
+        let client = Client::for_site(&site).unwrap();
+        let err = client.entries_range(0, 1, 1).await.unwrap_err();
+        // Not a FetchError: the site may simply be restarting.
+        assert!(err.downcast_ref::<FetchError>().is_none());
+        assert!(err.to_string().contains("500"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_proxy_serving_html_is_reported_as_a_parse_failure() {
+        // The classic Cloudflare-Access / nginx-auth Nightscout setup: 200 OK
+        // with a login page instead of JSON.
+        let site = fake::serve(200, "<!doctype html><title>Sign in</title>").await;
+        let client = Client::for_site(&site).unwrap();
+        let err = client.entries_range(0, 1, 1).await.unwrap_err();
+        assert!(err.to_string().contains("parse"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_empty_site_is_not_an_error() {
+        // A site with no readings yet is a legitimate state, not a failure —
+        // the Stale alarm is what covers it, not a fetch error.
+        let site = fake::serve(200, "[]").await;
+        let client = Client::for_site(&site).unwrap();
+        assert!(client.entries_range(0, 1, 1).await.unwrap().is_empty());
     }
 
     #[test]
