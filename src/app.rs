@@ -318,6 +318,10 @@ pub struct App {
     pub demo: bool,
     /// Set when the config file permissions are too open (token is plaintext).
     pub perm_warning: bool,
+    /// Config values that had to be coerced on load (implausible thresholds,
+    /// crossed bands). Shown in the footer — a silently corrected threshold is
+    /// still a threshold the user thinks they set.
+    pub config_warnings: Vec<String>,
     /// Whether the last fetch reached Nightscout.
     pub online: bool,
     /// Epoch ms of the last successful fetch.
@@ -387,6 +391,7 @@ impl App {
             minimap_rect: Cell::new(None),
             demo: false,
             perm_warning: false,
+            config_warnings: Vec::new(),
             online: true,
             last_ok_ms: None,
             fetch_fails: 0,

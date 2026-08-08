@@ -37,6 +37,11 @@ refresh_secs = 30
 # Alert thresholds and behaviour. Glucose bounds are in the same unit as
 # `units` above (mmol/L here). This whole section is optional, as is each key;
 # the values shown are the mmol equivalents of the defaults.
+#
+# If you change `units` to "mgdl", change these numbers too — 3.9 mmol/L is
+# 70 mg/dL, not 3.9. sugarrush now refuses thresholds outside the physiological
+# range and tells you which one it corrected, rather than running with an alarm
+# that can never fire.
 [alerts]
 urgent_low = 3.0      # red banner + critical notification at or below
 low = 3.9             # yellow banner below

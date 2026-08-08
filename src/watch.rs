@@ -184,7 +184,8 @@ fn alert_from_class(class: &str) -> Option<Alert> {
 /// Run the watcher until killed.
 pub async fn run() -> Result<()> {
     let cfg = Config::load()?;
-    let alerts = cfg.alerts.resolve(cfg.units);
+    let (alerts, warnings) = cfg.alerts.resolve_checked(cfg.units);
+    crate::warn_about_config(&warnings);
     let sites = cfg.resolve_sites()?;
 
     // One pipeline per site. A caregiver watching three people needs three
