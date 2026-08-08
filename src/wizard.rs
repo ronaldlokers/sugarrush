@@ -87,29 +87,40 @@ async fn test(site: &Site) -> Result<()> {
     Ok(())
 }
 
-/// Write a minimal config.toml with restrictive permissions.
+/// Write a minimal config.toml, atomically and owner-only.
 fn write_config(path: &Path, url: &str, token: &str, units: &str) -> Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("failed to create {}", dir.display()))?;
+    Config::write_atomic(path, &config_body(url, token, units)?)
+}
+
+/// Render the starter config. The values are serialized by the `toml` crate
+/// rather than interpolated into a string: a URL or token containing a quote,
+/// backslash, or newline would otherwise break the file — or inject arbitrary
+/// extra keys into it, silently overriding settings from a pasted value.
+fn config_body(url: &str, token: &str, units: &str) -> Result<String> {
+    let mut table = toml::Table::new();
+    table.insert("url".into(), url.into());
+    table.insert("token".into(), token.into());
+    table.insert("units".into(), units.into());
+    table.insert("refresh_secs".into(), 30.into());
+    let body = toml::to_string_pretty(&table).context("failed to serialize config")?;
+    Ok(format!(
+        "# sugarrush config — created by first-run setup\n{body}"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hostile_values_cannot_inject_config_keys() {
+        // A token containing TOML syntax must survive as *data*, not become
+        // extra keys that silently override real settings.
+        let token = "abc\"\nrefresh_secs = 1\nurl = \"https://evil.example\"\n#";
+        let body = config_body("https://ns.example", token, "mmol").unwrap();
+        let cfg: Config = toml::from_str(&body).unwrap();
+        assert_eq!(cfg.token.as_deref(), Some(token));
+        assert_eq!(cfg.url.as_deref(), Some("https://ns.example"));
+        assert_eq!(cfg.refresh_secs, 30);
     }
-    let body = format!(
-        "# sugarrush config — created by first-run setup\n\
-         url = \"{url}\"\n\
-         token = \"{token}\"\n\
-         units = \"{units}\"\n\
-         refresh_secs = 30\n",
-    );
-    std::fs::write(path, body).with_context(|| format!("failed to write {}", path.display()))?;
-    set_owner_only(path);
-    Ok(())
 }
-
-#[cfg(unix)]
-fn set_owner_only(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(not(unix))]
-fn set_owner_only(_path: &Path) {}

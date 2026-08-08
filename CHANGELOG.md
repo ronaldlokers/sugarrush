@@ -6,7 +6,32 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Push alerts are now a settings row** (`Alarm → Push alerts`) — toggle the
+  urgent-alert webhook on or off in the app without deleting the configured
+  `push_url`. The row shows only the host, never the full topic/path, and the
+  new `push_enabled` config key persists the choice.
+
 ### Fixed
+
+- **Saving settings can no longer lose your token.** `config.toml` is now
+  written to a temp file (created owner-only, flushed to disk) and renamed into
+  place, instead of being truncated and rewritten — so a crash, a full disk, or
+  a power cut mid-save leaves the old config intact rather than an empty file
+  with the only copy of your Nightscout token gone.
+- **The setup wizard no longer builds `config.toml` by string interpolation** —
+  values are serialized by the TOML library, so a URL or token containing a
+  quote or newline can't corrupt the file or inject extra settings into it. The
+  file is also created with `0600` from the start, rather than being chmodded
+  after the token was already written.
+- **The audible alarm no longer leaks processes.** Each alarm spawns a system
+  audio player; those were never reaped, so a long overnight urgent state piled
+  up hundreds of zombie processes. Finished players are now cleaned up on every
+  play.
+- **Alert thresholds can't cross any more** — urgent-low ≤ low ≤ high ≤
+  urgent-high is enforced while editing, so you can't silently disable a band
+  by dragging one threshold past its neighbour.
 
 - **The newest reading is now always the newest reading** — entries are sorted
   by timestamp on arrival instead of trusting the order Nightscout (or a proxy

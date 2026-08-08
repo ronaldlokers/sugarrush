@@ -2,7 +2,9 @@
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use crate::theme::ThemeConfig;
 use crate::units::Units;
@@ -152,6 +154,10 @@ pub struct AlertsConfig {
     /// Optional webhook / ntfy topic URL to POST urgent alerts to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub push_url: Option<String>,
+    /// Whether `push_url` is actually used. Lets the settings screen turn push
+    /// alerts off without discarding the configured URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub push_enabled: Option<bool>,
     /// Warn when the forecast predicts a low/high crossing within this many
     /// minutes (0 disables predictive alerts).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -177,11 +183,41 @@ impl AlertsConfig {
             quiet_urgent_low: self.quiet_urgent_low.unwrap_or(d.quiet_urgent_low),
             escalate_minutes: self.escalate_minutes.unwrap_or(d.escalate_minutes),
             push_url: self.push_url.clone(),
+            push_enabled: self.push_enabled.unwrap_or(d.push_enabled),
             predict_horizon_minutes: self
                 .predict_horizon_minutes
                 .unwrap_or(d.predict_horizon_minutes),
         }
     }
+}
+
+/// Create (or truncate) a file that only the owner can read, with the mode set
+/// at creation time so a secret is never written to a briefly-readable file.
+#[cfg(unix)]
+fn create_private(path: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn create_private(path: &Path) -> std::io::Result<File> {
+    File::create(path)
+}
+
+/// Restrict `path` to owner read/write (no-op off Unix).
+pub fn set_owner_only(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// Parse `HH:MM` into minutes-of-day (0..1440).
@@ -219,6 +255,7 @@ pub struct Alerts {
     pub quiet_urgent_low: bool,
     pub escalate_minutes: i64,
     pub push_url: Option<String>,
+    pub push_enabled: bool,
     pub predict_horizon_minutes: i64,
 }
 
@@ -238,6 +275,7 @@ impl Default for Alerts {
             quiet_urgent_low: true,
             escalate_minutes: 0,
             push_url: None,
+            push_enabled: true,
             predict_horizon_minutes: 30,
         }
     }
@@ -307,6 +345,52 @@ impl Config {
         let cfg: Config = toml::from_str(&raw)
             .with_context(|| format!("invalid config at {}", path.display()))?;
         Ok(cfg)
+    }
+
+    /// Write `body` to `path` atomically, owner-only.
+    ///
+    /// The config file holds the only copy of the Nightscout token, so it must
+    /// never be truncated in place: a write that dies part-way (full disk,
+    /// crash, power loss) would leave an empty or half-written file and take
+    /// the token with it. Write a sibling temp file created with mode 0600 —
+    /// so the token is never briefly world-readable — flush it to disk, then
+    /// rename over the target. Rename within a filesystem is atomic: readers
+    /// see either the old config or the new one, never a torn one.
+    pub fn write_atomic(path: &Path, body: &str) -> Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("failed to create {}", dir.display()))?;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("config.toml");
+        let tmp = path.with_file_name(format!(".{}.{}.tmp", name, std::process::id()));
+
+        let write = |tmp: &Path| -> Result<()> {
+            let mut f = create_private(tmp)
+                .with_context(|| format!("failed to create {}", tmp.display()))?;
+            f.write_all(body.as_bytes())
+                .with_context(|| format!("failed to write {}", tmp.display()))?;
+            // Get the bytes on disk before the rename publishes the new file.
+            f.sync_all()
+                .with_context(|| format!("failed to flush {}", tmp.display()))?;
+            Ok(())
+        };
+        if let Err(e) = write(&tmp) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::rename(&tmp, path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(
+                anyhow::Error::new(e).context(format!("failed to replace {}", path.display()))
+            );
+        }
+        // Re-assert the mode: an existing file's permissions survive a rename
+        // on some platforms, and the config may predate this code.
+        set_owner_only(path);
+        Ok(())
     }
 
     /// True when the config file is group- or world-readable (Unix only) —
@@ -409,5 +493,25 @@ mod tests {
         assert_eq!(a.low, 70.0);
         assert!(a.desktop);
         assert_eq!(a.stale_minutes, 15);
+    }
+
+    #[test]
+    fn write_atomic_replaces_and_stays_owner_only() {
+        let dir = std::env::temp_dir().join(format!("sugarrush-test-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        Config::write_atomic(&path, "first").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first");
+        // Replacing leaves no temp file behind and keeps the new content.
+        Config::write_atomic(&path, "second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        let leftovers = std::fs::read_dir(&dir).unwrap().count();
+        assert_eq!(leftovers, 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

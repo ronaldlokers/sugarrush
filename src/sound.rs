@@ -5,8 +5,8 @@
 //! Everything is best-effort: no audio dependencies, and failures are silent.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 const SAMPLE_RATE: u32 = 44_100;
 
@@ -68,6 +68,20 @@ impl Tone {
     }
 }
 
+/// Children spawned by [`play`], kept only so they can be reaped.
+///
+/// A spawned player stays a zombie in the process table until someone waits on
+/// it. The alarm re-plays every few seconds for as long as an urgent state
+/// lasts, so without this a long overnight low would leave hundreds of dead
+/// entries behind — eventually hitting the process limit and taking the alarm
+/// (and the rest of the app's subprocesses) with it.
+static PLAYERS: Mutex<Vec<Child>> = Mutex::new(Vec::new());
+
+/// Wait on any finished players, keeping the ones still playing.
+fn reap(players: &mut Vec<Child>) {
+    players.retain_mut(|c| matches!(c.try_wait(), Ok(None)));
+}
+
 /// Spawn the first available audio player on this platform, detached.
 fn play(path: &Path) {
     // (program, args-before-file). The file path is appended last.
@@ -92,7 +106,11 @@ fn play(path: &Path) {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
-        if spawned.is_ok() {
+        if let Ok(child) = spawned {
+            if let Ok(mut players) = PLAYERS.lock() {
+                reap(&mut players);
+                players.push(child);
+            }
             return;
         }
     }
