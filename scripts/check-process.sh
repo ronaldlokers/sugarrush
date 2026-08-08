@@ -30,14 +30,13 @@ if [ "$declared" != "$count" ]; then
 	err "Field::ALL declares $declared entries but lists $count."
 fi
 
-# 2. Every settings field name that reaches config.toml is documented in
-#    config.example.toml. Checked by key name, since that's what a user greps.
-while read -r key; do
-	[ -z "$key" ] && continue
-	grep -q "$key" config.example.toml ||
-		err "$key is persisted by build_config but absent from config.example.toml"
-done <<<"$(sed -n '/fn build_config/,/^    }$/p' src/app.rs |
-	sed -n 's/^ *\([a-z_]*\): Some(.*/\1/p' | sort -u)"
+# 2. Config-key coverage used to be checked here with `sed`, which only saw
+#    fields written as `key: Some(...)` — so `units`, `refresh_secs`,
+#    `graph_style`, `agp_days`, `sites` and the whole `minimap` table were
+#    never checked, and the gate reported success while covering about half of
+#    what it claimed. It is now a Rust test that serializes a Config and
+#    asserts every emitted key appears in config.example.toml, which is
+#    exhaustive by construction: see `every_persisted_key_is_documented`.
 
 if [ "$fail" -eq 0 ]; then
 	echo "process checks passed"

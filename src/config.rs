@@ -915,4 +915,65 @@ token = "b"
         let err = cfg.resolve_sites().unwrap_err().to_string();
         assert!(err.contains("both named 'kid'"), "{err}");
     }
+
+    /// Every key the app can write must be documented in the example config.
+    ///
+    /// This replaces a `sed` in `scripts/check-process.sh` that only matched
+    /// fields written as `key: Some(...)`, so `units`, `refresh_secs`,
+    /// `graph_style`, `agp_days`, `sites` and the whole `[minimap]` table went
+    /// unchecked — the gate reported success while covering about half of what
+    /// it claimed. Serializing a Config is exhaustive by construction.
+    #[test]
+    fn every_persisted_key_is_documented() {
+        // A config with every optional field populated, so nothing is skipped
+        // by `skip_serializing_if`.
+        let cfg = Config {
+            url: Some("https://ns.example.com".into()),
+            token: Some("t".into()),
+            sites: Vec::new(),
+            units: Units::Mmol,
+            refresh_secs: 30,
+            alerts: AlertsConfig {
+                urgent_low: Some(3.0),
+                low: Some(3.9),
+                high: Some(10.0),
+                urgent_high: Some(13.9),
+                stale_minutes: Some(15),
+                desktop: Some(true),
+                sound: Some(true),
+                snooze_minutes: Some(15),
+                quiet_start: Some("23:00".into()),
+                quiet_end: Some("07:00".into()),
+                quiet_urgent_low: Some(true),
+                escalate_minutes: Some(20),
+                push_url: Some("https://ntfy.sh/topic".into()),
+                push_enabled: Some(true),
+                notify_content: Some(true),
+                predict_horizon_minutes: Some(30),
+            },
+            theme: ThemeConfig::default(),
+            graph_style: GraphStyle::Dots,
+            agp_days: 14,
+            minimap: MinimapConfig::default(),
+        };
+        let toml = toml::to_string_pretty(&cfg).unwrap();
+        let example = include_str!("../config.example.toml");
+
+        let mut missing = Vec::new();
+        for line in toml.lines() {
+            let Some(key) = line.split(['=', ' ']).next().filter(|k| !k.is_empty()) else {
+                continue;
+            };
+            if key.starts_with('[') || key.starts_with('#') {
+                continue;
+            }
+            if !example.contains(key) {
+                missing.push(key.to_string());
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "keys sugarrush writes but config.example.toml never mentions: {missing:?}"
+        );
+    }
 }
