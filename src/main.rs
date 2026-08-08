@@ -315,6 +315,18 @@ async fn handle_mouse(app: &mut App, client: &Client, m: MouseEvent) {
 
 /// Handle keys on the settings screen. All edits apply live; `w` persists.
 fn handle_settings_key(app: &mut App, code: KeyCode) {
+    // A row being edited as text swallows the keys — otherwise typing a URL
+    // would trigger the single-letter shortcuts underneath it.
+    if app.field_edit.is_some() {
+        match code {
+            KeyCode::Esc => app.cancel_field_edit(),
+            KeyCode::Enter => app.commit_field_edit(),
+            KeyCode::Backspace => app.field_edit_backspace(),
+            KeyCode::Char(c) => app.field_edit_push(c),
+            _ => {}
+        }
+        return;
+    }
     match code {
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Char('s') | KeyCode::Esc => app.toggle_settings(),
@@ -323,6 +335,9 @@ fn handle_settings_key(app: &mut App, code: KeyCode) {
         KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('-') => app.settings_adjust(-1),
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('+') | KeyCode::Char('=') => {
             app.settings_adjust(1)
+        }
+        KeyCode::Enter => {
+            app.begin_field_edit();
         }
         KeyCode::Char('w') => app.save_config(),
         _ => {}

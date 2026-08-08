@@ -43,9 +43,15 @@ Type "u"
 Sleep 1.6s
 Type "u"
 Sleep 1.2s
-# Open settings, move down, change a value
+# Open settings; the Site section is at the top — show the URL editor, then
+# cancel out of it
 Type "s"
-Sleep 1.3s
+Sleep 1.5s
+Enter
+Sleep 1.4s
+Escape
+Sleep 0.8s
+# Move down and change a value
 Down
 Down
 Down

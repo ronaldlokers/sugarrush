@@ -66,6 +66,8 @@ impl GraphView {
 /// Editable rows on the settings screen, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
+    SiteUrl,
+    SiteToken,
     Units,
     Refresh,
     Desktop,
@@ -97,7 +99,9 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 28] = [
+    pub const ALL: [Field; 30] = [
+        Field::SiteUrl,
+        Field::SiteToken,
         Field::Units,
         Field::Refresh,
         Field::Desktop,
@@ -130,6 +134,8 @@ impl Field {
 
     pub fn label(self) -> &'static str {
         match self {
+            Field::SiteUrl => "Site URL",
+            Field::SiteToken => "Read-only token",
             Field::Units => "Units",
             Field::Refresh => "Refresh interval",
             Field::Desktop => "Desktop notifications",
@@ -165,6 +171,7 @@ impl Field {
     /// `ALL`, so a header is drawn whenever this changes between rows.
     pub fn group(self) -> &'static str {
         match self {
+            Field::SiteUrl | Field::SiteToken => "Site",
             Field::Units | Field::Refresh => "General",
             Field::Desktop
             | Field::Sound
@@ -206,6 +213,14 @@ impl Field {
     }
 }
 
+/// A settings row being edited as free text.
+pub struct FieldEdit {
+    pub field: Field,
+    pub buffer: String,
+    /// Render as dots rather than the typed characters.
+    pub masked: bool,
+}
+
 pub struct App {
     pub units: Units,
     /// Entries loaded for the current window, newest first.
@@ -217,6 +232,8 @@ pub struct App {
     pub view_end: i64,
     /// When `Some`, a date-jump prompt is open holding the typed buffer.
     pub date_input: Option<String>,
+    /// When `Some`, a settings row is being edited as free text.
+    pub field_edit: Option<FieldEdit>,
     /// Forecast points `(epoch_ms, mg/dL)`, live mode only.
     pub predictions: Vec<Prediction>,
     /// Uploader/device metadata + IOB/COB (live mode only).
@@ -322,6 +339,7 @@ impl App {
             view_start: 0,
             view_end: 0,
             date_input: None,
+            field_edit: None,
             predictions: Vec::new(),
             device: DeviceStatus::default(),
             treatments: Vec::new(),
@@ -506,6 +524,82 @@ impl App {
             self.site_idx = (self.site_idx + 1) % self.sites.len();
             self.site_dirty = true;
             self.view.follow();
+        }
+    }
+
+    /// Open the text editor for the selected settings row, if it takes text.
+    /// Returns true when an editor opened.
+    pub fn begin_field_edit(&mut self) -> bool {
+        let field = Field::ALL[self.settings_sel.min(Field::ALL.len() - 1)];
+        let edit = match field {
+            Field::SiteUrl => FieldEdit {
+                field,
+                // Pre-fill: a URL is usually being corrected, not replaced.
+                buffer: self.active_site().url.clone(),
+                masked: false,
+            },
+            // Start empty and masked — a token is replaced wholesale, and
+            // pre-filling it would put the secret back on screen.
+            Field::SiteToken => FieldEdit {
+                field,
+                buffer: String::new(),
+                masked: true,
+            },
+            _ => return false,
+        };
+        self.field_edit = Some(edit);
+        true
+    }
+
+    pub fn field_edit_push(&mut self, c: char) {
+        if let Some(e) = self.field_edit.as_mut() {
+            e.buffer.push(c);
+        }
+    }
+
+    pub fn field_edit_backspace(&mut self) {
+        if let Some(e) = self.field_edit.as_mut() {
+            e.buffer.pop();
+        }
+    }
+
+    pub fn cancel_field_edit(&mut self) {
+        self.field_edit = None;
+    }
+
+    /// Apply the open editor. On a bad URL the editor stays open with the text
+    /// intact so it can be fixed rather than retyped.
+    pub fn commit_field_edit(&mut self) {
+        let Some(edit) = self.field_edit.take() else {
+            return;
+        };
+        let idx = self.site_idx.min(self.sites.len().saturating_sub(1));
+        match edit.field {
+            Field::SiteUrl => match crate::config::normalize_site_url(&edit.buffer) {
+                Ok(url) => {
+                    self.sites[idx].url = url;
+                    self.site_dirty = true;
+                    self.status = Some(if self.sites[idx].is_insecure() {
+                        "site updated · ⚠ unencrypted http, the token is sent in clear".to_string()
+                    } else {
+                        format!("site set to {}", self.sites[idx].base_url())
+                    });
+                }
+                Err(e) => {
+                    self.status = Some(e.to_string());
+                    self.field_edit = Some(edit);
+                }
+            },
+            Field::SiteToken => {
+                if edit.buffer.trim().is_empty() {
+                    self.status = Some("token unchanged".to_string());
+                } else {
+                    self.sites[idx].token = edit.buffer.trim().to_string();
+                    self.site_dirty = true;
+                    self.status = Some("token updated · press w to save".to_string());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -828,6 +922,9 @@ impl App {
                 self.alerts.urgent_high =
                     clamp_bg(self.alerts.urgent_high + d * step_mgdl).max(self.alerts.high)
             }
+            Field::SiteUrl | Field::SiteToken => {
+                self.status = Some("press enter to edit".to_string());
+            }
             Field::PushAlerts => {
                 // Only meaningful with a URL configured; say so rather than
                 // toggling a flag that can't do anything.
@@ -977,6 +1074,24 @@ impl App {
                     format!("{} min", self.alerts.escalate_minutes)
                 }
             }
+            Field::SiteUrl => {
+                let site = self.active_site();
+                // The demo's placeholder URL is not a real site; flagging it
+                // would put a warning in every screenshot for nothing.
+                if site.is_insecure() && !self.demo {
+                    format!("{} ⚠ unencrypted", site.base_url())
+                } else {
+                    site.base_url().to_string()
+                }
+            }
+            // Never render the token, not even partially: the settings screen
+            // is the pane most likely to be screenshotted or screen-shared.
+            Field::SiteToken => if self.active_site().token.is_empty() {
+                "not set"
+            } else {
+                "set · ••••••"
+            }
+            .to_string(),
             Field::PredictHorizon => {
                 let h = self.alerts.predict_horizon_minutes;
                 if h == 0 {
@@ -1287,6 +1402,66 @@ mod tests {
             a.field_value(Field::PredictHorizon),
             "45 min · local forecast 30 min"
         );
+    }
+
+    #[test]
+    fn editing_the_site_url_normalizes_and_reloads() {
+        let mut a = app();
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::SiteUrl)
+            .unwrap();
+        assert!(a.begin_field_edit());
+        // Pre-filled with the current URL so a typo is corrected, not retyped.
+        assert_eq!(a.field_edit.as_ref().unwrap().buffer, a.active_site().url);
+        a.field_edit.as_mut().unwrap().buffer = "ns.example.com/api/v1/entries.json".into();
+        a.commit_field_edit();
+        assert_eq!(a.active_site().url, "https://ns.example.com");
+        assert!(a.site_dirty); // triggers a client rebuild + refresh
+        assert!(a.field_edit.is_none());
+    }
+
+    #[test]
+    fn a_bad_url_keeps_the_editor_open() {
+        let mut a = app();
+        let before = a.active_site().url.clone();
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::SiteUrl)
+            .unwrap();
+        a.begin_field_edit();
+        a.field_edit.as_mut().unwrap().buffer = "ftp://nope".into();
+        a.commit_field_edit();
+        assert_eq!(a.active_site().url, before);
+        assert!(a.field_edit.is_some()); // fix it in place
+        assert!(a.status.is_some());
+    }
+
+    #[test]
+    fn token_edit_is_masked_and_never_rendered() {
+        let mut a = app();
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::SiteToken)
+            .unwrap();
+        a.begin_field_edit();
+        let edit = a.field_edit.as_ref().unwrap();
+        assert!(edit.masked);
+        assert!(edit.buffer.is_empty()); // never pre-fills the secret
+        a.field_edit.as_mut().unwrap().buffer = "s3cret-token".into();
+        a.commit_field_edit();
+        assert_eq!(a.active_site().token, "s3cret-token");
+        assert!(a.site_dirty);
+        let shown = a.field_value(Field::SiteToken);
+        assert!(
+            !shown.contains("s3cret"),
+            "token leaked into the row: {shown}"
+        );
+
+        // An empty commit leaves the existing token alone.
+        a.begin_field_edit();
+        a.commit_field_edit();
+        assert_eq!(a.active_site().token, "s3cret-token");
     }
 
     #[test]

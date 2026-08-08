@@ -8,6 +8,15 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Fix a bad site without leaving the app** — the settings screen gains a
+  **Site** section with the Nightscout URL and read-only token. Press `Enter` on
+  a row to edit it; the app reconnects immediately, and `w` saves as usual. The
+  token is masked while typing and never rendered back (the row reads
+  `set · ••••••`).
+- **Unencrypted sites are called out.** A plain `http://` site sends your token
+  and readings in the clear, so the dashboard footer now says so and the setup
+  wizard asks you to confirm before accepting one. Loopback addresses
+  (`localhost`, `127.0.0.1`) are exempt — they never leave the machine.
 - **Push alerts are now a settings row** (`Alarm → Push alerts`) — toggle the
   urgent-alert webhook on or off in the app without deleting the configured
   `push_url`. The row shows only the host, never the full topic/path, and the
@@ -15,6 +24,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **The setup wizard no longer echoes your token** to the terminal — it's masked
+  as you type, so it doesn't survive in the scrollback.
+- **URLs are normalized instead of failing mysteriously.** A bare
+  `mysite.example.com`, a trailing slash, or a pasted
+  `…/api/v1/entries.json?count=10` now resolves to the right base URL, in the
+  wizard, in the settings editor, and when loading an existing `config.toml`.
 - **A partly-failed refresh now says so.** When the readings arrive but a
   companion fetch doesn't, the affected panels (IOB/COB, treatment markers,
   forecast, sensor age, history, overview) were left showing old values with
