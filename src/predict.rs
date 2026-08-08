@@ -11,6 +11,10 @@ const BG_REF: f64 = 140.0;
 /// AR2 autoregression coefficients (Nightscout's ar2 plugin).
 const AR: [f64; 2] = [-0.723, 1.716];
 const STEP_MS: i64 = 5 * 60_000;
+/// Accepted spacing between the two readings the projection is built from.
+/// CGMs post every 5 minutes; a little jitter is normal, a gap is not.
+const MIN_STEP_MS: i64 = 3 * 60_000;
+const MAX_STEP_MS: i64 = 8 * 60_000;
 /// Forecast horizon: 6 × 5 min = 30 minutes.
 const STEPS: usize = 6;
 /// How far ahead [`ar2`] projects, in minutes. Uploader forecasts (Loop /
@@ -30,6 +34,17 @@ pub fn ar2(entries: &[Entry]) -> Vec<Prediction> {
         (Some(a), Some(b)) => (a, b),
         _ => return Vec::new(),
     };
+
+    // The model assumes consecutive 5-minute samples. It never read the actual
+    // gap, so a reading either side of a sensor dropout was extrapolated as if
+    // it had happened in five minutes: a benign −0.5 mg/dL per minute across
+    // 40 minutes projected below the low threshold and fired "heading low".
+    // Sensor gaps are exactly when that fired, and exactly when a spurious
+    // prediction is least welcome. No forecast beats a fabricated one.
+    let gap = latest.date - prev.date;
+    if !(MIN_STEP_MS..=MAX_STEP_MS).contains(&gap) {
+        return Vec::new();
+    }
 
     // Log-space state: y0 = older reading, y1 = newest.
     let mut y0 = (prev.sgv / BG_REF).ln();
@@ -94,5 +109,29 @@ mod tests {
         assert!(out
             .iter()
             .all(|p| (BG_MIN..=BG_MAX).contains(&p.low) && (BG_MIN..=BG_MAX).contains(&p.high)));
+    }
+
+    #[test]
+    fn a_sensor_gap_produces_no_forecast_rather_than_a_wrong_one() {
+        let now = 1_700_000_000_000;
+        // Same two values, five minutes apart: a normal projection.
+        let close = ar2(&[entry(90.0, now), entry(110.0, now - 5 * STEP_MS / 5)]);
+        assert_eq!(close.len(), STEPS);
+
+        // The same drop across a 40-minute gap is ~0.5 mg/dL per minute — flat.
+        // Extrapolating it as a 5-minute step used to project 61 mg/dL at
+        // +30 min and fire a false "heading low".
+        let gapped = ar2(&[entry(90.0, now), entry(110.0, now - 40 * 60_000)]);
+        assert!(gapped.is_empty(), "forecast built across a 40-minute gap");
+
+        // Two readings in the same minute (duplicate uploaders) are no basis
+        // for a trend either.
+        assert!(ar2(&[entry(90.0, now), entry(110.0, now - 30_000)]).is_empty());
+
+        // Ordinary jitter still forecasts.
+        assert_eq!(
+            ar2(&[entry(90.0, now), entry(95.0, now - 6 * 60_000)]).len(),
+            STEPS
+        );
     }
 }

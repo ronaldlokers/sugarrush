@@ -33,6 +33,10 @@ use crate::{now_ms, predict, sound};
 /// flat all night" or "the daemon was dead" — and there is no way to tell.
 const LIVENESS_INTERVAL_MS: i64 = 15 * 60_000;
 
+/// Slowest sensible poll for a background watcher. Readings arrive every five
+/// minutes; polling faster only burns someone else's server and your battery.
+const WATCH_MIN_INTERVAL_SECS: u64 = 60;
+
 /// How long a heartbeat stays trustworthy. Longer than the TUI's redraw
 /// cadence and the watcher's own tick, short enough that a crashed TUI doesn't
 /// silence the watcher for long.
@@ -57,10 +61,45 @@ impl Role {
 /// Directory for liveness files: runtime state that should not survive a
 /// reboot. Falls back to the temp dir when there's no `XDG_RUNTIME_DIR`.
 fn runtime_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("sugarrush")
+    match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(dir) => PathBuf::from(dir).join("sugarrush"),
+        // Without a per-user runtime dir the fallback was a shared
+        // /tmp/sugarrush, where any local user could create tui.alive and keep
+        // it fresh to silence someone else's alarm daemon indefinitely. Scope
+        // it per-uid, and see `is_alive` for the ownership check.
+        None => std::env::temp_dir().join(format!("sugarrush-{}", current_uid())),
+    }
+}
+
+/// Our own user id, read from a file we definitionally own rather than via a
+/// libc call — this crate has no `unsafe` and a uid lookup is not worth
+/// starting.
+#[cfg(unix)]
+fn current_uid() -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    dirs::home_dir()
+        .and_then(|h| std::fs::metadata(h).ok())
+        .map(|m| m.uid())
+        .unwrap_or(0)
+}
+
+#[cfg(not(unix))]
+fn current_uid() -> u32 {
+    0
+}
+
+/// True when `path` is owned by us. A heartbeat is a claim that another
+/// process is handling the alarm; one we can't vouch for is not a claim to act
+/// on, and acting on it means going silent.
+#[cfg(unix)]
+fn owned_by_us(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).is_ok_and(|m| m.uid() == current_uid())
+}
+
+#[cfg(not(unix))]
+fn owned_by_us(_path: &std::path::Path) -> bool {
+    true
 }
 
 /// Where episode state is persisted — this one *should* survive a restart.
@@ -79,6 +118,11 @@ pub fn heartbeat(role: Role, now_ms: i64) {
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
     let _ = std::fs::write(dir.join(role.file()), now_ms.to_string());
 }
 
@@ -90,7 +134,12 @@ pub fn clear_heartbeat(role: Role) {
 
 /// True when the given role reported in recently enough to be trusted.
 pub fn is_alive(role: Role, now_ms: i64) -> bool {
-    let Ok(raw) = std::fs::read_to_string(runtime_dir().join(role.file())) else {
+    let path = runtime_dir().join(role.file());
+    // Fail open: anything we can't vouch for means we keep alarming.
+    if !owned_by_us(&path) {
+        return false;
+    }
+    let Ok(raw) = std::fs::read_to_string(&path) else {
         return false;
     };
     let Ok(stamp) = raw.trim().parse::<i64>() else {
@@ -129,7 +178,12 @@ impl State {
                 .with_context(|| format!("failed to create {}", dir.display()))?;
         }
         let body = serde_json::to_string_pretty(self).context("failed to serialize watch state")?;
-        std::fs::write(&path, body).with_context(|| format!("failed to write {}", path.display()))
+        // Atomic and owner-only, like the config file next door. A torn write
+        // loads as Default, which silently cancels an active snooze and
+        // restarts an escalation timer — the two things this file exists to
+        // prevent. It also names a third party's alert history in follower
+        // mode, so it is not world-readable.
+        crate::config::Config::write_atomic(&path, &body)
     }
 }
 
@@ -237,10 +291,20 @@ pub async fn run() -> Result<()> {
     // Report liveness immediately on start, then on the interval.
     let mut last_liveness: Option<i64> = None;
 
-    let mut ticker = tokio::time::interval(Duration::from_secs(cfg.refresh_secs.max(5)));
+    // CGM data arrives once every five minutes, so the TUI's default of a few
+    // seconds — chosen for a responsive dashboard — meant roughly 17,000
+    // requests a day per site against someone's self-hosted Nightscout, and
+    // kept a laptop's radio awake continuously. The daemon polls at its own,
+    // slower cadence unless the user has deliberately set a slower one.
+    let period = cfg.refresh_secs.max(WATCH_MIN_INTERVAL_SECS);
+    let mut ticker = tokio::time::interval(Duration::from_secs(period));
+    // Catching up on missed ticks all at once would fire a burst of fetches
+    // (and alarms) after a suspend or a slow request.
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // The alarm re-sounds on its own cadence while an urgent state persists,
     // independent of how often we fetch.
     let mut alarm_ticker = tokio::time::interval(Duration::from_secs(3));
+    alarm_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     alarm_ticker.tick().await;
 
     loop {
@@ -250,6 +314,12 @@ pub async fn run() -> Result<()> {
                 heartbeat(Role::Watch, now);
                 let mut state = State::default();
                 for w in watched.iter_mut() {
+                    // The retry policy already exists on App and the TUI obeys
+                    // it; the daemon was hammering a failing site at full rate
+                    // and ignoring a paused-after-auth-failure state entirely.
+                    if !w.app.online && !w.app.should_retry(now) {
+                        continue;
+                    }
                     if let Err(e) = poll(&mut w.app, &w.client, now).await {
                         // Keep watching: an outage is exactly when the Stale
                         // alarm matters, and it can only fire if we stay alive.

@@ -608,6 +608,20 @@ impl Config {
                 _ => bail!("config needs either url + token, or at least one [[sites]] entry"),
             }
         };
+        // Episode state in the watcher is keyed by site name, so two sites
+        // sharing one would share an alert episode: announcing a low for one
+        // person would mark it announced for the other.
+        let mut seen = std::collections::BTreeSet::new();
+        for site in &sites {
+            if !seen.insert(site.name.clone()) {
+                bail!(
+                    "two [[sites]] are both named '{}' — names identify people \
+                     in alerts and alarm state, so they must be unique",
+                    site.name
+                );
+            }
+        }
+
         // A hand-written config gets the same tidy-up as the wizard's input —
         // a missing scheme or a pasted `/api/v1/…` path shouldn't be a silent
         // 404. An unparseable URL is left alone so the fetch error names it.
@@ -878,5 +892,27 @@ mod tests {
             crate::alert::evaluate(40.0, 0, &alerts),
             crate::alert::Alert::UrgentLow
         );
+    }
+
+    #[test]
+    fn two_sites_cannot_share_a_name() {
+        let cfg: Config = toml::from_str(
+            r#"
+units = "mmol"
+[[sites]]
+name = "kid"
+url = "https://a.example.com"
+token = "a"
+[[sites]]
+name = "kid"
+url = "https://b.example.com"
+token = "b"
+"#,
+        )
+        .unwrap();
+        // Watcher episode state is keyed by name, so a duplicate would make
+        // one person's announced low mark the other's as announced.
+        let err = cfg.resolve_sites().unwrap_err().to_string();
+        assert!(err.contains("both named 'kid'"), "{err}");
     }
 }
