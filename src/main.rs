@@ -300,6 +300,11 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                 // it stays quiet instead of alarming alongside us.
                 if !app.demo {
                     watch::heartbeat(watch::Role::Tui, now);
+                    // Read the other side of the handshake too: until now
+                    // nothing ever did, so a dead watcher and a quiet night
+                    // looked identical from in here.
+                    app.watcher_alive = watch::is_alive(watch::Role::Watch, now);
+                    app.watcher_seen |= app.watcher_alive;
                 }
                 // Re-classify locally every few seconds (no network) so a sensor
                 // gap escalates to a Stale alarm promptly instead of waiting for

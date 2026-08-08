@@ -27,6 +27,12 @@ use crate::config::Config;
 use crate::nightscout::Client;
 use crate::{now_ms, predict, sound};
 
+/// How often the watcher says it is alive and well, even when nothing
+/// changed. Without this the journal only ever records transitions, so the
+/// morning after a missed alarm an empty journal means either "glucose was
+/// flat all night" or "the daemon was dead" — and there is no way to tell.
+const LIVENESS_INTERVAL_MS: i64 = 15 * 60_000;
+
 /// How long a heartbeat stays trustworthy. Longer than the TUI's redraw
 /// cadence and the watcher's own tick, short enough that a crashed TUI doesn't
 /// silence the watcher for long.
@@ -228,6 +234,8 @@ pub async fn run() -> Result<()> {
     // Whether we're following more than one person, which changes how the
     // journal and notifications read.
     let multi = watched.len() > 1;
+    // Report liveness immediately on start, then on the interval.
+    let mut last_liveness: Option<i64> = None;
 
     let mut ticker = tokio::time::interval(Duration::from_secs(cfg.refresh_secs.max(5)));
     // The alarm re-sounds on its own cadence while an urgent state persists,
@@ -252,6 +260,10 @@ pub async fn run() -> Result<()> {
                 }
                 if let Err(e) = state.save() {
                     eprintln!("sugarrush watch: {e}");
+                }
+                if last_liveness.is_none_or(|t| now - t >= LIVENESS_INTERVAL_MS) {
+                    println!("{} · {}", stamp(now), liveness(&watched, now));
+                    last_liveness = Some(now);
                 }
             }
             _ = alarm_ticker.tick() => {
@@ -405,6 +417,33 @@ async fn react(w: &mut Watched, now_ms: i64, multi: bool) {
     if state == Alert::Stale && !app.online {
         println!("{} · {who}offline", stamp(now_ms));
     }
+}
+
+/// A one-line "still here, and here's what I can see" summary, so an otherwise
+/// quiet journal proves the watcher was running rather than merely silent.
+fn liveness(watched: &[Watched], now_ms: i64) -> String {
+    let parts: Vec<String> = watched
+        .iter()
+        .map(|w| {
+            let who = if watched.len() > 1 {
+                format!("{}: ", w.name)
+            } else {
+                String::new()
+            };
+            match w.app.latest() {
+                Some(e) => format!(
+                    "{who}{} {} · {} · {}m ago",
+                    w.app.units.format(e.sgv),
+                    w.app.units.label(),
+                    w.app.alert.label(),
+                    ((now_ms - e.date) / 60_000).max(0)
+                ),
+                None if w.app.online => format!("{who}no readings"),
+                None => format!("{who}offline"),
+            }
+        })
+        .collect();
+    format!("ok · {}", parts.join(" · "))
 }
 
 fn stamp(now_ms: i64) -> String {
@@ -562,5 +601,52 @@ mod tests {
         assert!(severity(Alert::UrgentHigh) < severity(Alert::Stale));
         assert!(severity(Alert::Stale) < severity(Alert::Low));
         assert!(severity(Alert::InRange) > severity(Alert::High));
+    }
+
+    #[test]
+    fn liveness_reports_what_the_watcher_can_see() {
+        let cfg = Config::demo();
+        let alerts = cfg.alerts.resolve(cfg.units);
+        let sites = cfg.resolve_sites().unwrap();
+        let mut app = App::new(&cfg, alerts, sites.clone());
+        app.entries = vec![crate::nightscout::Entry {
+            sgv: 100.0,
+            date: NOW - 120_000,
+            direction: None,
+        }];
+        app.mark_online(NOW);
+        app.evaluate_alert(NOW);
+        let watched = vec![Watched {
+            name: "default".into(),
+            client: Client::for_site(&sites[0]).unwrap(),
+            app,
+            last_logged: None,
+        }];
+
+        let line = liveness(&watched, NOW);
+        // The point of the line is that it proves the watcher is alive AND
+        // that it is seeing fresh data — an "ok" with a two-hour-old reading
+        // would be a different kind of lie.
+        assert!(line.starts_with("ok · "), "{line}");
+        assert!(line.contains("in range"), "{line}");
+        assert!(line.contains("2m ago"), "{line}");
+        // Single site: no name prefix cluttering every line.
+        assert!(!line.contains("default:"), "{line}");
+    }
+
+    #[test]
+    fn liveness_says_offline_rather_than_ok_when_it_has_nothing() {
+        let cfg = Config::demo();
+        let alerts = cfg.alerts.resolve(cfg.units);
+        let sites = cfg.resolve_sites().unwrap();
+        let mut app = App::new(&cfg, alerts, sites.clone());
+        app.mark_offline(NOW, "connection refused".into(), false);
+        let watched = vec![Watched {
+            name: "default".into(),
+            client: Client::for_site(&sites[0]).unwrap(),
+            app,
+            last_logged: None,
+        }];
+        assert!(liveness(&watched, NOW).contains("offline"));
     }
 }
