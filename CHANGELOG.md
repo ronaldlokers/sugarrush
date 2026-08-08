@@ -8,6 +8,13 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **An always-on alarm watcher.** `sugarrush watch` runs the alert pipeline
+  headless — no terminal needed — so a nocturnal low still wakes you when the
+  dashboard isn't open. It defers to a running dashboard (both write a
+  heartbeat, so you never get two alarms for one low) and persists episode
+  state, so restarting the service doesn't re-announce an ongoing low, restart
+  an escalation timer, or cancel a snooze. Example systemd user unit in
+  `packaging/systemd/`.
 - **Export what you're looking at.** Press `e` (or run `sugarrush export`) to
   write two files for the clinical window: a CSV of every reading — oldest
   first, in mg/dL *and* your display unit — and a plain-text summary with sensor

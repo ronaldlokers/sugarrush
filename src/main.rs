@@ -13,6 +13,7 @@ mod theme;
 mod ui;
 mod units;
 mod view;
+mod watch;
 mod waybar;
 mod wizard;
 
@@ -46,6 +47,8 @@ enum Mode {
     About,
     /// Write a CSV + summary of the last `days` days and exit.
     Export { days: u32, dir: Option<String> },
+    /// Run the headless alarm watcher until killed.
+    Watch,
 }
 
 fn parse_args() -> Mode {
@@ -61,6 +64,7 @@ fn parse_args() -> Mode {
             "waybar" => mode = Some(Mode::Waybar),
             "about" => mode = Some(Mode::About),
             "export" => mode = Some(Mode::Export { days: 0, dir: None }),
+            "watch" => mode = Some(Mode::Watch),
             "--days" => {
                 i += 1;
                 export_days = args.get(i).and_then(|v| v.parse().ok());
@@ -105,6 +109,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Mode::Export { days, dir } => run_export(days, dir).await,
+        Mode::Watch => watch::run().await,
         Mode::Tui { screen, demo } => run_tui(screen, demo).await,
     }
 }
@@ -169,8 +174,16 @@ async fn run_tui(screen: Screen, demo: bool) -> Result<()> {
 
     install_panic_hook();
     let mut terminal = setup_terminal(app.minimap_enabled)?;
+    if !demo {
+        watch::heartbeat(watch::Role::Tui, now_ms());
+    }
     let res = run(&mut terminal, &mut app).await;
     restore_terminal(&mut terminal)?;
+    // Hand the alarm back to the watcher immediately on exit, rather than
+    // leaving it deferring until the heartbeat goes stale.
+    if !demo {
+        watch::clear_heartbeat(watch::Role::Tui);
+    }
     res
 }
 
@@ -241,6 +254,11 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
             }
             _ = alarm_ticker.tick() => {
                 let now = now_ms();
+                // Tell a running `sugarrush watch` that the dashboard is up, so
+                // it stays quiet instead of alarming alongside us.
+                if !app.demo {
+                    watch::heartbeat(watch::Role::Tui, now);
+                }
                 // Re-classify locally every few seconds (no network) so a sensor
                 // gap escalates to a Stale alarm promptly instead of waiting for
                 // the next full refresh.
@@ -612,7 +630,7 @@ async fn refresh(app: &mut App, client: &Client) {
 }
 
 /// Fire a best-effort desktop notification for an alert.
-fn notify(alert: alert::Alert, sgv: Option<f64>, units: units::Units, content: bool) {
+pub(crate) fn notify(alert: alert::Alert, sgv: Option<f64>, units: units::Units, content: bool) {
     // Content-free mode still fires — and still as critical, so it breaks
     // through Do Not Disturb — but says nothing a lock screen shouldn't show.
     if !content {
@@ -627,7 +645,7 @@ fn notify(alert: alert::Alert, sgv: Option<f64>, units: units::Units, content: b
 }
 
 /// Fire a plain desktop notification (used for predictive alerts).
-fn notify_text(body: &str) {
+pub(crate) fn notify_text(body: &str) {
     desktop_notify(body, false);
 }
 
@@ -653,7 +671,7 @@ fn desktop_notify(body: &str, critical: bool) {
 
 /// POST an alert message to a webhook / ntfy topic. Returns whether the request
 /// was accepted (2xx), so the caller can surface a dead push URL.
-async fn push(url: &str, message: &str) -> bool {
+pub(crate) async fn push(url: &str, message: &str) -> bool {
     let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -670,7 +688,7 @@ async fn push(url: &str, message: &str) -> bool {
 }
 
 /// Current time in epoch milliseconds.
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 

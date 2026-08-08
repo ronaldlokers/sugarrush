@@ -1,0 +1,26 @@
+[Unit]
+Description=sugarrush CGM alarm watcher
+Documentation=https://github.com/ronaldlokers/sugarrush
+# Desktop notifications and the audible alarm need a session bus and audio, so
+# start once the graphical session is up rather than at login.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/sugarrush watch
+# Adjust if sugarrush is elsewhere:
+#   ExecStart=/usr/bin/sugarrush watch
+
+# The whole point is to be running when you need it, so come back from any
+# failure — including a Nightscout outage that outlasts the retry backoff.
+Restart=always
+RestartSec=30
+
+# The watcher persists episode state, so a restart doesn't re-announce an
+# ongoing low; a clean stop hands the alarm back immediately.
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=graphical-session.target
