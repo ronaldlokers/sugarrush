@@ -133,11 +133,15 @@ async fn main() -> Result<()> {
         }
         Mode::Waybar => {
             let cfg = Config::load()?;
+            // Bars read stdout and ignore stderr, so the warning reaches a
+            // human running it by hand without corrupting the bar's input.
+            warn_about_config(&cfg.alerts.resolve_checked(cfg.units).1);
             println!("{}", waybar::line(&cfg).await);
             Ok(())
         }
         Mode::Status { format } => {
             let cfg = Config::load()?;
+            warn_about_config(&cfg.alerts.resolve_checked(cfg.units).1);
             println!("{}", status::status(&cfg).await.render(format));
             Ok(())
         }
@@ -152,7 +156,8 @@ async fn main() -> Result<()> {
 async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
     let cfg = Config::load()?;
     let days = if days == 0 { cfg.agp_days } else { days }.clamp(1, 90);
-    let alerts = cfg.alerts.resolve(cfg.units);
+    let (alerts, warnings) = cfg.alerts.resolve_checked(cfg.units);
+    warn_about_config(&warnings);
     let sites = cfg.resolve_sites()?;
     let client = Client::for_site(&sites[0])?;
 
@@ -199,8 +204,12 @@ async fn run_tui(screen: Screen, demo: bool) -> Result<()> {
         Config::load()?
     };
     let sites = cfg.resolve_sites()?;
-    let alerts = cfg.alerts.resolve(cfg.units);
+    let (alerts, warnings) = cfg.alerts.resolve_checked(cfg.units);
+    // Also to stderr: a misconfigured threshold is worth seeing even if the
+    // terminal is about to be taken over by the alternate screen.
+    warn_about_config(&warnings);
     let mut app = App::new(&cfg, alerts, sites);
+    app.config_warnings = warnings;
     app.screen = screen;
     app.demo = demo;
     app.perm_warning = !demo && Config::perms_too_open();
@@ -756,6 +765,15 @@ pub(crate) async fn push(url: &str, message: &str) -> bool {
 }
 
 /// Current time in epoch milliseconds.
+/// Report coerced config values on stderr. Silence here would just be a
+/// quieter version of the bug: the user believes the thresholds they wrote are
+/// the thresholds in force.
+pub(crate) fn warn_about_config(warnings: &[String]) {
+    for w in warnings {
+        eprintln!("sugarrush: config: {w}");
+    }
+}
+
 pub(crate) fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }

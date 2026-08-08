@@ -14,6 +14,15 @@ All notable changes to sugarrush are documented here. The format is based on
   cleartext whenever a request failed — into cron mail, the journal, terminal
   scrollback, and any bug report someone pasted. Request URLs are now stripped
   from every client error before it can be displayed.
+- **A units mismatch in `config.toml` can no longer disable the low alarm.**
+  The example config is written in mmol/L, so changing `units` to `mgdl` and
+  nothing else left thresholds like `low = 3.9` **mg/dL** in force — and since
+  every real reading sits above them, a 40 mg/dL hypo was classified as *urgent
+  high*. Thresholds are now checked against the physiological range on load: an
+  implausible value falls back to the safe default, crossed thresholds are put
+  back in order, and each correction is reported on stderr and in the footer,
+  naming the value and pointing at `units`. The settings screen has enforced
+  these rules for a while; the config-file path now matches it.
 
 ### Added
 

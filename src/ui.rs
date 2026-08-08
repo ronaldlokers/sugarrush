@@ -1549,6 +1549,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             " ⚠ unencrypted http:// site — the token is sent in clear (settings › site URL) ",
             Style::default().fg(Color::Yellow),
         ),
+        // A coerced threshold outranks the permissions notice: it means the
+        // alarm is not using the numbers the user wrote.
+        None if !app.config_warnings.is_empty() => Span::styled(
+            format!(" ⚠ config: {} ", app.config_warnings.join(" · ")),
+            Style::default().fg(Color::Yellow),
+        ),
         None if app.perm_warning => Span::styled(
             " ⚠ config.toml is readable by others — run: chmod 600 ~/.config/sugarrush/config.toml ",
             Style::default().fg(Color::Yellow),

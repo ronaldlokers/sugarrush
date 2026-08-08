@@ -226,13 +226,55 @@ impl AlertsConfig {
     /// Resolve to concrete mg/dL thresholds, converting any user-supplied
     /// values from `units` and filling gaps with defaults.
     pub fn resolve(&self, units: Units) -> Alerts {
+        self.resolve_checked(units).0
+    }
+
+    /// Resolve, and report anything that had to be coerced.
+    ///
+    /// A threshold that can't alarm is worse than no threshold at all, and the
+    /// realistic way to get one is a unit mismatch: the shipped example is in
+    /// mmol/L, so a US user who changes `units` to `mgdl` and nothing else ends
+    /// up with `low = 3.9 mg/dL`. Nothing then reads as low — a 40 mg/dL hypo
+    /// classifies as *urgent high*, because it is above every threshold.
+    ///
+    /// So an implausible value is not clamped toward the edge of the range
+    /// (`3.9` → `20` still can't alarm); it falls back to the physiological
+    /// default and says so. The settings screen has enforced the same
+    /// invariants for a while — this brings the config-file path in line.
+    pub fn resolve_checked(&self, units: Units) -> (Alerts, Vec<String>) {
         let d = Alerts::default();
-        Alerts {
-            urgent_low: self.urgent_low.map_or(d.urgent_low, |v| units.to_mgdl(v)),
-            low: self.low.map_or(d.low, |v| units.to_mgdl(v)),
-            high: self.high.map_or(d.high, |v| units.to_mgdl(v)),
-            urgent_high: self.urgent_high.map_or(d.urgent_high, |v| units.to_mgdl(v)),
-            stale_minutes: self.stale_minutes.unwrap_or(d.stale_minutes),
+        let mut warnings = Vec::new();
+        let mut threshold = |raw: Option<f64>, default: f64, name: &str| {
+            plausible(raw, default, name, units, &mut warnings)
+        };
+        let (urgent_low, low, high, urgent_high) = (
+            threshold(self.urgent_low, d.urgent_low, "urgent_low"),
+            threshold(self.low, d.low, "low"),
+            threshold(self.high, d.high, "high"),
+            threshold(self.urgent_high, d.urgent_high, "urgent_high"),
+        );
+        // Crossed thresholds silently empty a band and misclassify every
+        // reading in it, so order is restored rather than trusted.
+        let (urgent_low, low, high, urgent_high) =
+            order_thresholds(urgent_low, low, high, urgent_high, units, &mut warnings);
+
+        let stale_minutes = match self.stale_minutes {
+            Some(m) if m < 1 => {
+                warnings.push(format!(
+                    "stale_minutes = {m} would make every reading stale — using {}",
+                    d.stale_minutes
+                ));
+                d.stale_minutes
+            }
+            other => other.unwrap_or(d.stale_minutes),
+        };
+
+        let alerts = Alerts {
+            urgent_low,
+            low,
+            high,
+            urgent_high,
+            stale_minutes,
             desktop: self.desktop.unwrap_or(d.desktop),
             sound: self.sound.unwrap_or(d.sound),
             snooze_minutes: self.snooze_minutes.unwrap_or(d.snooze_minutes),
@@ -246,8 +288,62 @@ impl AlertsConfig {
             predict_horizon_minutes: self
                 .predict_horizon_minutes
                 .unwrap_or(d.predict_horizon_minutes),
-        }
+        };
+        (alerts, warnings)
     }
+}
+
+/// Lowest and highest glucose a threshold can meaningfully sit at, in mg/dL.
+/// A CGM reports roughly 40–400; outside this band a threshold cannot separate
+/// real readings from each other, so it can only ever mis-classify them.
+const MIN_PLAUSIBLE_MGDL: f64 = 20.0;
+const MAX_PLAUSIBLE_MGDL: f64 = 500.0;
+
+/// One threshold, converted and sanity-checked against the physiological range.
+fn plausible(
+    raw: Option<f64>,
+    default: f64,
+    name: &str,
+    units: Units,
+    warnings: &mut Vec<String>,
+) -> f64 {
+    let Some(v) = raw else { return default };
+    let mgdl = units.to_mgdl(v);
+    if (MIN_PLAUSIBLE_MGDL..=MAX_PLAUSIBLE_MGDL).contains(&mgdl) {
+        return mgdl;
+    }
+    warnings.push(format!(
+        "{name} = {v} {} is outside the physiological range — check `units` — using {} {}",
+        units.label(),
+        units.format(default),
+        units.label()
+    ));
+    default
+}
+
+/// Restore `urgent_low <= low <= high <= urgent_high`, reporting any change.
+fn order_thresholds(
+    urgent_low: f64,
+    low: f64,
+    high: f64,
+    urgent_high: f64,
+    units: Units,
+    warnings: &mut Vec<String>,
+) -> (f64, f64, f64, f64) {
+    if urgent_low <= low && low <= high && high <= urgent_high {
+        return (urgent_low, low, high, urgent_high);
+    }
+    let mut v = [urgent_low, low, high, urgent_high];
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    warnings.push(format!(
+        "alert thresholds were out of order — using {} <= {} <= {} <= {} {}",
+        units.format(v[0]),
+        units.format(v[1]),
+        units.format(v[2]),
+        units.format(v[3]),
+        units.label()
+    ));
+    (v[0], v[1], v[2], v[3])
 }
 
 /// Create (or truncate) a file that only the owner can read, with the mode set
@@ -633,5 +729,99 @@ mod tests {
         // Loopback never leaves the machine.
         assert!(!site("http://localhost:1337").is_insecure());
         assert!(!site("http://127.0.0.1:1337").is_insecure());
+    }
+
+    /// The exact failure C1 describes: the shipped example is mmol, the user
+    /// switches `units` to mgdl and changes nothing else.
+    #[test]
+    fn a_unit_mismatch_cannot_disable_the_low_alarm() {
+        let raw = AlertsConfig {
+            urgent_low: Some(3.0),
+            low: Some(3.9),
+            high: Some(10.0),
+            urgent_high: Some(13.9),
+            ..Default::default()
+        };
+        let (a, warnings) = raw.resolve_checked(Units::Mgdl);
+
+        // Before the fix these resolved verbatim, and a 40 mg/dL hypo — a
+        // medical emergency — classified as UrgentHigh because it sat above
+        // every threshold.
+        assert_eq!(
+            crate::alert::evaluate(40.0, 0, &a),
+            crate::alert::Alert::UrgentLow
+        );
+        assert_eq!(
+            crate::alert::evaluate(300.0, 0, &a),
+            crate::alert::Alert::UrgentHigh
+        );
+        // All four were implausible as mg/dL, so all four are reported.
+        assert_eq!(warnings.len(), 4, "{warnings:?}");
+        assert!(warnings[0].contains("urgent_low"));
+        assert!(warnings.iter().all(|w| w.contains("check `units`")));
+    }
+
+    #[test]
+    fn the_mirror_mistake_is_caught_too() {
+        // mg/dL numbers left in an mmol config: 70 mmol/L is ~1260 mg/dL.
+        let raw = AlertsConfig {
+            low: Some(70.0),
+            urgent_low: Some(55.0),
+            ..Default::default()
+        };
+        let (a, warnings) = raw.resolve_checked(Units::Mmol);
+        assert_eq!(a.low, 70.0); // fell back to the mg/dL default
+        assert_eq!(a.urgent_low, 55.0);
+        assert_eq!(warnings.len(), 2);
+        // And an in-range reading is not screaming urgent-low.
+        assert_eq!(
+            crate::alert::evaluate(100.0, 0, &a),
+            crate::alert::Alert::InRange
+        );
+    }
+
+    #[test]
+    fn plausible_values_pass_through_untouched_and_silently() {
+        let raw = AlertsConfig {
+            urgent_low: Some(3.0),
+            low: Some(3.9),
+            high: Some(10.0),
+            urgent_high: Some(13.9),
+            ..Default::default()
+        };
+        let (a, warnings) = raw.resolve_checked(Units::Mmol);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!((a.low - 70.2).abs() < 0.1);
+        assert!((a.urgent_high - 250.2).abs() < 0.1);
+    }
+
+    #[test]
+    fn crossed_thresholds_are_reordered_not_obeyed() {
+        let raw = AlertsConfig {
+            urgent_low: Some(200.0),
+            low: Some(180.0),
+            high: Some(70.0),
+            urgent_high: Some(55.0),
+            ..Default::default()
+        };
+        let (a, warnings) = raw.resolve_checked(Units::Mgdl);
+        assert!(a.urgent_low <= a.low && a.low <= a.high && a.high <= a.urgent_high);
+        assert!(warnings.iter().any(|w| w.contains("out of order")));
+    }
+
+    #[test]
+    fn a_zero_stale_window_would_make_everything_stale() {
+        let raw = AlertsConfig {
+            stale_minutes: Some(0),
+            ..Default::default()
+        };
+        let (a, warnings) = raw.resolve_checked(Units::Mgdl);
+        assert_eq!(a.stale_minutes, 15);
+        assert!(warnings.iter().any(|w| w.contains("stale_minutes")));
+        // A fresh reading is not immediately Stale.
+        assert_eq!(
+            crate::alert::evaluate(100.0, 0, &a),
+            crate::alert::Alert::InRange
+        );
     }
 }
