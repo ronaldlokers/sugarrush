@@ -90,10 +90,12 @@ impl Client {
             ])
             .send()
             .await
+            .map_err(redact)
             .context("can't reach Nightscout (check the URL and your connection)")?;
         let entries: Vec<Entry> = check_status(resp)?
             .json()
             .await
+            .map_err(redact)
             .context("failed to parse Nightscout response")?;
         Ok(clean_newest_first(entries))
     }
@@ -114,11 +116,14 @@ impl Client {
             .query(&[("count", "1"), ("token", self.token.as_str())])
             .send()
             .await
+            .map_err(redact)
             .context("devicestatus request failed")?
             .error_for_status()
+            .map_err(redact)
             .context("Nightscout returned an error status")?
             .json()
             .await
+            .map_err(redact)
             .context("failed to parse devicestatus response")?;
         let latest = value.as_array().and_then(|items| items.first());
         Ok((
@@ -136,11 +141,14 @@ impl Client {
             .query(&[("count", "50"), ("token", self.token.as_str())])
             .send()
             .await
+            .map_err(redact)
             .context("treatments request failed")?
             .error_for_status()
+            .map_err(redact)
             .context("Nightscout returned an error status")?
             .json()
             .await
+            .map_err(redact)
             .context("failed to parse treatments response")?;
         Ok(parse_sensor_start(&value))
     }
@@ -162,11 +170,14 @@ impl Client {
             ])
             .send()
             .await
+            .map_err(redact)
             .context("treatments request failed")?
             .error_for_status()
+            .map_err(redact)
             .context("Nightscout returned an error status")?
             .json()
             .await
+            .map_err(redact)
             .context("failed to parse treatments response")?;
         Ok(parse_treatments(&value, start_ms, end_ms))
     }
@@ -352,6 +363,17 @@ fn envelope(start_ms: i64, curves: &[&Vec<Value>]) -> Vec<Prediction> {
     out
 }
 
+/// Strip the request URL out of a reqwest error before it goes anywhere.
+///
+/// Nightscout takes the token as a query parameter, so the URL *is* the
+/// credential. reqwest's `Display` includes the full URL ("… for url (…)"),
+/// and `sugarrush export` propagates its error to `main`, which prints the
+/// whole `Caused by:` chain — landing the token in cron mail, the journal,
+/// terminal scrollback, and pasted bug reports.
+fn redact(e: reqwest::Error) -> reqwest::Error {
+    e.without_url()
+}
+
 /// Turn a response status into an actionable error, distinguishing an auth
 /// problem (the common "pasted API_SECRET instead of a read-only token" case)
 /// from a generic server error — so the UI never mislabels a bad token as a
@@ -445,6 +467,33 @@ mod tests {
             vec![3_000, 2_000, 1_000]
         );
         assert_eq!(out[0].sgv, 120.0);
+    }
+
+    /// The token is a query parameter, so any error carrying the request URL
+    /// carries the credential. `sugarrush export` prints the whole cause chain
+    /// on failure, so this must hold for every error the client can produce.
+    #[tokio::test]
+    async fn errors_never_carry_the_token() {
+        // Port 1 refuses instantly — no DNS, no network, no flakiness.
+        let site = Site {
+            name: "default".into(),
+            url: "http://127.0.0.1:1".into(),
+            token: "SEKRIT-TOKEN-9Q7X".into(),
+        };
+        let client = Client::for_site(&site).unwrap();
+        let err = client.entries_range(0, 1, 1).await.unwrap_err();
+
+        // Check the whole chain the way anyhow's Termination prints it, not
+        // just the outermost context — that was exactly the hole.
+        let chain = format!("{err:#}\n{err:?}");
+        assert!(
+            !chain.contains("SEKRIT-TOKEN-9Q7X"),
+            "token leaked into the error chain:\n{chain}"
+        );
+        assert!(
+            !chain.contains("token="),
+            "query string leaked into the error chain:\n{chain}"
+        );
     }
 
     #[test]

@@ -6,6 +6,15 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Nightscout token can no longer leak into an error message.** Because
+  Nightscout takes the token as a URL query parameter, and the HTTP client
+  included the full URL in its errors, `sugarrush export` printed the token in
+  cleartext whenever a request failed — into cron mail, the journal, terminal
+  scrollback, and any bug report someone pasted. Request URLs are now stripped
+  from every client error before it can be displayed.
+
 ### Added
 
 - **Step through history a day at a time** with `[` and `]`, keeping the same
