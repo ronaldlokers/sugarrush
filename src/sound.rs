@@ -114,6 +114,19 @@ fn play(path: &Path) {
             return;
         }
     }
+    // No player at all — headless boxes, minimal containers, a bare SSH login.
+    // The terminal bell is feeble, but a feeble alarm beats a silent one, and
+    // silence here is indistinguishable from "glucose is fine".
+    bell();
+}
+
+/// Ring the terminal bell. Whether it makes a sound is the terminal's call
+/// (many map it to a visual flash), so this is a last resort, not a strategy.
+fn bell() {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    let _ = out.write_all(b"\x07");
+    let _ = out.flush();
 }
 
 /// A ~0.5s alarm: four 110ms segments per the tone's frequency sequence

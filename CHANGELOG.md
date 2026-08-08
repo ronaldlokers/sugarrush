@@ -8,6 +8,18 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Clinical time-in-range.** The stats panel now splits readings across the
+  five consensus bands (very low / low / in range / high / very high) instead of
+  three, calls out the **time below range** percentage — the number that changes
+  treatment — and reports **CV**, the standard measure of glycaemic variability,
+  highlighted when it exceeds the 36% consensus target.
+- **Content-free notifications** — a new `Notification detail` setting
+  (`notify_content`) keeps desktop notifications free of your reading and alert
+  state, for lock screens and shared displays. They still fire, and urgent ones
+  are still critical.
+- **Unsaved settings are visible.** Settings apply live but only `w` writes them
+  to `config.toml`; the settings header now says `· unsaved changes (w to save)`
+  so quitting can't silently discard them.
 - **Fix a bad site without leaving the app** — the settings screen gains a
   **Site** section with the Nightscout URL and read-only token. Press `Enter` on
   a row to edit it; the app reconnects immediately, and `w` saves as usual. The
@@ -24,6 +36,10 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **The audible alarm falls back to the terminal bell** when no system audio
+  player is available (headless boxes, minimal containers, a bare SSH login),
+  instead of failing silently — silence is indistinguishable from "glucose is
+  fine".
 - **The setup wizard no longer echoes your token** to the terminal — it's masked
   as you type, so it doesn't survive in the scrollback.
 - **URLs are normalized instead of failing mysteriously.** A bare
