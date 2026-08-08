@@ -824,4 +824,31 @@ mod tests {
             crate::alert::Alert::InRange
         );
     }
+
+    /// The shipped example must parse to the values it appears to set.
+    /// `check-process.sh` greps for key *names*, which passed happily while
+    /// `refresh_secs` sat inside `[minimap]` and was silently ignored.
+    #[test]
+    fn the_example_config_means_what_it_says() {
+        let raw = include_str!("../config.example.toml");
+        let cfg: Config = toml::from_str(raw).expect("config.example.toml must parse");
+
+        // Keys a user is most likely to change, at the level they think.
+        assert_eq!(cfg.refresh_secs, 30, "refresh_secs is not a root-level key");
+        assert_eq!(cfg.units, Units::Mmol);
+        assert_eq!(cfg.agp_days, 14);
+        assert!(cfg.minimap.enabled);
+        assert_eq!(cfg.minimap.span_hours, 24);
+
+        // And the thresholds it ships resolve to something that can alarm.
+        let (alerts, warnings) = cfg.alerts.resolve_checked(cfg.units);
+        assert!(
+            warnings.is_empty(),
+            "the shipped example warns: {warnings:?}"
+        );
+        assert_eq!(
+            crate::alert::evaluate(40.0, 0, &alerts),
+            crate::alert::Alert::UrgentLow
+        );
+    }
 }

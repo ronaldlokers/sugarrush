@@ -122,8 +122,17 @@ fn draw_help(f: &mut Frame, area: Rect) {
     ];
     // Two columns of key text now; keep the popup wide enough for the longest.
     let key_w = 17usize;
-    let w = 56u16.min(area.width.saturating_sub(2));
-    let h = (rows.len() as u16 + 4).min(area.height.saturating_sub(2));
+    // Sized from the content, not a guess: the old fixed 56 columns clipped
+    // the longest row, and the fixed height dropped the "press any key" line —
+    // the overlay never said how to leave it.
+    let widest = rows
+        .iter()
+        .map(|(_, d)| d.chars().count())
+        .max()
+        .unwrap_or(0);
+    let w = ((key_w + widest + 6) as u16).min(area.width.saturating_sub(2));
+    // 1 leading blank + rows + 1 blank + 2 footer lines + 2 border rows.
+    let h = (rows.len() as u16 + 6).min(area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let popup = Rect::new(x, y, w, h);
@@ -141,6 +150,10 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ]));
     }
     lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  also: sugarrush watch · export · status   (see --help)",
+        Style::default().fg(Color::DarkGray),
+    )));
     lines.push(Line::from(Span::styled(
         "  press any key to close",
         Style::default().fg(Color::DarkGray),

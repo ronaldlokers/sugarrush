@@ -229,13 +229,14 @@ two alarms for one low. It also persists episode state, so restarting the
 service doesn't re-announce a low you already saw, reset an escalation timer, or
 cancel a snooze.
 
-To run it as a user service (example unit in
-[`packaging/systemd/`](packaging/systemd/sugarrush-watch.service)):
+To run it as a user service — this writes a unit pointing at wherever your
+binary actually is, so it works whichever way you installed:
 
 ```bash
-mkdir -p ~/.config/systemd/user
-cp packaging/systemd/sugarrush-watch.service ~/.config/systemd/user/
+sugarrush watch --install-unit
+systemctl --user daemon-reload
 systemctl --user enable --now sugarrush-watch.service
+loginctl enable-linger $USER             # keep it running when logged out
 journalctl --user -fu sugarrush-watch    # what it's seeing
 ```
 
@@ -261,6 +262,59 @@ it survives email and a printer.
 
 Other subcommands: `sugarrush about` (version + a notification) and
 `sugarrush --screen settings` (open straight to settings).
+
+## Commands
+
+| Command | What it does |
+|---------|--------------|
+| `sugarrush` | The dashboard. `--demo` for synthetic data, `--screen settings` to open straight to settings |
+| `sugarrush watch` | The headless alarm watcher. `--install-unit` writes a systemd user unit |
+| `sugarrush export` | CSV + a clinical summary. `--days N`, `--out DIR` |
+| `sugarrush status` | One line for a status bar. `--format text\|tmux\|polybar\|i3blocks\|waybar` |
+| `sugarrush waybar` | Alias for `status --format waybar` |
+| `sugarrush about` | Version, repo, and the safety note |
+
+`sugarrush --help` prints the same list.
+
+## Troubleshooting
+
+**"authentication failed — check your read-only token"**
+You almost certainly pasted your `API_SECRET`. sugarrush needs a *Subject*
+token: Nightscout → Admin Tools → add a Subject with the `readable` role, then
+copy its access token. Press `s` in the app to fix it in place — no need to
+edit the config file.
+
+**No sound when an alarm fires**
+Work down this list; each is a real cause:
+`Audible alarm` off in settings · a snooze still running (the footer shows a
+countdown) · quiet hours (only urgent lows sound during them, and only if
+`Quiet: urgent-low sounds` is on) · no audio player installed — sugarrush tries
+`paplay`, `pw-play`, `aplay`, `ffplay`, `canberra-gtk-play`, `afplay` and
+`cvlc`, then falls back to the terminal bell · system volume · the watcher
+isn't running (the header says `⚑ watcher up` when it is).
+
+**"config: … is outside the physiological range"**
+Your thresholds are in the wrong unit — 3.9 mmol/L is 70 mg/dL, not 3.9. Edit
+them under `[alerts]`, or set them on the settings screen, which always uses
+your display unit.
+
+**The numbers don't match Nightscout**
+Time in range, mean, GMI and CV are computed over a fixed clinical window (the
+`AGP days` setting, 14 by default) — not over whatever the graph is showing, so
+panning doesn't change them. Nightscout's own reports use different bands and a
+different window, so small differences are expected.
+
+**The watcher isn't running / I don't know if it is**
+The dashboard header shows `⚑ watcher up`, or `⚠ watcher stopped` if it was
+running and stopped. The watcher also logs a line every 15 minutes even when
+nothing happens, so `journalctl --user -u sugarrush-watch` tells you whether it
+was awake overnight.
+
+**The AUR package is behind**
+Releases land on GitHub first; Homebrew, crates.io and the AUR follow within
+minutes — unless a channel is having an outage. The
+[releases page](https://github.com/ronaldlokers/sugarrush/releases) is the
+source of truth for the current version.
 
 ## Roadmap
 

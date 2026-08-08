@@ -24,6 +24,9 @@ graph_style = "dots"
 # settings; cycle graph tabs with Tab.
 agp_days = 14
 
+# Auto-refresh interval in seconds.
+refresh_secs = 30
+
 # Minimap navigator: a trailing overview strip under the graph. Click or drag
 # it to move the main window. Enabling it turns on terminal mouse capture
 # (hold Shift to select text while the app runs).
@@ -31,8 +34,6 @@ agp_days = 14
 enabled = true
 span_hours = 24
 
-# Auto-refresh interval in seconds.
-refresh_secs = 30
 
 # Alert thresholds and behaviour. Glucose bounds are in the same unit as
 # `units` above (mmol/L here). This whole section is optional, as is each key;
