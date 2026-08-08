@@ -27,6 +27,8 @@ const CONFIG_FAIL_LIMIT: u32 = 3;
 pub enum Screen {
     Dashboard,
     Settings,
+    /// Every configured site at once, for watching someone else's readings.
+    Followers,
 }
 
 /// Which view fills the graph pane, selected by the tab bar above it.
@@ -238,6 +240,8 @@ pub struct App {
     pub date_input: Option<String>,
     /// When `Some`, a settings row is being edited as free text.
     pub field_edit: Option<FieldEdit>,
+    /// Latest status per configured site, for the followers screen.
+    pub followers: Vec<crate::follow::SiteStatus>,
     /// Settings have been changed but not written back to `config.toml`.
     /// Every edit applies live, so without this there's nothing to distinguish
     /// "changed and saved" from "changed and lost on quit".
@@ -348,6 +352,7 @@ impl App {
             view_end: 0,
             date_input: None,
             field_edit: None,
+            followers: Vec::new(),
             settings_dirty: false,
             predictions: Vec::new(),
             device: DeviceStatus::default(),
@@ -612,6 +617,19 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Toggle the followers list. Only meaningful with more than one site —
+    /// with one, it would just be the dashboard with less on it.
+    pub fn toggle_followers(&mut self) {
+        if self.sites.len() < 2 {
+            self.status = Some("add a second [[sites]] entry to follow others".to_string());
+            return;
+        }
+        self.screen = match self.screen {
+            Screen::Followers => Screen::Dashboard,
+            _ => Screen::Followers,
+        };
     }
 
     /// Open the date-jump prompt.
@@ -914,8 +932,9 @@ impl App {
     /// Toggle between the dashboard and settings screens.
     pub fn toggle_settings(&mut self) {
         self.screen = match self.screen {
-            Screen::Dashboard => Screen::Settings,
             Screen::Settings => Screen::Dashboard,
+            // From the followers list, settings is still one keypress away.
+            Screen::Dashboard | Screen::Followers => Screen::Settings,
         };
         self.status = None;
     }
