@@ -8,6 +8,9 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Step through history a day at a time** with `[` and `]`, keeping the same
+  time of day — checking "how was last night?" no longer means typing a date or
+  panning there a half-window at a time.
 - **Status-bar output for bars other than Waybar.** `sugarrush status` prints
   one line in the syntax your bar speaks — `--format text` (no markup),
   `tmux`, `polybar`, `i3blocks`, or `waybar` — coloured from your configured
