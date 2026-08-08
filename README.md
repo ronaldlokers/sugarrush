@@ -54,7 +54,8 @@ That's the recording above. When you're ready, point it at your own site
 
 **Yours to shape**
 - In-app **settings screen** (`s`) — edit units, thresholds, alarms, theme,
-  and more live, then save back to `config.toml`
+  and more live, then save back to `config.toml`; the **site URL and token** are
+  editable there too, so a bad token is fixed without leaving the app
 - Configurable colours (incl. a colorblind-safe preset), graph style, and
   **multiple sites** (`n` to switch)
 - A **Waybar** module for your status bar (see [Waybar](#waybar))
@@ -103,7 +104,12 @@ Do **not** use `API_SECRET` (admin-level). Create a read-only token in
 2. Give it the `readable` role.
 3. Copy its access token into `config.toml` as `token`.
 
-It's sent as a `?token=…` query parameter and only grants read access.
+It's sent as a `?token=…` query parameter and only grants read access — which
+is why the site should be **https**. Over plain `http://` the token and your
+readings are visible to anything on the network path; sugarrush warns in the
+footer (loopback addresses excepted). The URL itself is forgiving: a bare
+`mysite.example.com` or a pasted `…/api/v1/entries.json` is normalized to the
+base URL.
 
 ### Token storage & permissions
 
@@ -130,7 +136,8 @@ design: file-only, documented.
 | `n` | Switch site (multi-site) |
 | `s` | Open / close settings |
 
-Settings screen: `↑`/`↓` select, `←`/`→` change, `w` save, `s`/`Esc` back.
+Settings screen: `↑`/`↓` select, `←`/`→` change, `Enter` edit (site URL / token),
+`w` save, `s`/`Esc` back.
 When the minimap is on, click or drag it to move the window.
 
 ## Waybar

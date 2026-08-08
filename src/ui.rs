@@ -419,11 +419,35 @@ fn draw_settings(f: &mut Frame, app: &App) {
         .collect();
     f.render_widget(Paragraph::new(lines), inner);
 
-    let footer = match &app.status {
-        Some(msg) => Span::styled(format!(" {msg} "), Style::default().fg(Color::Green)),
-        None => Span::raw(" ↑/↓ select · ←/→ change · w save · s/esc back · q quit "),
+    let footer = match (&app.field_edit, &app.status) {
+        // An open editor replaces the hint line with the prompt. The token is
+        // masked as it's typed — a typo is fixed by retyping, not by reading it
+        // back off a screen that's likely being shared.
+        (Some(edit), _) => {
+            let shown = if edit.masked {
+                "•".repeat(edit.buffer.chars().count())
+            } else {
+                edit.buffer.clone()
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!(" {}: ", edit.field.label().to_lowercase()),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(shown, Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled("_", Style::default().add_modifier(Modifier::SLOW_BLINK)),
+                Span::raw("  · enter confirm · esc cancel"),
+            ])
+        }
+        (None, Some(msg)) => Line::from(Span::styled(
+            format!(" {msg} "),
+            Style::default().fg(Color::Green),
+        )),
+        (None, None) => Line::from(Span::raw(
+            " ↑/↓ select · ←/→ change · enter edit · w save · s/esc back · q quit ",
+        )),
     };
-    f.render_widget(Paragraph::new(Line::from(footer)), chunks[2]);
+    f.render_widget(Paragraph::new(footer), chunks[2]);
 }
 
 fn draw_banner(f: &mut Frame, area: Rect, app: &App) {
@@ -1293,6 +1317,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 " ⚠ unavailable, showing last known: {} ",
                 app.partial.as_deref().unwrap_or_default()
             ),
+            Style::default().fg(Color::Yellow),
+        ),
+        // A cleartext site leaks the token and the readings to anything on the
+        // path. Not fatal — a LAN self-host is a real setup — but never silent.
+        None if !app.demo && app.active_site().is_insecure() => Span::styled(
+            " ⚠ unencrypted http:// site — the token is sent in clear (settings › site URL) ",
             Style::default().fg(Color::Yellow),
         ),
         None if app.perm_warning => Span::styled(

@@ -111,6 +111,60 @@ impl Site {
     pub fn base_url(&self) -> &str {
         self.url.trim_end_matches('/')
     }
+
+    /// True when the token travels in clear text: plain `http://` to anything
+    /// but the local machine. The token is a query parameter, so anyone on the
+    /// path can read it (and the glucose data with it).
+    pub fn is_insecure(&self) -> bool {
+        let url = self.base_url();
+        let Some(rest) = url.strip_prefix("http://") else {
+            return false;
+        };
+        let host = rest.split('/').next().unwrap_or("");
+        let host = host.split(':').next().unwrap_or(host);
+        !matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
+    }
+}
+
+/// Clean up a Nightscout URL as typed: trim it, default the scheme to HTTPS,
+/// drop a trailing slash, and strip an API path if one was pasted along.
+///
+/// People copy the URL out of a browser tab that's showing
+/// `…/api/v1/entries.json?count=10`, or type a bare `mysite.herokuapp.com`.
+/// Both are unambiguous — accept them rather than failing a live-test with a
+/// confusing 404.
+pub fn normalize_site_url(input: &str) -> Result<String> {
+    let raw = input.trim();
+    if raw.is_empty() {
+        bail!("the URL is empty");
+    }
+    // Resolve the scheme first: trimming slashes before this would turn a bare
+    // "https://" into the hostname "https:".
+    let mut s = match raw.split_once("://") {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("https") => {
+            format!("https://{rest}")
+        }
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("http") => format!("http://{rest}"),
+        Some((scheme, _)) => bail!("unsupported scheme '{scheme}://' — use https://"),
+        // A bare host: assume HTTPS rather than silently downgrading.
+        None => format!("https://{raw}"),
+    };
+    // Strip a pasted API path: everything from `/api/` onwards belongs to the
+    // client, not the base URL.
+    if let Some(idx) = s.to_lowercase().find("/api/") {
+        s.truncate(idx);
+    } else if s.to_lowercase().ends_with("/api") {
+        s.truncate(s.len() - 4);
+    }
+    let s = s.trim_end_matches('/').to_string();
+    let host = s
+        .split_once("://")
+        .map(|(_, rest)| rest.split('/').next().unwrap_or(""))
+        .unwrap_or("");
+    if host.is_empty() {
+        bail!("no host in '{input}'");
+    }
+    Ok(s)
 }
 
 /// Alert thresholds as written in config.toml. Glucose bounds are expressed in
@@ -411,17 +465,27 @@ impl Config {
     /// The configured sites: the `[[sites]]` list if present, otherwise the
     /// legacy top-level `url`/`token` as a single "default" site.
     pub fn resolve_sites(&self) -> Result<Vec<Site>> {
-        if !self.sites.is_empty() {
-            return Ok(self.sites.clone());
+        let mut sites = if !self.sites.is_empty() {
+            self.sites.clone()
+        } else {
+            match (&self.url, &self.token) {
+                (Some(url), Some(token)) => vec![Site {
+                    name: default_site_name(),
+                    url: url.clone(),
+                    token: token.clone(),
+                }],
+                _ => bail!("config needs either url + token, or at least one [[sites]] entry"),
+            }
+        };
+        // A hand-written config gets the same tidy-up as the wizard's input —
+        // a missing scheme or a pasted `/api/v1/…` path shouldn't be a silent
+        // 404. An unparseable URL is left alone so the fetch error names it.
+        for site in &mut sites {
+            if let Ok(url) = normalize_site_url(&site.url) {
+                site.url = url;
+            }
         }
-        match (&self.url, &self.token) {
-            (Some(url), Some(token)) => Ok(vec![Site {
-                name: default_site_name(),
-                url: url.clone(),
-                token: token.clone(),
-            }]),
-            _ => bail!("config needs either url + token, or at least one [[sites]] entry"),
-        }
+        Ok(sites)
     }
 }
 
@@ -513,5 +577,54 @@ mod tests {
             assert_eq!(mode & 0o777, 0o600);
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn normalize_defaults_to_https_and_trims() {
+        assert_eq!(
+            normalize_site_url("  ns.example.com/  ").unwrap(),
+            "https://ns.example.com"
+        );
+        assert_eq!(
+            normalize_site_url("https://ns.example.com").unwrap(),
+            "https://ns.example.com"
+        );
+        // A pasted API path belongs to the client, not the base URL.
+        assert_eq!(
+            normalize_site_url("https://ns.example.com/api/v1/entries.json?count=10").unwrap(),
+            "https://ns.example.com"
+        );
+        assert_eq!(
+            normalize_site_url("https://ns.example.com/api").unwrap(),
+            "https://ns.example.com"
+        );
+        // http is preserved (not silently upgraded) — it's flagged elsewhere.
+        assert_eq!(
+            normalize_site_url("http://192.168.1.5:1337").unwrap(),
+            "http://192.168.1.5:1337"
+        );
+    }
+
+    #[test]
+    fn normalize_rejects_junk() {
+        assert!(normalize_site_url("").is_err());
+        assert!(normalize_site_url("   ").is_err());
+        assert!(normalize_site_url("ftp://ns.example.com").is_err());
+        assert!(normalize_site_url("https://").is_err());
+    }
+
+    #[test]
+    fn insecure_only_for_remote_http() {
+        let site = |url: &str| Site {
+            name: "default".into(),
+            url: url.into(),
+            token: "t".into(),
+        };
+        assert!(site("http://ns.example.com").is_insecure());
+        assert!(site("http://192.168.1.5:1337").is_insecure());
+        assert!(!site("https://ns.example.com").is_insecure());
+        // Loopback never leaves the machine.
+        assert!(!site("http://localhost:1337").is_insecure());
+        assert!(!site("http://127.0.0.1:1337").is_insecure());
     }
 }

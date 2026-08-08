@@ -23,11 +23,23 @@ pub async fn run() -> Result<()> {
     println!("  `readable` role). Not your API_SECRET.\n");
 
     loop {
-        let url = prompt("  Nightscout URL (https://…): ")?;
-        let token = prompt("  Read-only token: ")?;
-        if url.is_empty() || token.is_empty() {
+        let typed = prompt("  Nightscout URL (https://…): ")?;
+        // The token is echoed nowhere: it's the one secret in this flow, and a
+        // terminal scrollback (or a shoulder) outlives the setup session.
+        let token = prompt_secret("  Read-only token: ")?;
+        if typed.is_empty() || token.is_empty() {
             println!("  Both the URL and token are required.\n");
             continue;
+        }
+        let url = match crate::config::normalize_site_url(&typed) {
+            Ok(u) => u,
+            Err(e) => {
+                println!("  {e}\n");
+                continue;
+            }
+        };
+        if url != typed {
+            println!("  Using {url}");
         }
 
         let site = Site {
@@ -35,6 +47,12 @@ pub async fn run() -> Result<()> {
             url: url.clone(),
             token: token.clone(),
         };
+        // Plain http sends the token — and the glucose data — in the clear.
+        // Refuse by default, but a self-hosted site on a trusted LAN is a real
+        // setup, so let the user say so explicitly.
+        if site.is_insecure() && !confirm_insecure()? {
+            continue;
+        }
         print!("  Testing connection… ");
         io::stdout().flush().ok();
         match test(&site).await {
@@ -66,6 +84,65 @@ fn prompt(label: &str) -> Result<String> {
         bail!("setup cancelled");
     }
     Ok(line.trim().to_string())
+}
+
+/// Read a line without echoing it, for secrets. Falls back to a normal
+/// (echoing) prompt if the terminal won't switch to raw mode.
+fn prompt_secret(label: &str) -> Result<String> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    print!("{label}");
+    io::stdout().flush().ok();
+    if enable_raw_mode().is_err() {
+        return prompt("");
+    }
+    let mut buf = String::new();
+    let outcome = loop {
+        match event::read() {
+            Ok(Event::Key(k)) if k.kind != KeyEventKind::Release => {
+                let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+                match k.code {
+                    KeyCode::Enter => break Ok(()),
+                    KeyCode::Char('c') | KeyCode::Char('d') if ctrl => {
+                        break Err(anyhow::anyhow!("setup cancelled"))
+                    }
+                    KeyCode::Backspace => {
+                        if buf.pop().is_some() {
+                            // Erase the masking character too.
+                            print!("\u{8} \u{8}");
+                            io::stdout().flush().ok();
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        buf.push(c);
+                        print!("•");
+                        io::stdout().flush().ok();
+                    }
+                    _ => {}
+                }
+            }
+            Ok(_) => {}
+            Err(e) => break Err(anyhow::Error::new(e).context("failed to read input")),
+        }
+    };
+    let _ = disable_raw_mode();
+    println!();
+    outcome?;
+    Ok(buf.trim().to_string())
+}
+
+/// Confirm an unencrypted site, which sends the token in clear text.
+fn confirm_insecure() -> Result<bool> {
+    println!("  ⚠ That URL is plain http:// — the token and your glucose data");
+    println!("    travel unencrypted, readable by anything on the network path.");
+    let ans = prompt("    Type 'insecure' to use it anyway, or press Enter to re-enter: ")?;
+    if ans.eq_ignore_ascii_case("insecure") {
+        Ok(true)
+    } else {
+        println!();
+        Ok(false)
+    }
 }
 
 /// Ask for the display unit; defaults to mmol/L. Toggleable later with `u`.
