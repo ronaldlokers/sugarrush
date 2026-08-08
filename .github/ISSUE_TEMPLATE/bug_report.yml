@@ -1,0 +1,73 @@
+name: Bug report
+description: Something doesn't work, or shows the wrong thing
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For anything security-related, please use
+        [a private advisory](https://github.com/ronaldlokers/sugarrush/security/advisories/new)
+        instead — see SECURITY.md.
+
+        **Never paste your Nightscout token or a screenshot showing it.**
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - Alarms / notifications
+        - Graph or AGP rendering
+        - Stats (TIR / GMI / CV)
+        - Settings screen or config
+        - First-run setup
+        - Waybar module
+        - Connection / data fetching
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `sugarrush about`.
+      placeholder: sugarrush v2026.8.1
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: OS and terminal
+      placeholder: Arch Linux, foot 1.17 (also happens in tmux)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: demo
+    attributes:
+      label: Does it reproduce in demo mode?
+      description: >
+        `sugarrush --demo` uses synthetic data and no network, which separates a
+        rendering bug from a data one. Tick if you tried it.
+      options:
+        - label: It also happens with `--demo`
+        - label: It does not happen with `--demo`
+        - label: Not applicable
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: >
+        A screenshot helps for anything visual — check it for your token and
+        glucose data first. Config is useful too, with the token removed.

@@ -51,6 +51,60 @@ jobs:
           fi
           echo "demo.gif is current"
 
+  # The repo conventions that aren't expressible as a Rust test: every Field is
+  # on the settings screen, every persisted key is in config.example.toml.
+  process:
+    name: repo conventions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/check-process.sh
+
+  # A user-visible change has to bring a changelog entry with it. Bypass a
+  # non-user-visible source edit with "[skip-changelog]" in the PR title.
+  changelog:
+    name: changelog updated
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.title, '[skip-changelog]')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: CHANGELOG.md updated when src/ changes
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE"
+          changed=$(git diff --name-only "origin/$BASE"...HEAD)
+          if echo "$changed" | grep -q '^src/' && ! echo "$changed" | grep -qx 'CHANGELOG.md'; then
+            echo "::error::src/ changed but CHANGELOG.md was not updated."
+            echo "Add a bullet under '## [Unreleased]', or put '[skip-changelog]' in the PR title"
+            echo "if the change isn't user-visible (refactor, tests, internal cleanup)."
+            exit 1
+          fi
+          echo "changelog is current"
+
+  # The MSRV in Cargo.toml is a promise; check it still builds rather than
+  # discovering at install time that it doesn't.
+  msrv:
+    name: msrv build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: |
+          set -euo pipefail
+          v=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          test -n "$v" || { echo "::error::no rust-version in Cargo.toml"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets --locked
+
   # Build + test on every platform we ship to, so platform-specific breakage
   # (notify-rust, sound.rs, terminal handling) is caught here, not at tag time.
   test:

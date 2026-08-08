@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest something sugarrush should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: >
+        The situation, not the solution — what you're doing when you hit this,
+        and how you handle it today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: If you have a shape in mind, describe it. A sketch of the UI is welcome.
+
+  - type: dropdown
+    id: who
+    attributes:
+      label: Who is this for?
+      description: It shapes the trade-offs — see the roadmap in issue #51.
+      options:
+        - Someone watching their own glucose
+        - Someone watching another person's (caregiver)
+        - Reviewing history / sharing with a clinician
+        - Other
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        sugarrush is deliberately a terminal viewer for Nightscout, and it never
+        writes to your site. Ideas that fit that shape are much more likely to
+        land than ones that turn it into something else.

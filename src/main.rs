@@ -460,18 +460,20 @@ async fn refresh(app: &mut App, client: &Client) {
         // Forecasts and device status only make sense at the live edge — and
         // must be refreshed *before* predictive alerts read them below.
         if app.view.is_live() {
-            let device = match client.predictions().await {
-                Ok(p) => p,
+            // One devicestatus fetch feeds both the uploader panel and the
+            // forecast; falling back to the local AR2 projection when the
+            // uploader publishes none (or the fetch failed).
+            let published = match client.device_status().await {
+                Ok((status, predicted)) => {
+                    app.device = status;
+                    predicted
+                }
                 Err(_) => {
-                    missing.push("forecast");
+                    missing.push("device");
                     None
                 }
             };
-            app.predictions = device.unwrap_or_else(|| predict::ar2(&app.entries));
-            match client.device_status().await {
-                Ok(status) => app.device = status,
-                Err(_) => missing.push("device"),
-            }
+            app.predictions = published.unwrap_or_else(|| predict::ar2(&app.entries));
             match client.sensor_start().await {
                 Ok(started) => app.sensor_start_ms = started,
                 Err(_) => missing.push("sensor age"),
