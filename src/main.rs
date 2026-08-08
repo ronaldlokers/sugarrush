@@ -404,21 +404,36 @@ async fn refresh(app: &mut App, client: &Client) {
     // outage we skip them and go straight to (local) alert evaluation, so a
     // stalled network can't pile up doomed requests behind it.
     if app.online {
+        // Which supplementary reads failed. They're best-effort — the glucose
+        // trace is what matters — but silently showing a stale IOB or a missing
+        // carb marker as if it were current is its own kind of wrong, so the
+        // dashboard says which part is missing.
+        let mut missing: Vec<&str> = Vec::new();
+
         // Treatment markers for the visible window (best-effort).
-        if let Ok(t) = client.treatments(start, end).await {
-            app.treatments = t;
+        match client.treatments(start, end).await {
+            Ok(t) => app.treatments = t,
+            Err(_) => missing.push("treatments"),
         }
 
         // Forecasts and device status only make sense at the live edge — and
         // must be refreshed *before* predictive alerts read them below.
         if app.view.is_live() {
-            let device = client.predictions().await.ok().flatten();
+            let device = match client.predictions().await {
+                Ok(p) => p,
+                Err(_) => {
+                    missing.push("forecast");
+                    None
+                }
+            };
             app.predictions = device.unwrap_or_else(|| predict::ar2(&app.entries));
-            if let Ok(status) = client.device_status().await {
-                app.device = status;
+            match client.device_status().await {
+                Ok(status) => app.device = status,
+                Err(_) => missing.push("device"),
             }
-            if let Ok(started) = client.sensor_start().await {
-                app.sensor_start_ms = started;
+            match client.sensor_start().await {
+                Ok(started) => app.sensor_start_ms = started,
+                Err(_) => missing.push("sensor age"),
             }
         } else {
             app.predictions.clear();
@@ -430,12 +445,15 @@ async fn refresh(app: &mut App, client: &Client) {
         // view it only refreshes when empty or older than 15 minutes.
         let agp_stale = now - app.agp_fetched_ms > 15 * 60 * 1000;
         if app.is_agp() || app.agp_entries.is_empty() || agp_stale {
-            if let Ok(entries) = client
+            match client
                 .entries_range(now - app.agp_span_ms(), now, app.agp_fetch_count())
                 .await
             {
-                app.agp_entries = entries;
-                app.agp_fetched_ms = now;
+                Ok(entries) => {
+                    app.agp_entries = entries;
+                    app.agp_fetched_ms = now;
+                }
+                Err(_) => missing.push("history"),
             }
         }
 
@@ -443,7 +461,7 @@ async fn refresh(app: &mut App, client: &Client) {
         // into history it stays put (it's a now-anchored strip, so refetching
         // on each drag frame would be wasteful).
         if app.minimap_enabled && (app.view.is_live() || app.minimap_entries.is_empty()) {
-            if let Ok(entries) = client
+            match client
                 .entries_range(
                     now - app.minimap_span_ms,
                     now,
@@ -451,9 +469,11 @@ async fn refresh(app: &mut App, client: &Client) {
                 )
                 .await
             {
-                app.minimap_entries = entries;
+                Ok(entries) => app.minimap_entries = entries,
+                Err(_) => missing.push("overview"),
             }
         }
+        app.set_partial(&missing);
     } else if !app.view.is_live() {
         app.predictions.clear();
     }

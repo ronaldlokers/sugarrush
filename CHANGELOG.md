@@ -15,6 +15,24 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **A partly-failed refresh now says so.** When the readings arrive but a
+  companion fetch doesn't, the affected panels (IOB/COB, treatment markers,
+  forecast, sensor age, history, overview) were left showing old values with
+  the connection still reading as healthy. The footer now names what's stale.
+- **The connection recovers while you're browsing history.** Backoff retries
+  were skipped unless you were at the live edge, so an outage that started
+  while you were panning stayed until you refreshed by hand. The backoff also
+  now actually reaches its documented 60s ceiling (it stopped at 40s).
+- **No more "heading low in ~0 min" from a stale forecast.** Uploader forecasts
+  are timestamped when the pump published them; an old one is entirely in the
+  past, and its points were being reported as an imminent crossing. Past points
+  are now skipped.
+- **A delta too small to show no longer renders as `-0.0`** in the dashboard or
+  the Waybar module — the sign follows the value as displayed, so a flat trend
+  reads flat.
+- **The predict-horizon setting is honest about its reach** — above 30 minutes
+  it notes that the local (AR2) forecast only projects that far, so a longer
+  horizon needs uploader predictions from Loop or OpenAPS.
 - **Saving settings can no longer lose your token.** `config.toml` is now
   written to a temp file (created owner-only, flushed to disk) and renamed into
   place, instead of being truncated and rewritten — so a crash, a full disk, or

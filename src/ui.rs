@@ -630,10 +630,7 @@ fn range_bar<'a>(app: &App, sgv: f64, width: u16) -> Line<'a> {
 fn current_info<'a>(app: &App, e: &crate::nightscout::Entry) -> Vec<Line<'a>> {
     let delta = app
         .delta_mgdl()
-        .map(|d| {
-            let sign = if d >= 0.0 { "+" } else { "-" };
-            format!("{}{}", sign, app.units.format(d.abs()))
-        })
+        .map(|d| app.units.format_delta(d))
         .unwrap_or_else(|| "--".into());
     let stamp = fmt_time(e.date);
     let when = if app.view.is_live() {
@@ -1289,6 +1286,15 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
 
     let text = match &app.last_error {
         Some(err) => Span::styled(format!(" error: {err} "), Style::default().fg(Color::Red)),
+        // Readings arrived but something alongside them didn't: not an outage,
+        // but the affected panels are showing stale values, so say which.
+        None if app.partial.is_some() => Span::styled(
+            format!(
+                " ⚠ unavailable, showing last known: {} ",
+                app.partial.as_deref().unwrap_or_default()
+            ),
+            Style::default().fg(Color::Yellow),
+        ),
         None if app.perm_warning => Span::styled(
             " ⚠ config.toml is readable by others — run: chmod 600 ~/.config/sugarrush/config.toml ",
             Style::default().fg(Color::Yellow),

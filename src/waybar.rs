@@ -56,14 +56,7 @@ async fn build(cfg: &Config) -> Result<String> {
 
     let delta = entries
         .get(1)
-        .map(|prev| latest.sgv - prev.sgv)
-        .map(|d| {
-            format!(
-                "{}{}",
-                if d >= 0.0 { "+" } else { "-" },
-                units.format(d.abs())
-            )
-        })
+        .map(|prev| units.format_delta(latest.sgv - prev.sgv))
         .unwrap_or_else(|| "--".into());
 
     let text = format!("{} {} {}", units.format(latest.sgv), latest.arrow(), delta);
