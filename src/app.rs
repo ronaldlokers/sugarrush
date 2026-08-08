@@ -71,6 +71,7 @@ pub enum Field {
     Units,
     Refresh,
     Desktop,
+    NotifyContent,
     Sound,
     Snooze,
     QuietHours,
@@ -99,12 +100,13 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 30] = [
+    pub const ALL: [Field; 31] = [
         Field::SiteUrl,
         Field::SiteToken,
         Field::Units,
         Field::Refresh,
         Field::Desktop,
+        Field::NotifyContent,
         Field::Sound,
         Field::Snooze,
         Field::QuietHours,
@@ -139,6 +141,7 @@ impl Field {
             Field::Units => "Units",
             Field::Refresh => "Refresh interval",
             Field::Desktop => "Desktop notifications",
+            Field::NotifyContent => "Notification detail",
             Field::Sound => "Audible alarm",
             Field::Snooze => "Snooze",
             Field::QuietHours => "Quiet hours",
@@ -174,6 +177,7 @@ impl Field {
             Field::SiteUrl | Field::SiteToken => "Site",
             Field::Units | Field::Refresh => "General",
             Field::Desktop
+            | Field::NotifyContent
             | Field::Sound
             | Field::Snooze
             | Field::QuietHours
@@ -234,6 +238,10 @@ pub struct App {
     pub date_input: Option<String>,
     /// When `Some`, a settings row is being edited as free text.
     pub field_edit: Option<FieldEdit>,
+    /// Settings have been changed but not written back to `config.toml`.
+    /// Every edit applies live, so without this there's nothing to distinguish
+    /// "changed and saved" from "changed and lost on quit".
+    pub settings_dirty: bool,
     /// Forecast points `(epoch_ms, mg/dL)`, live mode only.
     pub predictions: Vec<Prediction>,
     /// Uploader/device metadata + IOB/COB (live mode only).
@@ -340,6 +348,7 @@ impl App {
             view_end: 0,
             date_input: None,
             field_edit: None,
+            settings_dirty: false,
             predictions: Vec::new(),
             device: DeviceStatus::default(),
             treatments: Vec::new(),
@@ -579,6 +588,7 @@ impl App {
                 Ok(url) => {
                     self.sites[idx].url = url;
                     self.site_dirty = true;
+                    self.settings_dirty = true;
                     self.status = Some(if self.sites[idx].is_insecure() {
                         "site updated · ⚠ unencrypted http, the token is sent in clear".to_string()
                     } else {
@@ -596,6 +606,7 @@ impl App {
                 } else {
                     self.sites[idx].token = edit.buffer.trim().to_string();
                     self.site_dirty = true;
+                    self.settings_dirty = true;
                     self.status = Some("token updated · press w to save".to_string());
                 }
             }
@@ -628,6 +639,7 @@ impl App {
 
     pub fn toggle_units(&mut self) {
         self.units = self.units.toggle();
+        self.settings_dirty = true;
     }
 
     /// Recompute the alert state from the latest reading. Alerts only apply
@@ -849,6 +861,11 @@ impl App {
 
     /// Adjust the selected field by `dir` (-1 / +1), applied live.
     pub fn settings_adjust(&mut self, dir: i32) {
+        // Every branch below either changes a persisted value or sets a status
+        // message; marking here keeps the flag from being forgotten as rows are
+        // added. A no-op row (an unset push URL) clears it again at the end.
+        let was_dirty = self.settings_dirty;
+        self.settings_dirty = true;
         // Threshold step: 0.1 mmol/L or 1 mg/dL, expressed in mg/dL.
         let step_mgdl = self.units.to_mgdl(match self.units {
             Units::Mmol => 0.1,
@@ -924,7 +941,9 @@ impl App {
             }
             Field::SiteUrl | Field::SiteToken => {
                 self.status = Some("press enter to edit".to_string());
+                self.settings_dirty = was_dirty;
             }
+            Field::NotifyContent => self.alerts.notify_content = !self.alerts.notify_content,
             Field::PushAlerts => {
                 // Only meaningful with a URL configured; say so rather than
                 // toggling a flag that can't do anything.
@@ -933,6 +952,7 @@ impl App {
                 } else {
                     self.status =
                         Some("set push_url in config.toml to enable push alerts".to_string());
+                    self.settings_dirty = was_dirty;
                 }
             }
             Field::GraphStyle => self.graph_style = self.graph_style.cycle(dir),
@@ -978,7 +998,10 @@ impl App {
             Ok(p)
         });
         self.status = Some(match result {
-            Ok(p) => format!("saved to {}", p.display()),
+            Ok(p) => {
+                self.settings_dirty = false;
+                format!("saved to {}", p.display())
+            }
             Err(e) => format!("save failed: {e}"),
         });
     }
@@ -1018,6 +1041,7 @@ impl App {
                 escalate_minutes: Some(self.alerts.escalate_minutes),
                 push_url: self.alerts.push_url.clone(),
                 push_enabled: Some(self.alerts.push_enabled),
+                notify_content: Some(self.alerts.notify_content),
                 predict_horizon_minutes: Some(self.alerts.predict_horizon_minutes),
             },
             theme: ThemeConfig {
@@ -1112,6 +1136,12 @@ impl App {
             // Show where pushes go, but never the full URL — an ntfy topic or
             // a webhook path is a secret, and the settings screen is the pane
             // most likely to end up in a screenshot.
+            Field::NotifyContent => if self.alerts.notify_content {
+                "value + state"
+            } else {
+                "generic (no data)"
+            }
+            .to_string(),
             Field::PushAlerts => match (&self.alerts.push_url, self.alerts.push_enabled) {
                 (None, _) => "not configured".to_string(),
                 (Some(url), true) => format!("on · {}", push_host(url)),
@@ -1462,6 +1492,55 @@ mod tests {
         a.begin_field_edit();
         a.commit_field_edit();
         assert_eq!(a.active_site().token, "s3cret-token");
+    }
+
+    #[test]
+    fn edits_mark_settings_unsaved() {
+        let mut a = app();
+        assert!(!a.settings_dirty);
+        a.settings_sel = Field::ALL.iter().position(|&f| f == Field::Low).unwrap();
+        a.settings_adjust(1);
+        assert!(a.settings_dirty);
+        // Rows that only print a hint aren't an edit.
+        a.settings_dirty = false;
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::SiteUrl)
+            .unwrap();
+        a.settings_adjust(1);
+        assert!(!a.settings_dirty);
+        // Nor is toggling push with no URL configured.
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::PushAlerts)
+            .unwrap();
+        a.settings_adjust(1);
+        assert!(!a.settings_dirty);
+        // Editing the site is.
+        a.begin_field_edit();
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::SiteUrl)
+            .unwrap();
+        a.begin_field_edit();
+        a.field_edit.as_mut().unwrap().buffer = "https://ns.example.com".into();
+        a.commit_field_edit();
+        assert!(a.settings_dirty);
+    }
+
+    #[test]
+    fn notify_content_toggles_and_round_trips() {
+        let mut a = app();
+        assert!(a.alerts.notify_content); // detailed by default
+        assert_eq!(a.field_value(Field::NotifyContent), "value + state");
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::NotifyContent)
+            .unwrap();
+        a.settings_adjust(1);
+        assert!(!a.alerts.notify_content);
+        assert_eq!(a.field_value(Field::NotifyContent), "generic (no data)");
+        assert_eq!(a.build_config().alerts.notify_content, Some(false));
     }
 
     #[test]

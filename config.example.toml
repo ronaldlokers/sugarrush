@@ -55,6 +55,10 @@ snooze_minutes = 15   # how long the `a` key silences the audible alarm
 # escalate_minutes = 20     # 0 disables
 # push_url = "https://ntfy.sh/your-topic"  # POST urgent alerts here (ntfy/webhook)
 # push_enabled = true       # toggle push alerts (in settings) without losing the URL
+# Notification privacy: false keeps desktop notifications content-free (no
+# reading, no alert name) for lock screens and shared displays. They still fire,
+# and urgent ones are still critical.
+# notify_content = true
 # Predictive alert: warn when the forecast crosses low/high within N minutes.
 predict_horizon_minutes = 30   # 0 disables
 

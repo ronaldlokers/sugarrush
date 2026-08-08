@@ -219,22 +219,54 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
 
     let u = app.units;
     // Time-in-range as a stacked zone bar with the in-range % alongside.
-    let tir_line = match stats::tir(&app.agp_entries, app.alerts.low, app.alerts.high) {
+    let tir_line = match stats::tir(
+        &app.agp_entries,
+        app.alerts.urgent_low,
+        app.alerts.low,
+        app.alerts.high,
+        app.alerts.urgent_high,
+    ) {
         Some(t) => {
-            let bar_w = (inner.width as usize).saturating_sub(22).clamp(8, 40);
-            let rc = (t.low / 100.0 * bar_w as f64).round() as usize;
-            let yc = (t.high / 100.0 * bar_w as f64).round() as usize;
-            let gc = bar_w.saturating_sub(rc + yc);
-            Line::from(vec![
+            // Budget the line: the numbers are the point, the bar is what
+            // gives. Without this the suffixes fall off the edge of a
+            // half-width panel and the reader never learns they existed.
+            let in_range = format!(" {:.0}% in range", t.in_range);
+            let below = if t.below() > 0.0 {
+                format!(" · {:.0}% below", t.below())
+            } else {
+                String::new()
+            };
+            let fixed = 6 + in_range.len() + below.len();
+            let bar_w = (inner.width as usize).saturating_sub(fixed).clamp(6, 40);
+            // Cells are allocated to the urgent bands first: a single very-low
+            // reading in two weeks rounds to 0% but is exactly what someone
+            // scanning this panel needs to see, so give it a cell if it exists.
+            let cells = |pct: f64| {
+                let n = (pct / 100.0 * bar_w as f64).round() as usize;
+                if n == 0 && pct > 0.0 {
+                    1
+                } else {
+                    n
+                }
+            };
+            let (vlo, lo) = (cells(t.very_low), cells(t.low));
+            let (vhi, hi) = (cells(t.very_high), cells(t.high));
+            let mid = bar_w.saturating_sub(vlo + lo + hi + vhi);
+            let mut spans = vec![
                 Span::raw("  TIR "),
-                Span::styled("█".repeat(rc), Style::default().fg(app.theme.low)),
-                Span::styled("█".repeat(gc), Style::default().fg(app.theme.in_range)),
-                Span::styled("█".repeat(yc), Style::default().fg(app.theme.high)),
-                Span::styled(
-                    format!(" {:.0}% in range", t.in_range),
-                    Style::default().fg(app.theme.in_range),
-                ),
-            ])
+                Span::styled("█".repeat(vlo), Style::default().fg(app.theme.urgent)),
+                Span::styled("█".repeat(lo), Style::default().fg(app.theme.low)),
+                Span::styled("█".repeat(mid), Style::default().fg(app.theme.in_range)),
+                Span::styled("█".repeat(hi), Style::default().fg(app.theme.high)),
+                Span::styled("█".repeat(vhi), Style::default().fg(app.theme.urgent)),
+                Span::styled(in_range, Style::default().fg(app.theme.in_range)),
+            ];
+            // Time below range is the number that changes treatment; call it
+            // out rather than leaving it to be read off the bar.
+            if !below.is_empty() {
+                spans.push(Span::styled(below, Style::default().fg(app.theme.low)));
+            }
+            Line::from(spans)
         }
         None => Line::from("  TIR  —"),
     };
@@ -243,14 +275,42 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
     // recent readings (it's a trend glance, not a statistic).
     let avg_line = match stats::mean_mgdl(&app.agp_entries) {
         Some(mean) => {
-            // Newest-first entries → oldest→newest for the sparkline.
-            let mut spark: Vec<f64> = app.entries.iter().take(16).map(|e| e.sgv).collect();
+            let head = format!("  avg  {} {}  ", u.format(mean), u.label());
+            let gmi = format!("  ·  GMI {:.1}%", stats::gmi(mean));
+            let cv = stats::cv_pct(&app.agp_entries);
+            let cv_text = cv.map(|c| format!("  ·  CV {c:.0}%")).unwrap_or_default();
+            // The sparkline is a trend glance, not a statistic — it yields the
+            // width to GMI and CV rather than pushing them off the line.
+            let room =
+                (inner.width as usize).saturating_sub(head.len() + gmi.len() + cv_text.len());
+            let mut spark: Vec<f64> = app
+                .entries
+                .iter()
+                .take(room.min(16))
+                .map(|e| e.sgv)
+                .collect();
             spark.reverse();
-            Line::from(vec![
-                Span::raw(format!("  avg  {} {}  ", u.format(mean), u.label())),
-                Span::styled(sparkline_str(&spark), Style::default().fg(app.theme.graph)),
-                Span::raw(format!("  ·  GMI {:.1}%", stats::gmi(mean))),
-            ])
+            let mut spans = vec![Span::raw(head)];
+            if spark.len() >= 4 {
+                spans.push(Span::styled(
+                    sparkline_str(&spark),
+                    Style::default().fg(app.theme.graph),
+                ));
+            }
+            spans.push(Span::raw(gmi));
+            if let Some(c) = cv {
+                // Variability: at the same average, a high CV means more hypos.
+                // The consensus target is ≤ 36%, so colour the breach.
+                spans.push(Span::styled(
+                    cv_text,
+                    if c > 36.0 {
+                        Style::default().fg(app.theme.high)
+                    } else {
+                        Style::default()
+                    },
+                ));
+            }
+            Line::from(spans)
         }
         None => Line::from("  avg  —"),
     };
@@ -340,13 +400,21 @@ fn draw_settings(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
-    let header = Paragraph::new(Line::from(Span::styled(
+    // Edits apply live but only `w` persists them, so an unsaved change has to
+    // be visible — otherwise quitting silently reverts everything.
+    let mut title = vec![Span::styled(
         " settings ",
         Style::default()
             .fg(Color::Magenta)
             .add_modifier(Modifier::BOLD),
-    )))
-    .block(Block::default().borders(Borders::ALL));
+    )];
+    if app.settings_dirty {
+        title.push(Span::styled(
+            "· unsaved changes (w to save) ",
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    let header = Paragraph::new(Line::from(title)).block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
 
     let block = Block::default().borders(Borders::ALL);

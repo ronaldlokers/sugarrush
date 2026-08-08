@@ -30,9 +30,10 @@ That's the recording above. When you're ready, point it at your own site
 **At a glance**
 - Big, colour-coded current value with trend arrow, delta, and a plain-text
   range label (readable without colour)
-- Time-in-range, mean glucose + GMI (estimated A1c) over a fixed clinical
-  window (last 14 days by default), and device status (battery, sensor age,
-  last seen)
+- Time-in-range across the five clinical bands (very low → very high) with
+  time-below-range called out, mean glucose, GMI (estimated A1c), and CV
+  (glycaemic variability) over a fixed clinical window (last 14 days by
+  default), plus device status (battery, sensor age, last seen)
 - Insulin-on-board / carbs-on-board, with carb & bolus markers on the graph
 
 **History & forecast**
@@ -46,7 +47,8 @@ That's the recording above. When you're ready, point it at your own site
   *time-to-low/high* ETA
 
 **Alerts & safety**
-- In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows)
+- In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows),
+  switchable to **content-free** so nothing readable lands on a lock screen
 - **Audible alarm** for urgent lows/highs with snooze, per-level tones,
   **quiet hours**, and unacknowledged-alarm **escalation** (incl. phone push)
 - Predictive alerts before a threshold is crossed; offline vs. sensor-gap

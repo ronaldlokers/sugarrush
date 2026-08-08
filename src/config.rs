@@ -212,6 +212,10 @@ pub struct AlertsConfig {
     /// alerts off without discarding the configured URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub push_enabled: Option<bool>,
+    /// Whether desktop notifications spell out the alert and the reading.
+    /// `false` keeps them content-free for lock screens and shared displays.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notify_content: Option<bool>,
     /// Warn when the forecast predicts a low/high crossing within this many
     /// minutes (0 disables predictive alerts).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -238,6 +242,7 @@ impl AlertsConfig {
             escalate_minutes: self.escalate_minutes.unwrap_or(d.escalate_minutes),
             push_url: self.push_url.clone(),
             push_enabled: self.push_enabled.unwrap_or(d.push_enabled),
+            notify_content: self.notify_content.unwrap_or(d.notify_content),
             predict_horizon_minutes: self
                 .predict_horizon_minutes
                 .unwrap_or(d.predict_horizon_minutes),
@@ -310,6 +315,7 @@ pub struct Alerts {
     pub escalate_minutes: i64,
     pub push_url: Option<String>,
     pub push_enabled: bool,
+    pub notify_content: bool,
     pub predict_horizon_minutes: i64,
 }
 
@@ -330,6 +336,7 @@ impl Default for Alerts {
             escalate_minutes: 0,
             push_url: None,
             push_enabled: true,
+            notify_content: true,
             predict_horizon_minutes: 30,
         }
     }

@@ -498,7 +498,12 @@ async fn refresh(app: &mut App, client: &Client) {
     app.evaluate_alert(now);
     if app.alerts.desktop {
         if let Some(a) = app.take_notification() {
-            notify(a, app.latest().map(|e| e.sgv), app.units);
+            notify(
+                a,
+                app.latest().map(|e| e.sgv),
+                app.units,
+                app.alerts.notify_content,
+            );
         }
     }
     app.update_urgent(now);
@@ -513,13 +518,23 @@ async fn refresh(app: &mut App, client: &Client) {
     }
     if let Some(msg) = app.take_predictive(now) {
         if app.alerts.desktop {
-            notify_text(&msg);
+            if app.alerts.notify_content {
+                notify_text(&msg);
+            } else {
+                notify_text("alert — open sugarrush");
+            }
         }
     }
 }
 
 /// Fire a best-effort desktop notification for an alert.
-fn notify(alert: alert::Alert, sgv: Option<f64>, units: units::Units) {
+fn notify(alert: alert::Alert, sgv: Option<f64>, units: units::Units, content: bool) {
+    // Content-free mode still fires — and still as critical, so it breaks
+    // through Do Not Disturb — but says nothing a lock screen shouldn't show.
+    if !content {
+        desktop_notify("alert — open sugarrush", alert.urgency() == "critical");
+        return;
+    }
     let body = match sgv {
         Some(v) => format!("{} · {} {}", alert.label(), units.format(v), units.label()),
         None => alert.label().to_string(),
