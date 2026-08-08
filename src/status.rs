@@ -69,13 +69,34 @@ pub struct Status {
 
 impl Status {
     /// The compact one-liner every format is built from.
+    ///
+    /// Non-in-range states carry a text marker, not just a colour: only the
+    /// Waybar format emits a CSS class, so on polybar, tmux and i3blocks the
+    /// colour *was* the entire signal — and `--format text`, the one a shell
+    /// prompt or a screen reader consumes, had no state at all.
     pub fn text(&self) -> String {
-        format!("{} {} {}", self.value, self.arrow, self.delta)
+        format!(
+            "{}{} {} {}",
+            self.marker(),
+            self.value,
+            self.arrow,
+            self.delta
+        )
+    }
+
+    /// A terse severity prefix: `!!` urgent, `!` out of range, `?` no data.
+    pub fn marker(&self) -> &'static str {
+        match self.state {
+            Alert::UrgentLow | Alert::UrgentHigh => "!! ",
+            Alert::Low | Alert::High => "! ",
+            Alert::Stale => "? ",
+            Alert::InRange => "",
+        }
     }
 
     /// What fits when the bar is short on room: value and arrow only.
     pub fn short_text(&self) -> String {
-        format!("{} {}", self.value, self.arrow)
+        format!("{}{} {}", self.marker(), self.value, self.arrow)
     }
 
     /// Render for a bar.
@@ -175,14 +196,9 @@ async fn build(cfg: &Config) -> Result<Status> {
     })
 }
 
-/// The configured colour for an alert state.
+/// The configured colour for an alert state. One definition, in `alert.rs`.
 fn color_for(state: Alert, theme: &Theme) -> Color {
-    match state {
-        Alert::UrgentLow | Alert::UrgentHigh | Alert::Stale => theme.urgent,
-        Alert::Low => theme.low,
-        Alert::High => theme.high,
-        Alert::InRange => theme.in_range,
-    }
+    state.color(theme)
 }
 
 /// A `#rrggbb` string for a colour. Bars want hex, and the terminal's own

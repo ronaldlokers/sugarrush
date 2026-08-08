@@ -1561,37 +1561,45 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let text = match &app.last_error {
-        Some(err) => Span::styled(format!(" error: {err} "), Style::default().fg(Color::Red)),
+    // Warnings return (message, colour) rather than a finished span, so the
+    // renderer below can keep `? help` pinned to the right in every state.
+    // Previously a warning replaced the hint line outright — and two of them
+    // (a group-readable config, an http site) are *standing* conditions, so a
+    // user in that state never saw a keybinding again, including the one that
+    // opens the help explaining the fix.
+    let mut hints: Option<String> = None;
+    let warning: Option<(String, Color)> = match &app.last_error {
+        Some(err) => Some((format!(" error: {err}"), Color::Red)),
         // Readings arrived but something alongside them didn't: not an outage,
         // but the affected panels are showing stale values, so say which.
-        None if app.partial.is_some() => Span::styled(
+        None if app.partial.is_some() => Some((
             format!(
-                " ⚠ unavailable, showing last known: {} ",
+                " ⚠ unavailable, showing last known: {}",
                 app.partial.as_deref().unwrap_or_default()
             ),
-            Style::default().fg(Color::Yellow),
-        ),
+            Color::Yellow,
+        )),
         // A cleartext site leaks the token and the readings to anything on the
         // path. Not fatal — a LAN self-host is a real setup — but never silent.
-        None if app.notify_failed => Span::styled(
-            " ⚠ desktop notifications aren't reaching a notification daemon ",
-            Style::default().fg(Color::Yellow),
-        ),
-        None if !app.demo && app.active_site().is_insecure() => Span::styled(
-            " ⚠ unencrypted http:// site — the token is sent in clear (settings › site URL) ",
-            Style::default().fg(Color::Yellow),
-        ),
+        None if app.notify_failed => Some((
+            " ⚠ desktop notifications aren't reaching a notification daemon".into(),
+            Color::Yellow,
+        )),
+        None if !app.demo && app.active_site().is_insecure() => Some((
+            " ⚠ unencrypted http:// site — the token is sent in clear (settings › site URL)".into(),
+            Color::Yellow,
+        )),
         // A coerced threshold outranks the permissions notice: it means the
         // alarm is not using the numbers the user wrote.
-        None if !app.config_warnings.is_empty() => Span::styled(
-            format!(" ⚠ config: {} ", app.config_warnings.join(" · ")),
-            Style::default().fg(Color::Yellow),
-        ),
-        None if app.perm_warning => Span::styled(
-            " ⚠ config.toml is readable by others — run: chmod 600 ~/.config/sugarrush/config.toml ",
-            Style::default().fg(Color::Yellow),
-        ),
+        None if !app.config_warnings.is_empty() => Some((
+            format!(" ⚠ config: {}", app.config_warnings.join(" · ")),
+            Color::Yellow,
+        )),
+        None if app.perm_warning => Some((
+            " ⚠ config.toml is readable by others — run: chmod 600 ~/.config/sugarrush/config.toml"
+                .into(),
+            Color::Yellow,
+        )),
         None => {
             // On a narrow footer the full hint line silently clips, hiding
             // settings/site/snooze; fall back to a terse set that always keeps
@@ -1624,12 +1632,35 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 s.push_str(" · ? help ");
                 s
             };
-            Span::raw(s)
+            hints = Some(s);
+            None
         }
     };
     // A visible acknowledgement that the safety alarm is silenced, with a
     // countdown, shown ahead of the normal footer content.
     let mut spans = Vec::new();
+    let text = match (warning, hints) {
+        (Some((msg, color)), _) => {
+            const HELP: &str = " ? help ";
+            let width = area.width as usize;
+            let room = width.saturating_sub(HELP.chars().count());
+            let shown: String = if msg.chars().count() > room && room > 2 {
+                // Elide rather than let the terminal clip: the actionable
+                // half of these messages is always at the end.
+                msg.chars().take(room - 1).chain(['…']).collect()
+            } else {
+                msg
+            };
+            let pad = width
+                .saturating_sub(shown.chars().count())
+                .saturating_sub(HELP.chars().count());
+            spans.push(Span::styled(shown, Style::default().fg(color)));
+            spans.push(Span::raw(" ".repeat(pad)));
+            Span::styled(HELP, Style::default().fg(Color::Cyan))
+        }
+        (None, Some(s)) => Span::raw(s),
+        (None, None) => Span::raw(""),
+    };
     if let Some(mins) = app.snooze_remaining_min(chrono::Utc::now().timestamp_millis()) {
         spans.push(Span::styled(
             format!(" ⏸ alarm snoozed · {mins}m left "),

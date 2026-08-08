@@ -58,6 +58,33 @@ impl Alert {
         }
     }
 
+    /// How much attention this state needs, lowest number first. Shared so the
+    /// followers list and the watcher's alarm-tone choice can't disagree about
+    /// whether a stale sensor outranks a mild low.
+    pub fn severity(self) -> u8 {
+        match self {
+            Alert::UrgentLow => 0,
+            Alert::UrgentHigh => 1,
+            Alert::Stale => 2,
+            Alert::Low => 3,
+            Alert::High => 4,
+            Alert::InRange => 5,
+        }
+    }
+
+    /// The themed colour for this state. One definition, so the colourblind
+    /// preset reaches every widget — it previously existed three times, and
+    /// the copies disagreed about `Stale` (grey, magenta, and urgent), with two
+    /// of them hardcoded past the theme entirely.
+    pub fn color(self, theme: &crate::theme::Theme) -> ratatui::style::Color {
+        match self {
+            Alert::UrgentLow | Alert::UrgentHigh | Alert::Stale => theme.urgent,
+            Alert::Low => theme.low,
+            Alert::High => theme.high,
+            Alert::InRange => theme.in_range,
+        }
+    }
+
     /// `notify-send` urgency keyword.
     pub fn urgency(self) -> &'static str {
         match self {
@@ -218,5 +245,43 @@ mod tests {
         assert!(!Alert::InRange.is_alerting());
         assert!(Alert::Low.is_alerting());
         assert!(Alert::Stale.is_alerting());
+    }
+
+    #[test]
+    fn severity_puts_the_worst_first_and_ranks_no_data_high() {
+        let mut all = [
+            Alert::InRange,
+            Alert::High,
+            Alert::Low,
+            Alert::Stale,
+            Alert::UrgentHigh,
+            Alert::UrgentLow,
+        ];
+        all.sort_by_key(|a| a.severity());
+        assert_eq!(
+            all,
+            [
+                Alert::UrgentLow,
+                Alert::UrgentHigh,
+                // Silence from a sensor outranks a mild low: a gap is when an
+                // unnoticed low is possible.
+                Alert::Stale,
+                Alert::Low,
+                Alert::High,
+                Alert::InRange,
+            ]
+        );
+    }
+
+    #[test]
+    fn every_state_takes_its_colour_from_the_theme() {
+        let t = crate::theme::Theme::default();
+        // Nothing may be hardcoded past the palette, or the colourblind preset
+        // silently fails to recolour it.
+        assert_eq!(Alert::Stale.color(&t), t.urgent);
+        assert_eq!(Alert::UrgentLow.color(&t), t.urgent);
+        assert_eq!(Alert::Low.color(&t), t.low);
+        assert_eq!(Alert::High.color(&t), t.high);
+        assert_eq!(Alert::InRange.color(&t), t.in_range);
     }
 }

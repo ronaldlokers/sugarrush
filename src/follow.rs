@@ -61,14 +61,7 @@ impl SiteStatus {
     /// Unreadable sites rank with the urgent ones — silence from a site you're
     /// responsible for is exactly as informative as a bad reading.
     fn severity(&self) -> u8 {
-        match self.alert {
-            Alert::UrgentLow => 0,
-            Alert::UrgentHigh => 1,
-            Alert::Stale => 2,
-            Alert::Low => 3,
-            Alert::High => 4,
-            Alert::InRange => 5,
-        }
+        self.alert.severity()
     }
 }
 
