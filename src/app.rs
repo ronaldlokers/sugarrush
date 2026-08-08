@@ -304,6 +304,10 @@ pub struct App {
     next_retry_at: Option<i64>,
 
     pub last_error: Option<String>,
+    /// Set when the reading fetch succeeded but a supplementary one didn't, so
+    /// the dashboard can say which panels are stale instead of quietly showing
+    /// old IOB/COB, markers, or device status as current.
+    pub partial: Option<String>,
     pub should_quit: bool,
     /// Whether the keybinding help overlay is showing.
     pub show_help: bool,
@@ -358,9 +362,15 @@ impl App {
             fetch_paused: false,
             next_retry_at: None,
             last_error: None,
+            partial: None,
             should_quit: false,
             show_help: false,
         }
+    }
+
+    /// Note which supplementary fetches failed on this refresh (empty clears).
+    pub fn set_partial(&mut self, missing: &[&str]) {
+        self.partial = (!missing.is_empty()).then(|| missing.join(", "));
     }
 
     /// Record a successful fetch.
@@ -382,6 +392,8 @@ impl App {
     /// tripping server-side rate limits, and the fix is in the user's hands.
     pub fn mark_offline(&mut self, now_ms: i64, err: String, permanent: bool) {
         self.online = false;
+        // The outage message supersedes any per-panel notice.
+        self.partial = None;
         self.fetch_fails = self.fetch_fails.saturating_add(1);
         if permanent {
             self.config_fails = self.config_fails.saturating_add(1);
@@ -394,7 +406,9 @@ impl App {
             self.last_error = Some(format!("{err} · retries paused, press r to retry"));
             return;
         }
-        let secs = (5u64 << (self.fetch_fails.min(4) - 1)).min(60);
+        // 5 · 10 · 20 · 40 · 60 · 60 … — the shift needs a fifth step to reach
+        // the documented ceiling; capping it at four stopped at 40s.
+        let secs = (5u64 << (self.fetch_fails.min(5) - 1)).min(60);
         self.next_retry_at = Some(now_ms + secs as i64 * 1000);
         self.last_error = Some(err);
     }
@@ -409,11 +423,13 @@ impl App {
     }
 
     /// True when an offline connection is due for a backoff retry.
+    ///
+    /// Unlike the periodic refresh this doesn't require the live edge: reading
+    /// history while the connection is down otherwise left it down, so
+    /// returning to live meant an offline dashboard until the next manual
+    /// refresh. A retry re-fetches whatever window is shown.
     pub fn should_retry(&self, now_ms: i64) -> bool {
-        !self.online
-            && !self.fetch_paused
-            && self.view.is_live()
-            && self.next_retry_at.is_some_and(|t| now_ms >= t)
+        !self.online && !self.fetch_paused && self.next_retry_at.is_some_and(|t| now_ms >= t)
     }
 
     /// True when the periodic refresh should run (paused after a config error).
@@ -576,12 +592,19 @@ impl App {
         // a threshold even on perfectly flat glucose: at 75 mg/dL with the low
         // at 70, the edge alone would announce "heading low" forever.
         for p in &self.predictions {
+            // Skip points already in the past. An uploader forecast is stamped
+            // from when the pump published it, so a stale devicestatus is all
+            // past points — and reporting one as a crossing "in ~0 min" reads
+            // as an imminent low that has, in fact, already been forecast away.
+            if p.at_ms <= now_ms {
+                continue;
+            }
             let centre = (p.low + p.high) / 2.0;
             if centre <= self.alerts.low {
-                return Some((false, ((p.at_ms - now_ms) / 60_000).max(0)));
+                return Some((false, (p.at_ms - now_ms) / 60_000));
             }
             if centre >= self.alerts.high {
-                return Some((true, ((p.at_ms - now_ms) / 60_000).max(0)));
+                return Some((true, (p.at_ms - now_ms) / 60_000));
             }
         }
         None
@@ -955,10 +978,20 @@ impl App {
                 }
             }
             Field::PredictHorizon => {
-                if self.alerts.predict_horizon_minutes == 0 {
+                let h = self.alerts.predict_horizon_minutes;
+                if h == 0 {
                     "off".to_string()
+                } else if h > crate::predict::HORIZON_MINUTES {
+                    // Beyond the local AR2 projection only an uploader forecast
+                    // (Loop / OpenAPS) can reach — say so rather than implying
+                    // a warning that far out always exists.
+                    format!(
+                        "{} min · local forecast {} min",
+                        h,
+                        crate::predict::HORIZON_MINUTES
+                    )
                 } else {
-                    format!("{} min", self.alerts.predict_horizon_minutes)
+                    format!("{h} min")
                 }
             }
             // Show where pushes go, but never the full URL — an ntfy topic or
@@ -1198,6 +1231,62 @@ mod tests {
         a.evaluate_alert(NOW);
         a.update_urgent(NOW);
         assert_eq!(a.take_push(NOW), None);
+    }
+
+    #[test]
+    fn backoff_reaches_the_documented_ceiling() {
+        let mut a = app();
+        let expected = [5, 10, 20, 40, 60, 60];
+        for (i, secs) in expected.iter().enumerate() {
+            a.mark_offline(NOW, "offline".into(), false);
+            assert!(
+                a.should_retry(NOW + secs * 1000),
+                "failure {} should retry after {secs}s",
+                i + 1
+            );
+            assert!(!a.should_retry(NOW + secs * 1000 - 1));
+        }
+    }
+
+    #[test]
+    fn retries_continue_while_browsing_history() {
+        let mut a = app();
+        a.view.end = Some(NOW - 3_600_000); // pinned into history
+        a.mark_offline(NOW, "connection refused".into(), false);
+        // The periodic refresh stays off in history, but recovery must not:
+        // otherwise returning to live lands on a still-offline dashboard.
+        assert!(!a.should_auto_refresh());
+        assert!(a.should_retry(NOW + 5_000));
+    }
+
+    #[test]
+    fn stale_uploader_forecast_does_not_fire() {
+        let mut a = app();
+        a.entries = vec![entry(100.0, NOW)];
+        a.evaluate_alert(NOW);
+        // A forecast published 40 minutes ago: every point is already past,
+        // and they all sit low. It must not read as "low in ~0 min".
+        a.predictions = (1..=6)
+            .map(|i| Prediction {
+                at_ms: NOW - 40 * 60_000 + i * 5 * 60_000,
+                low: 60.0,
+                high: 60.0,
+            })
+            .collect();
+        assert_eq!(a.prediction_eta(NOW), None);
+        assert_eq!(a.take_predictive(NOW), None);
+    }
+
+    #[test]
+    fn horizon_beyond_the_local_forecast_says_so() {
+        let mut a = app();
+        a.alerts.predict_horizon_minutes = crate::predict::HORIZON_MINUTES;
+        assert_eq!(a.field_value(Field::PredictHorizon), "30 min");
+        a.alerts.predict_horizon_minutes = 45;
+        assert_eq!(
+            a.field_value(Field::PredictHorizon),
+            "45 min · local forecast 30 min"
+        );
     }
 
     #[test]

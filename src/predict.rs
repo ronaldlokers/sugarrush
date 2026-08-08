@@ -13,6 +13,9 @@ const AR: [f64; 2] = [-0.723, 1.716];
 const STEP_MS: i64 = 5 * 60_000;
 /// Forecast horizon: 6 × 5 min = 30 minutes.
 const STEPS: usize = 6;
+/// How far ahead [`ar2`] projects, in minutes. Uploader forecasts (Loop /
+/// OpenAPS) may reach further; this is the local fallback's ceiling.
+pub const HORIZON_MINUTES: i64 = STEPS as i64 * STEP_MS / 60_000;
 const BG_MIN: f64 = 36.0;
 const BG_MAX: f64 = 400.0;
 

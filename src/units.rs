@@ -50,4 +50,32 @@ impl Units {
             Units::Mmol => format!("{:.1}", self.from_mgdl(mgdl)),
         }
     }
+
+    /// Format a difference with its sign. The sign follows the value *as
+    /// displayed*, so a change too small to show doesn't render as `-0.0`
+    /// (or a rise of 0.4 mg/dL as a bare `+0`) — it reads as flat.
+    pub fn format_delta(self, mgdl: f64) -> String {
+        let body = self.format(mgdl.abs());
+        if body.chars().all(|c| c == '0' || c == '.') {
+            return body;
+        }
+        format!("{}{}", if mgdl >= 0.0 { "+" } else { "-" }, body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delta_sign_follows_the_displayed_value() {
+        // A change too small to render must not carry a sign.
+        assert_eq!(Units::Mgdl.format_delta(-0.4), "0");
+        assert_eq!(Units::Mgdl.format_delta(0.4), "0");
+        assert_eq!(Units::Mmol.format_delta(-0.4), "0.0");
+        // Real changes keep theirs.
+        assert_eq!(Units::Mgdl.format_delta(5.0), "+5");
+        assert_eq!(Units::Mgdl.format_delta(-12.0), "-12");
+        assert_eq!(Units::Mmol.format_delta(-18.0), "-1.0");
+    }
 }
