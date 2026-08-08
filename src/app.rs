@@ -17,6 +17,11 @@ use crate::view::{Span, View};
 const MS_PER_HOUR: i64 = 3_600_000;
 const MS_PER_DAY: i64 = 24 * MS_PER_HOUR;
 
+/// Consecutive config-level failures (bad token / URL) before automatic
+/// fetching pauses. More than one, so a server that briefly answers 401 during
+/// a restart doesn't strand a working setup.
+const CONFIG_FAIL_LIMIT: u32 = 3;
+
 /// Which screen is currently shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -286,6 +291,11 @@ pub struct App {
     pub last_ok_ms: Option<i64>,
     /// Consecutive fetch failures, for backoff.
     fetch_fails: u32,
+    /// Consecutive failures that retrying can't fix (bad token / URL).
+    config_fails: u32,
+    /// Set once `config_fails` hits the limit: automatic fetching is paused
+    /// until the user fixes the site or asks for a retry.
+    pub fetch_paused: bool,
     /// Earliest epoch-ms to retry after a failure.
     next_retry_at: Option<i64>,
 
@@ -340,6 +350,8 @@ impl App {
             online: true,
             last_ok_ms: None,
             fetch_fails: 0,
+            config_fails: 0,
+            fetch_paused: false,
             next_retry_at: None,
             last_error: None,
             should_quit: false,
@@ -352,22 +364,57 @@ impl App {
         self.online = true;
         self.last_ok_ms = Some(now_ms);
         self.fetch_fails = 0;
+        self.config_fails = 0;
+        self.fetch_paused = false;
         self.next_retry_at = None;
         self.last_error = None;
     }
 
     /// Record a failed fetch and schedule a backoff retry (5s → 60s).
-    pub fn mark_offline(&mut self, now_ms: i64, err: String) {
+    ///
+    /// `permanent` marks a failure that repeating the request can't fix (a bad
+    /// token or URL). After [`CONFIG_FAIL_LIMIT`] of those in a row, automatic
+    /// fetching pauses: retrying a rejected token every few seconds only risks
+    /// tripping server-side rate limits, and the fix is in the user's hands.
+    pub fn mark_offline(&mut self, now_ms: i64, err: String, permanent: bool) {
         self.online = false;
         self.fetch_fails = self.fetch_fails.saturating_add(1);
+        if permanent {
+            self.config_fails = self.config_fails.saturating_add(1);
+        } else {
+            self.config_fails = 0;
+        }
+        if self.config_fails >= CONFIG_FAIL_LIMIT {
+            self.fetch_paused = true;
+            self.next_retry_at = None;
+            self.last_error = Some(format!("{err} · retries paused, press r to retry"));
+            return;
+        }
         let secs = (5u64 << (self.fetch_fails.min(4) - 1)).min(60);
         self.next_retry_at = Some(now_ms + secs as i64 * 1000);
         self.last_error = Some(err);
     }
 
+    /// Resume fetching after a pause — on an explicit refresh, or when the site
+    /// config changes (a new site, or an edited URL/token).
+    pub fn resume_fetching(&mut self) {
+        self.fetch_paused = false;
+        self.config_fails = 0;
+        self.fetch_fails = 0;
+        self.next_retry_at = None;
+    }
+
     /// True when an offline connection is due for a backoff retry.
     pub fn should_retry(&self, now_ms: i64) -> bool {
-        !self.online && self.view.is_live() && self.next_retry_at.is_some_and(|t| now_ms >= t)
+        !self.online
+            && !self.fetch_paused
+            && self.view.is_live()
+            && self.next_retry_at.is_some_and(|t| now_ms >= t)
+    }
+
+    /// True when the periodic refresh should run (paused after a config error).
+    pub fn should_auto_refresh(&self) -> bool {
+        self.view.is_live() && !self.fetch_paused
     }
 
     /// True when the graph pane shows the AGP profile rather than the timeline.
@@ -475,7 +522,9 @@ impl App {
     pub fn evaluate_alert(&mut self, now_ms: i64) -> Alert {
         self.alert = if self.view.is_live() {
             match self.latest() {
-                Some(e) => alert::evaluate(e.sgv, now_ms - e.date, &self.alerts),
+                // Carry the previous state in so a value sitting on a threshold
+                // doesn't flap in and out of the alarm.
+                Some(e) => alert::evaluate_from(e.sgv, now_ms - e.date, &self.alerts, self.alert),
                 // No reading at all in the live window is itself a sensor gap —
                 // but only once we've seen data (don't alarm during first-run
                 // setup before any successful fetch).
@@ -518,13 +567,16 @@ impl App {
         if self.alert != Alert::InRange {
             return None;
         }
-        // The cone warns on the worst plausible path: its low edge for a low,
-        // its high edge for a high.
+        // Follow the projected path — the band centre — not the cone's edge.
+        // The cone widens with the horizon by construction, so its edge crosses
+        // a threshold even on perfectly flat glucose: at 75 mg/dL with the low
+        // at 70, the edge alone would announce "heading low" forever.
         for p in &self.predictions {
-            if p.low <= self.alerts.low {
+            let centre = (p.low + p.high) / 2.0;
+            if centre <= self.alerts.low {
                 return Some((false, ((p.at_ms - now_ms) / 60_000).max(0)));
             }
-            if p.high >= self.alerts.high {
+            if centre >= self.alerts.high {
                 return Some((true, ((p.at_ms - now_ms) / 60_000).max(0)));
             }
         }
@@ -997,5 +1049,72 @@ mod tests {
         a.entries = vec![entry(100.0, NOW)];
         a.evaluate_alert(NOW);
         assert!(a.snooze_remaining_min(NOW).is_none());
+    }
+
+    #[test]
+    fn alert_does_not_flap_on_a_threshold() {
+        let mut a = app();
+        // Cross into Low, then bounce back onto the boundary.
+        a.entries = vec![entry(69.0, NOW)];
+        assert_eq!(a.evaluate_alert(NOW), Alert::Low);
+        a.entries = vec![entry(71.0, NOW)]; // within the hysteresis margin
+        assert_eq!(a.evaluate_alert(NOW), Alert::Low);
+        // A genuine recovery still clears it.
+        a.entries = vec![entry(80.0, NOW)];
+        assert_eq!(a.evaluate_alert(NOW), Alert::InRange);
+    }
+
+    #[test]
+    fn flat_glucose_does_not_predict_a_low() {
+        let mut a = app();
+        a.entries = vec![entry(75.0, NOW)];
+        a.evaluate_alert(NOW);
+        // A flat forecast whose cone edge dips below the low threshold but
+        // whose centre holds steady must not announce a low.
+        a.predictions = (1..=6)
+            .map(|i| Prediction {
+                at_ms: NOW + i * 5 * 60_000,
+                low: 75.0 - 4.0 * i as f64,
+                high: 75.0 + 4.0 * i as f64,
+            })
+            .collect();
+        assert_eq!(a.prediction_eta(NOW), None);
+
+        // A forecast actually heading low still fires, timed off the centre.
+        a.predictions = (1..=6)
+            .map(|i| Prediction {
+                at_ms: NOW + i * 5 * 60_000,
+                low: 75.0 - 3.0 * i as f64,
+                high: 75.0 - i as f64,
+            })
+            .collect();
+        assert_eq!(a.prediction_eta(NOW), Some((false, 15)));
+    }
+
+    #[test]
+    fn permanent_failures_pause_fetching() {
+        let mut a = app();
+        for _ in 0..CONFIG_FAIL_LIMIT {
+            a.mark_offline(NOW, "authentication failed".into(), true);
+        }
+        assert!(a.fetch_paused);
+        assert!(!a.should_retry(NOW + 60_000));
+        assert!(!a.should_auto_refresh());
+        // An explicit retry (r) resumes, and a success clears the state.
+        a.resume_fetching();
+        assert!(a.should_auto_refresh());
+        a.mark_offline(NOW, "authentication failed".into(), true);
+        a.mark_online(NOW);
+        assert!(!a.fetch_paused);
+    }
+
+    #[test]
+    fn transient_failures_keep_retrying() {
+        let mut a = app();
+        for _ in 0..10 {
+            a.mark_offline(NOW, "connection refused".into(), false);
+        }
+        assert!(!a.fetch_paused);
+        assert!(a.should_retry(NOW + 120_000));
     }
 }

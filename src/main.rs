@@ -32,7 +32,7 @@ use tokio::sync::mpsc;
 
 use app::{App, Screen};
 use config::Config;
-use nightscout::Client;
+use nightscout::{Client, FetchError};
 
 /// How the binary was invoked.
 enum Mode {
@@ -178,8 +178,9 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
             }
             _ = ticker.tick() => {
                 // Only auto-refetch when following the live edge; a fixed
-                // history window doesn't change on its own.
-                if app.view.is_live() {
+                // history window doesn't change on its own (and never while
+                // fetching is paused on a bad token / URL).
+                if app.should_auto_refresh() {
                     refresh(app, &client).await;
                 }
             }
@@ -208,6 +209,8 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
             match Client::for_site(app.active_site()) {
                 Ok(c) => {
                     client = c;
+                    // New credentials/URL — a previous pause no longer applies.
+                    app.resume_fetching();
                     refresh(app, &client).await;
                 }
                 Err(e) => app.last_error = Some(e.to_string()),
@@ -256,7 +259,12 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('s') => app.toggle_settings(),
         KeyCode::Char('u') => app.toggle_units(),
-        KeyCode::Char('r') => refresh(app, client).await,
+        // An explicit refresh is also how the user retries after a bad
+        // token/URL paused automatic fetching.
+        KeyCode::Char('r') => {
+            app.resume_fetching();
+            refresh(app, client).await;
+        }
         KeyCode::Tab => {
             app.cycle_graph_view(1);
             refresh(app, client).await;
@@ -383,8 +391,13 @@ async fn refresh(app: &mut App, client: &Client) {
             app.entries = entries;
             app.mark_online(now);
         }
-        // Keep the last-known readings on screen; just flag the outage.
-        Err(e) => app.mark_offline(now, e.to_string()),
+        // Keep the last-known readings on screen; just flag the outage. A
+        // config-level failure (bad token / URL) is not a transient outage —
+        // App pauses retries after a few of them.
+        Err(e) => {
+            let permanent = e.downcast_ref::<FetchError>().is_some();
+            app.mark_offline(now, e.to_string(), permanent);
+        }
     }
 
     // Supplementary fetches only happen when the primary read succeeded — on an

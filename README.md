@@ -119,7 +119,7 @@ design: file-only, documented.
 |-----|--------|
 | `q` / `Esc` | Quit |
 | `?` | Toggle the keybinding help overlay |
-| `r` | Refresh now |
+| `r` | Refresh now (also resumes fetching after a token/URL error) |
 | `u` | Toggle mg/dL ↔ mmol/L |
 | `Tab` / `Shift+Tab` | Switch graph view (3h / 24h / AGP) |
 | `h` / `←` · `l` / `→` | Pan back / forward in time |

@@ -8,6 +8,25 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **The newest reading is now always the newest reading** — entries are sorted
+  by timestamp on arrival instead of trusting the order Nightscout (or a proxy
+  or mirror in front of it) happened to return, so the current value, delta,
+  staleness check, and forecast can't silently key off an older reading.
+- **Alerts no longer flap on a threshold.** A reading hovering on a boundary
+  (69 → 71 → 69, well inside CGM noise) used to re-fire the notification, the
+  audible alarm, and the push webhook every single time. Clearing an alert now
+  requires moving 4 mg/dL past the threshold; raising one is unchanged, so a
+  real low still alarms on the first reading that crosses.
+- **A flat glucose no longer predicts a low.** The predictive alert and its ETA
+  now follow the centre of the forecast rather than the edge of the uncertainty
+  cone, which widens with the horizon and so crossed a threshold even when
+  glucose was perfectly steady.
+- **A bad token or URL now says so and stops retrying** instead of being
+  retried forever as if it were a network outage. After three consecutive
+  authentication (401/403) or not-found (404) responses, automatic fetching
+  pauses with an explanatory message; press `r`, or switch/edit the site, to
+  resume.
+
 - **Stats are now clinical, not cosmetic** — time-in-range, mean, and GMI are
   computed over a fixed window of the last N days (the `AGP days` setting,
   default 14 — the clinical standard) instead of whatever slice of the graph

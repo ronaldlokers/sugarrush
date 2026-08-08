@@ -95,13 +95,7 @@ impl Client {
             .json()
             .await
             .context("failed to parse Nightscout response")?;
-        // Drop non-physiological values: Nightscout stores sensor error/noise
-        // states as small SGV codes (0–12), which must never be read as a real
-        // (urgent-low) reading or fed to the forecast (ln of a tiny value).
-        Ok(entries
-            .into_iter()
-            .filter(|e| e.sgv >= MIN_PHYSIOLOGICAL_SGV)
-            .collect())
+        Ok(clean_newest_first(entries))
     }
 
     /// Fetch uploader-published forecasts from `/api/v1/devicestatus` (Loop's
@@ -368,16 +362,97 @@ fn check_status(resp: reqwest::Response) -> Result<reqwest::Response> {
     use reqwest::StatusCode;
     match resp.status() {
         s if s.is_success() => Ok(resp),
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => anyhow::bail!(
-            "authentication failed — check your read-only token (a Nightscout \
-             Subject token with the 'readable' role, not API_SECRET)"
-        ),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(FetchError::Auth.into()),
+        StatusCode::NOT_FOUND => Err(FetchError::NotFound.into()),
         s => anyhow::bail!("Nightscout returned HTTP {}", s.as_u16()),
     }
+}
+
+/// A failure that repeating the request cannot fix — the site config is wrong.
+/// Callers downcast to this (`err.downcast_ref::<FetchError>()`) to stop
+/// retrying instead of hammering the server forever with a bad token or URL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchError {
+    /// 401/403 — the token is missing, wrong, or lacks the `readable` role.
+    Auth,
+    /// 404 — the base URL doesn't point at a Nightscout API.
+    NotFound,
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchError::Auth => write!(
+                f,
+                "authentication failed — check your read-only token (a Nightscout \
+                 Subject token with the 'readable' role, not API_SECRET)"
+            ),
+            FetchError::NotFound => write!(
+                f,
+                "no Nightscout API at this URL (HTTP 404) — check the site URL"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for FetchError {}
+
+/// Filter sensor-error codes and force newest-first ordering.
+///
+/// Drop non-physiological values: Nightscout stores sensor error/noise states
+/// as small SGV codes (0–12), which must never be read as a real (urgent-low)
+/// reading or fed to the forecast (ln of a tiny value).
+///
+/// The order is ours to enforce, not the server's: everything downstream —
+/// the current value, the delta, the staleness check, the AR2 forecast — reads
+/// `entries[0]` as *the* latest reading. Nightscout normally sorts descending
+/// by `date`, but a mirror, proxy, or `find[]` query variation that returns
+/// another order would silently make an old reading the displayed one.
+fn clean_newest_first(entries: Vec<Entry>) -> Vec<Entry> {
+    let mut out: Vec<Entry> = entries
+        .into_iter()
+        .filter(|e| e.sgv >= MIN_PHYSIOLOGICAL_SGV)
+        .collect();
+    out.sort_by_key(|e| std::cmp::Reverse(e.date));
+    out
 }
 
 fn parse_iso(s: &str) -> Option<i64> {
     DateTime::parse_from_rfc3339(s)
         .ok()
         .map(|dt| dt.timestamp_millis())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(sgv: f64, date: i64) -> Entry {
+        Entry {
+            sgv,
+            date,
+            direction: None,
+        }
+    }
+
+    #[test]
+    fn newest_first_regardless_of_server_order() {
+        let out = clean_newest_first(vec![
+            entry(100.0, 1_000),
+            entry(120.0, 3_000),
+            entry(110.0, 2_000),
+        ]);
+        assert_eq!(
+            out.iter().map(|e| e.date).collect::<Vec<_>>(),
+            vec![3_000, 2_000, 1_000]
+        );
+        assert_eq!(out[0].sgv, 120.0);
+    }
+
+    #[test]
+    fn drops_sensor_error_codes() {
+        let out = clean_newest_first(vec![entry(5.0, 2_000), entry(90.0, 1_000)]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].sgv, 90.0);
+    }
 }
