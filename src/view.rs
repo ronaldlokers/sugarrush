@@ -98,16 +98,42 @@ impl View {
 
     /// Pan toward older data.
     pub fn pan_back(&mut self, now_ms: i64) {
-        let end = self.end.unwrap_or(now_ms);
-        self.end = Some(end - self.step());
+        self.shift_back(now_ms, self.step());
     }
 
     /// Pan toward newer data; snapping back to live once it reaches now.
     pub fn pan_forward(&mut self, now_ms: i64) {
+        self.shift_forward(now_ms, self.step());
+    }
+
+    /// Pan a whole window at a time — the keyboard equivalent of dragging the
+    /// overview strip, so crossing a day doesn't take a dozen keypresses.
+    pub fn page_back(&mut self, now_ms: i64) {
+        self.shift_back(now_ms, self.span.minutes() * MS_PER_MIN);
+    }
+
+    /// Pan a whole window toward newer data, snapping to live at the edge.
+    pub fn page_forward(&mut self, now_ms: i64) {
+        self.shift_forward(now_ms, self.span.minutes() * MS_PER_MIN);
+    }
+
+    fn shift_back(&mut self, now_ms: i64, by: i64) {
+        let end = self.end.unwrap_or(now_ms);
+        self.end = Some(end - by);
+    }
+
+    fn shift_forward(&mut self, now_ms: i64, by: i64) {
         if let Some(end) = self.end {
-            let next = end + self.step();
+            let next = end + by;
             self.end = if next >= now_ms { None } else { Some(next) };
         }
+    }
+
+    /// Jump to the oldest edge of a window `span_ms` wide ending now — the
+    /// keyboard equivalent of clicking the far-left of the overview strip.
+    pub fn jump_to_oldest(&mut self, now_ms: i64, span_ms: i64) {
+        let end = now_ms - span_ms + self.span.minutes() * MS_PER_MIN;
+        self.end = if end >= now_ms { None } else { Some(end) };
     }
 
     /// Snap the window back to the live edge.
@@ -216,5 +242,29 @@ mod tests {
         assert!(parse_date("not-a-date").is_none());
         assert!(parse_date("2026-13-40").is_none());
         assert!(parse_date("2026-07-16").is_some());
+    }
+
+    #[test]
+    fn paging_steps_a_whole_window() {
+        let mut v = View::default(); // 3h
+        v.page_back(NOW);
+        assert_eq!(v.end, Some(NOW - 180 * 60_000));
+        v.page_forward(NOW);
+        assert!(v.is_live()); // back at the edge
+    }
+
+    #[test]
+    fn jump_to_oldest_lands_inside_the_overview() {
+        let mut v = View::default(); // 3h window
+        let span = 24 * 60 * 60_000; // 24h overview
+        v.jump_to_oldest(NOW, span);
+        // The window sits at the far edge of the overview, not beyond it.
+        let (start, end) = v.bounds(NOW);
+        assert_eq!(start, NOW - span);
+        assert!(end < NOW);
+        // An overview no wider than the window is already live.
+        let mut v = View::default();
+        v.jump_to_oldest(NOW, 60 * 60_000);
+        assert!(v.is_live());
     }
 }
