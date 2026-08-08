@@ -752,6 +752,51 @@ impl App {
             .map(|t| (t - now_ms) / 60_000 + 1)
     }
 
+    /// Write the clinical window to a CSV and a text summary in the working
+    /// directory, reporting the result in the status line.
+    ///
+    /// Exports the same `agp_days` window the stats panel reports on — not the
+    /// visible graph — so the summary someone hands to a clinician matches the
+    /// numbers they were looking at when they pressed the key.
+    pub fn export_window(&mut self, now_ms: i64) {
+        if self.agp_entries.is_empty() {
+            self.status = Some("nothing to export yet — no readings loaded".to_string());
+            return;
+        }
+        let files = [
+            (
+                crate::export::Format::Csv,
+                crate::export::csv(&self.agp_entries, self.units),
+            ),
+            (
+                crate::export::Format::Report,
+                crate::export::report(
+                    &self.agp_entries,
+                    &self.alerts,
+                    self.units,
+                    self.agp_days,
+                    now_ms,
+                ),
+            ),
+        ];
+        let mut written = Vec::new();
+        for (format, body) in files {
+            let name = crate::export::filename(format, now_ms);
+            match std::fs::write(&name, body) {
+                Ok(()) => written.push(name),
+                Err(e) => {
+                    self.status = Some(format!("export failed: {e}"));
+                    return;
+                }
+            }
+        }
+        self.status = Some(format!(
+            "exported {} days to {}",
+            self.agp_days,
+            written.join(" + ")
+        ));
+    }
+
     /// Silence the audible alarm for the configured snooze interval.
     pub fn snooze_alarm(&mut self, now_ms: i64) {
         if self.alert.is_urgent() {

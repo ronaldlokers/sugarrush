@@ -109,6 +109,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("g", "jump to a date"),
         ("End", "jump to the start of the overview"),
         ("f / Home / Esc", "return to live"),
+        ("e", "export the clinical window (csv + summary)"),
         ("a", "snooze the audible alarm"),
         ("n", "switch site (multi-site)"),
         ("s", "open / close settings"),

@@ -54,6 +54,12 @@ That's the recording above. When you're ready, point it at your own site
 - Predictive alerts before a threshold is crossed; offline vs. sensor-gap
   distinction so you know *why* data stopped
 
+**Share it**
+- **Export** the clinical window (`e`, or `sugarrush export`) as a CSV of every
+  reading plus a plain-text summary — time in range across the five bands, mean,
+  GMI, CV, and an hour-by-hour profile — to send to a clinician or open in a
+  spreadsheet
+
 **Yours to shape**
 - In-app **settings screen** (`s`) — edit units, thresholds, alarms, theme,
   and more live, then save back to `config.toml`; the **site URL and token** are
@@ -136,6 +142,7 @@ design: file-only, documented.
 | `g` | Jump to a date (`YYYY-MM-DD`) |
 | `End` | Jump to the start of the overview strip |
 | `f` / `Home` / `Esc` | Return to live |
+| `e` | Export the clinical window (CSV + summary) |
 | `a` | Snooze the audible alarm |
 | `n` | Switch site (multi-site) |
 | `s` | Open / close settings |
@@ -151,6 +158,22 @@ and `End` for the same navigation from the keyboard.
 hourly sparkline tooltip, and a CSS class per alert state). Example assets in
 [`waybar/`](waybar/): the custom module, a Graph/Settings/About menu (Waybar
 ≥ 0.11.0), per-state CSS, and Hyprland float rules.
+
+## Export
+
+Press `e` in the app, or run it headless — handy from cron, or the morning of
+an appointment:
+
+```bash
+sugarrush export                     # the AGP-days window, into the current dir
+sugarrush export --days 30 --out ~/  # a month, somewhere else
+```
+
+Both write two files with a shared timestamped name: `…​.csv` (every reading,
+oldest first, in mg/dL *and* your display unit) and `….txt` (a summary: sensor
+coverage, five-band time in range, time below range, mean, GMI, CV, and an
+hour-by-hour median/spread profile). The text file is fixed-width on purpose —
+it survives email and a printer.
 
 Other subcommands: `sugarrush about` (version + a notification) and
 `sugarrush --screen settings` (open straight to settings).
