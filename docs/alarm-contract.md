@@ -94,6 +94,13 @@ restores it on start (`App::restore_episode`), so a restarted service does not
 re-announce an ongoing low, restart an escalation timer, or cancel a snooze
 someone set on purpose.
 
+Every configured site remains in that snapshot even while its fetch is in
+retry backoff or paused after an authentication failure. State updates are
+serialized across the daemon and `sugarrush snooze`; immediately before the
+daemon saves, the latest on-disk snooze value wins over the snapshot it took
+before polling. Network latency must never make a successful snooze command
+disappear.
+
 ## The handover
 
 The dashboard and the daemon must never alarm in chorus, and must never both

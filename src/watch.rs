@@ -16,7 +16,7 @@
 //!   acknowledged — or reset an escalation timer that was about to fire.
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -111,6 +111,64 @@ fn state_path() -> PathBuf {
     base.join("sugarrush").join("watch.json")
 }
 
+fn state_lock_path() -> PathBuf {
+    state_path().with_extension("lock")
+}
+
+/// Cross-process guard for the watch state read/modify/write cycle.
+///
+/// `sugarrush snooze` and the daemon are separate processes. Atomic rename
+/// keeps the JSON intact, but without a lock either process can still replace
+/// a newer logical update with an older snapshot.
+struct StateLock {
+    path: PathBuf,
+}
+
+impl Drop for StateLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_state_lock() -> Result<StateLock> {
+    let path = state_lock_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("failed to create {}", dir.display()))?;
+    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(_) => return Ok(StateLock { path }),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // The lock is only held around local file I/O. A much older
+                // file was left by a killed process, not a legitimately slow
+                // update, and must not disable snooze forever.
+                let stale = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .and_then(|t| t.elapsed().map_err(std::io::Error::other))
+                    .is_ok_and(|age| age > Duration::from_secs(30));
+                if stale {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+                if Instant::now() >= deadline {
+                    anyhow::bail!("timed out waiting to update watcher state");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => return Err(e).with_context(|| format!("failed to lock {}", path.display())),
+        }
+    }
+}
+
 /// Record that this process is alive, right now. Best-effort: a missing
 /// heartbeat only means the other side doesn't defer to us.
 pub fn heartbeat(role: Role, now_ms: i64) {
@@ -171,7 +229,7 @@ impl State {
             .unwrap_or_default()
     }
 
-    pub fn save(&self) -> Result<()> {
+    fn save_unlocked(&self) -> Result<()> {
         let path = state_path();
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)
@@ -184,6 +242,23 @@ impl State {
         // prevent. It also names a third party's alert history in follower
         // mode, so it is not world-readable.
         crate::config::Config::write_atomic(&path, &body)
+    }
+
+    /// Save a daemon snapshot without overwriting a snooze command that
+    /// landed while network requests were in flight.
+    fn save_daemon_snapshot(&mut self) -> Result<()> {
+        let _lock = acquire_state_lock()?;
+        let latest = Self::load();
+        merge_latest_snoozes(self, &latest);
+        self.save_unlocked()
+    }
+}
+
+fn merge_latest_snoozes(snapshot: &mut State, latest: &State) {
+    for (name, episode) in &mut snapshot.sites {
+        if let Some(on_disk) = latest.sites.get(name) {
+            episode.snooze_until = on_disk.snooze_until;
+        }
     }
 }
 
@@ -212,6 +287,7 @@ fn adopt_external_snooze(app: &mut App, on_disk: Option<&Episode>) {
 ///
 /// Returns how many sites it applied to.
 pub fn set_snooze(until: Option<i64>) -> Result<usize> {
+    let _lock = acquire_state_lock()?;
     let mut state = State::load();
     if state.sites.is_empty() {
         // No episode file yet (a daemon that has never run, or never alarmed).
@@ -226,7 +302,7 @@ pub fn set_snooze(until: Option<i64>) -> Result<usize> {
         episode.snooze_until = until;
     }
     let n = state.sites.len();
-    state.save()?;
+    state.save_unlocked()?;
     Ok(n)
 }
 
@@ -375,7 +451,6 @@ pub async fn run() -> Result<()> {
                 // daemon never sets a snooze itself, so anything that differs
                 // from what we last wrote came from outside and wins.
                 let on_disk = State::load();
-                let mut state = State::default();
                 for w in watched.iter_mut() {
                     adopt_external_snooze(&mut w.app, on_disk.sites.get(&w.name));
                     // The retry policy already exists on App and the TUI obeys
@@ -390,9 +465,12 @@ pub async fn run() -> Result<()> {
                         eprintln!("sugarrush watch [{}]: {e}", w.name);
                     }
                     react(w, now, multi).await;
-                    state.sites.insert(w.name.clone(), Episode::capture(&w.app));
                 }
-                if let Err(e) = state.save() {
+                // Snapshot every site, including ones skipped during retry
+                // backoff. Omitting a skipped site used to delete its episode
+                // and snooze state from disk on the next save.
+                let mut state = snapshot(&watched);
+                if let Err(e) = state.save_daemon_snapshot() {
                     eprintln!("sugarrush watch: {e}");
                 }
                 if last_liveness.is_none_or(|t| now - t >= LIVENESS_INTERVAL_MS) {
@@ -426,6 +504,15 @@ pub async fn run() -> Result<()> {
                 }
             }
         }
+    }
+}
+
+fn snapshot(watched: &[Watched]) -> State {
+    State {
+        sites: watched
+            .iter()
+            .map(|w| (w.name.clone(), Episode::capture(&w.app)))
+            .collect(),
     }
 }
 
@@ -668,6 +755,61 @@ mod tests {
         assert_eq!(back, state);
         assert_eq!(back.sites["alice"], episode);
         assert_eq!(back.sites["bob"], Episode::default());
+    }
+
+    #[test]
+    fn skipped_sites_remain_in_the_daemon_snapshot() {
+        let cfg = Config::demo();
+        let alerts = cfg.alerts.resolve(cfg.units);
+        let sites = cfg.resolve_sites().unwrap();
+        let mut app = App::new(&cfg, alerts, sites.clone());
+        let episode = Episode {
+            last_notified: Some(Alert::UrgentLow.class().to_string()),
+            urgent_since: Some(NOW - 600_000),
+            pushed_episode: true,
+            snooze_until: Some(NOW + 300_000),
+            episode_kind: Some(Alert::UrgentLow.class().to_string()),
+            ..Episode::default()
+        };
+        episode.restore(&mut app);
+        app.mark_offline(NOW, "offline".into(), false);
+        assert!(!app.should_retry(NOW), "ordinary backoff skips this poll");
+
+        let watched = vec![Watched {
+            name: "default".into(),
+            client: Client::for_site(&sites[0]).unwrap(),
+            app,
+            last_logged: None,
+        }];
+        assert_eq!(snapshot(&watched).sites["default"], episode);
+    }
+
+    #[test]
+    fn the_latest_external_snooze_wins_the_daemon_save() {
+        let mut daemon = State::default();
+        daemon.sites.insert(
+            "alice".into(),
+            Episode {
+                last_notified: Some(Alert::UrgentLow.class().into()),
+                snooze_until: None,
+                ..Episode::default()
+            },
+        );
+        let mut latest = daemon.clone();
+        latest.sites.get_mut("alice").unwrap().snooze_until = Some(NOW + 900_000);
+
+        merge_latest_snoozes(&mut daemon, &latest);
+        assert_eq!(daemon.sites["alice"].snooze_until, Some(NOW + 900_000));
+        assert_eq!(
+            daemon.sites["alice"].last_notified.as_deref(),
+            Some("urgent-low"),
+            "merging the command must not discard current episode state"
+        );
+
+        // A concurrent `sugarrush snooze off` is an update too.
+        latest.sites.get_mut("alice").unwrap().snooze_until = None;
+        merge_latest_snoozes(&mut daemon, &latest);
+        assert_eq!(daemon.sites["alice"].snooze_until, None);
     }
 
     #[test]
