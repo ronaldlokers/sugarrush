@@ -3,6 +3,7 @@
 //! envelope (the standard AGP median + 25/75 + 5/95 bands).
 
 use chrono::{Local, TimeZone, Timelike};
+use chrono_tz::Tz;
 
 use crate::nightscout::Entry;
 
@@ -32,16 +33,36 @@ pub struct Band {
 
 /// Group `entries` by local time-of-day and compute the percentile envelope for
 /// each populated bucket, ordered by time of day. Empty buckets are skipped.
+#[cfg(test)]
 pub fn profile(entries: &[Entry]) -> Vec<Band> {
+    profile_in(entries, None)
+}
+
+/// Profile in the followed person's configured timezone. `None` retains the
+/// historical viewer-local behavior.
+pub fn profile_in(entries: &[Entry], timezone: Option<Tz>) -> Vec<Band> {
     let mut buckets: Vec<Vec<f64>> = vec![Vec::new(); BUCKETS];
-    let mut dates: Vec<std::collections::BTreeSet<chrono::NaiveDate>> =
+    let mut dates: Vec<std::collections::BTreeSet<String>> =
         vec![std::collections::BTreeSet::new(); BUCKETS];
     for e in entries {
-        if let Some(dt) = Local.timestamp_millis_opt(e.date).single() {
-            let minute = dt.hour() as i64 * 60 + dt.minute() as i64;
+        let parts = match timezone {
+            Some(tz) => tz.timestamp_millis_opt(e.date).single().map(|dt| {
+                (
+                    dt.hour() as i64 * 60 + dt.minute() as i64,
+                    dt.date_naive().to_string(),
+                )
+            }),
+            None => Local.timestamp_millis_opt(e.date).single().map(|dt| {
+                (
+                    dt.hour() as i64 * 60 + dt.minute() as i64,
+                    dt.date_naive().to_string(),
+                )
+            }),
+        };
+        if let Some((minute, date)) = parts {
             let idx = (minute / BUCKET_MIN).clamp(0, BUCKETS as i64 - 1) as usize;
             buckets[idx].push(e.sgv);
-            dates[idx].insert(dt.date_naive());
+            dates[idx].insert(date);
         }
     }
     let mut out = Vec::new();
@@ -281,6 +302,19 @@ mod tests {
         assert_eq!(bands.len(), 2);
         // Ordered by time of day.
         assert!(bands[0].minute < bands[1].minute);
+    }
+
+    #[test]
+    fn configured_timezone_controls_the_clinical_clock() {
+        let instant = chrono::Utc
+            .with_ymd_and_hms(2026, 1, 15, 12, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        let amsterdam = profile_in(&[entry(100.0, instant)], Some(chrono_tz::Europe::Amsterdam));
+        let new_york = profile_in(&[entry(100.0, instant)], Some(chrono_tz::America::New_York));
+        assert_eq!(amsterdam[0].minute, 13 * 60 + BUCKET_MIN / 2);
+        assert_eq!(new_york[0].minute, 7 * 60 + BUCKET_MIN / 2);
     }
 
     #[test]

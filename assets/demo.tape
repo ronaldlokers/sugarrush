@@ -72,6 +72,7 @@ Sleep 0.8s
 Down
 Down
 Down
+Down
 Enter
 Sleep 1.5s
 Down

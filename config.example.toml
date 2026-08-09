@@ -84,6 +84,7 @@ predict_horizon_minutes = 30   # 0 disables
 # name = "home"
 # url = "https://home.example.com"
 # token = "readonly-token-1"
+# timezone = "Europe/Amsterdam" # IANA zone for this person's AGP and exports
 # # Optional: use a complete alert profile for this person instead of the
 # # top-level [alerts]. The in-app settings screen is the easiest way to create
 # # it and writes every value, including disabled quiet hours and push alerts.

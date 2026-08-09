@@ -143,7 +143,7 @@ fn draw_help(f: &mut Frame, area: Rect, screen: Screen) {
     let settings_rows = [
         ("↑ / ↓ · j / k", "select a setting"),
         ("← / →", "change the selected setting"),
-        ("Enter", "edit a text field (URL, token, push URL)"),
+        ("Enter", "edit text (URL, tokens, timezone, push URL)"),
         ("w", "save to config.toml"),
         ("s / Esc", "back"),
         ("?", "toggle this help"),
@@ -537,7 +537,11 @@ fn fmt_age(ms: i64) -> String {
 
 fn field_controls(field: Field) -> &'static str {
     match field {
-        Field::SiteName | Field::SiteUrl | Field::SiteToken | Field::PushUrl => "Enter to edit",
+        Field::SiteName
+        | Field::SiteUrl
+        | Field::SiteToken
+        | Field::SiteTimezone
+        | Field::PushUrl => "Enter to edit",
         Field::AddSite | Field::RemoveSite | Field::TestAlarm => "Enter to run",
         _ => "← / → to change",
     }
@@ -548,6 +552,7 @@ fn field_detail(field: Field) -> &'static str {
         Field::SiteName => "The name used in follower rows, notifications, logs, and persisted alarm episodes. It must be unique.",
         Field::SiteUrl => "The Nightscout base URL for the selected person. HTTPS keeps the read-only token and readings encrypted in transit.",
         Field::SiteToken => "A dedicated read-only Nightscout token. It is masked here and stored in the owner-only config file.",
+        Field::SiteTimezone => "The followed person's IANA timezone (for example Europe/Amsterdam), used for AGP patterns and clinical exports. Empty means this computer's local time.",
         Field::TestSite => "Fetch this Nightscout site and require a reading from the last hour. New or edited credentials cannot be saved until this passes.",
         Field::AddSite => "Create another followed person without copying the current person's credential. Fill in its name, URL, and token next.",
         Field::RemoveSite => "Remove the selected site from the saved list. At least one site is always retained.",
@@ -1330,7 +1335,12 @@ fn draw_graph_tabs(f: &mut Frame, area: Rect, app: &App) {
 /// Ambulatory Glucose Profile: readings from the last N days folded onto one
 /// 24-hour clock, drawn as a percentile fan (median + 25/75 + 5/95 bands).
 fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
-    let bands = agp::profile(&app.agp_entries);
+    let timezone = app
+        .active_site()
+        .timezone
+        .as_deref()
+        .and_then(|name| name.parse::<chrono_tz::Tz>().ok());
+    let bands = agp::profile_in(&app.agp_entries, timezone);
     // Reading a pattern off a percentile fan is a skill; name the worst one in
     // the title so it doesn't depend on having that skill. The rest are in the
     // exported report, where there's room for all of them.
