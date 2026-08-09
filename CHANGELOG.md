@@ -551,6 +551,10 @@ a `?` keybinding overlay. It also adds a first-run units prompt and an in-app
 
 ### Changed
 
+- **Settings now explain themselves.** On normal-width terminals the field list
+  and a selected-field detail pane use a 55/45 split, while explicit “more”
+  markers show when rows continue above or below the viewport; narrow terminals
+  retain the focused single-pane list.
 - **The AGP now labels what its reference lines mean.** The target range is
   shaded behind the percentile fan, and the low/high rails carry their names
   and values directly on the plot; the persistent legend and bold median remain

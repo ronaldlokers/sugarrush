@@ -7,7 +7,7 @@ Output assets/demo.gif
 Set Shell bash
 Set FontFamily "CaskaydiaMono Nerd Font"
 Set FontSize 15
-Set Width 1200
+Set Width 1600
 Set Height 720
 Set Padding 20
 Set Framerate 24

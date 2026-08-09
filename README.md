@@ -82,7 +82,9 @@ can understand and revisit the arrangement as their independence changes.
 **Yours to shape**
 - In-app **settings screen** (`s`) — edit units, thresholds, alarms, theme,
   and more live, then save back to `config.toml`; the **site URL and token** are
-  editable there too, so a bad token is fixed without leaving the app
+  editable there too, so a bad token is fixed without leaving the app. A detail
+  pane explains the selected field and the list shows when more rows are above
+  or below the viewport
 - Configurable colours (incl. a colorblind-safe preset), graph style, and
   **multiple sites** — `n` to switch between them, `m` for a **follower view**
   that lists everyone you watch at once, worst first
