@@ -63,11 +63,12 @@ pub async fn inspect(cfg: &Config) -> anyhow::Result<Report> {
     // Restore configured order: health output is an API and must not reshuffle
     // whenever severity changes.
     for (site, alerts, _) in profiles {
-        let status = statuses.iter().find(|status| status.name == site.name);
+        let site_id = site.stable_id();
+        let status = statuses.iter().find(|status| status.site_id == site_id);
         let age = status.and_then(|status| status.age_min(now));
         let reachable = status.is_some_and(|status| status.error.is_none());
         let fresh = reachable && age.is_some_and(|minutes| minutes <= alerts.stale_minutes);
-        let delivery = alertlog::latest_delivery(&site.name).and_then(|record| {
+        let delivery = alertlog::latest_delivery(&site_id, &site.name).and_then(|record| {
             Some(DeliveryHealth {
                 attempted_at_ms: record.ts,
                 channel: record.channel?,

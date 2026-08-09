@@ -2023,6 +2023,7 @@ fn deliver(app: &mut App, r: app::Reaction, fetch: &Fetcher) {
             if !app.demo {
                 alertlog::record_delivery(
                     &app.active_site().name,
+                    Some(&app.active_site().stable_id()),
                     "desktop",
                     if accepted { "accepted" } else { "rejected" },
                     a,
@@ -2044,11 +2045,13 @@ fn deliver(app: &mut App, r: app::Reaction, fetch: &Fetcher) {
         // escalation); a dead URL must not fail silently.
         let errors = fetch.errors.clone();
         let site = app.active_site().name.clone();
+        let site_id = app.active_site().stable_id();
         let state = r.state;
         tokio::spawn(async move {
             let accepted = push(&url, &msg).await;
             alertlog::record_delivery(
                 &site,
+                Some(&site_id),
                 "webhook",
                 if accepted { "accepted" } else { "rejected" },
                 state,

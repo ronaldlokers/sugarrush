@@ -212,6 +212,7 @@ pub async fn run(quiet: bool) -> Result<()> {
             if alerts.desktop {
                 crate::alertlog::record_delivery(
                     site,
+                    None,
                     "desktop-test",
                     if accepted { "accepted" } else { "rejected" },
                     crate::alert::Alert::InRange,
@@ -241,6 +242,7 @@ pub async fn run(quiet: bool) -> Result<()> {
                 let accepted = crate::push(url, "sugarrush: alarm self-test").await;
                 crate::alertlog::record_delivery(
                     site,
+                    None,
                     "webhook-test",
                     if accepted { "accepted" } else { "rejected" },
                     crate::alert::Alert::InRange,

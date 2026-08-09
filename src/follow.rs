@@ -21,6 +21,7 @@ use crate::units::Units;
 /// One followed site, reduced to what a caregiver scans for.
 #[derive(Debug, Clone)]
 pub struct SiteStatus {
+    pub site_id: String,
     pub name: String,
     /// The latest reading, or `None` when the site couldn't be read.
     pub latest: Option<Entry>,
@@ -90,10 +91,11 @@ pub async fn poll(sites: &[(Site, Alerts)], now_ms: i64) -> Vec<SiteStatus> {
 }
 
 async fn poll_one(site: &Site, alerts: &Alerts, now_ms: i64) -> SiteStatus {
+    let site_id = site.stable_id();
     let name = site.name.clone();
     let client = match Client::for_site(site) {
         Ok(c) => c,
-        Err(e) => return unreadable(name, e.to_string()),
+        Err(e) => return unreadable(site_id, name, e.to_string()),
     };
     // An hour is enough for the value, the delta, and the staleness check.
     match client.entries_range(now_ms - 3_600_000, now_ms, 24).await {
@@ -109,6 +111,7 @@ async fn poll_one(site: &Site, alerts: &Alerts, now_ms: i64) -> SiteStatus {
                 None => Alert::Stale,
             };
             SiteStatus {
+                site_id,
                 name,
                 latest,
                 delta,
@@ -117,12 +120,13 @@ async fn poll_one(site: &Site, alerts: &Alerts, now_ms: i64) -> SiteStatus {
                 error: None,
             }
         }
-        Err(e) => unreadable(name, e.to_string()),
+        Err(e) => unreadable(site_id, name, e.to_string()),
     }
 }
 
-fn unreadable(name: String, error: String) -> SiteStatus {
+fn unreadable(site_id: String, name: String, error: String) -> SiteStatus {
     SiteStatus {
+        site_id,
         name,
         latest: None,
         delta: None,
@@ -165,6 +169,7 @@ pub fn demo(now_ms: i64, alerts: &[Alerts]) -> Vec<SiteStatus> {
             };
             let profile = alerts.get(idx).unwrap_or(&alerts[0]);
             SiteStatus {
+                site_id: name.into(),
                 name: name.into(),
                 latest: Some(latest),
                 delta: history
@@ -195,6 +200,7 @@ mod tests {
 
     fn status(name: &str, alert: Alert) -> SiteStatus {
         SiteStatus {
+            site_id: name.into(),
             name: name.into(),
             latest: Some(entry(100.0)),
             delta: Some(2.0),
@@ -222,7 +228,11 @@ mod tests {
         let mut sites = vec![
             status("alice", Alert::InRange),
             status("bob", Alert::Low),
-            unreadable("carol".into(), "connection refused".into()),
+            unreadable(
+                "carol-id".into(),
+                "carol".into(),
+                "connection refused".into(),
+            ),
         ];
         sort_worst_first(&mut sites);
         // Silence from someone you're responsible for outranks a mild low.

@@ -632,16 +632,16 @@ pub async fn run() -> Result<()> {
                     w.push_in_flight = false;
                     if result.accepted {
                         w.pending_push = None;
-                        crate::alertlog::record_delivery(&w.name, "webhook", "accepted", result.state);
+                        crate::alertlog::record_delivery(&w.name, Some(&w.id), "webhook", "accepted", result.state);
                     } else if let Some(pending) = w.pending_push.as_mut() {
                         pending.attempts = pending.attempts.saturating_add(1);
                         if pending.attempts >= 3 {
-                            crate::alertlog::record_delivery(&w.name, "webhook", "rejected", result.state);
+                            crate::alertlog::record_delivery(&w.name, Some(&w.id), "webhook", "rejected", result.state);
                             eprintln!("sugarrush watch [{}]: push failed after 3 bounded attempts", w.name);
                             w.pending_push = None;
                         } else {
                             pending.next_attempt_ms = now_ms() + (1_i64 << pending.attempts) * 30_000;
-                            crate::alertlog::record_delivery(&w.name, "webhook", "retrying", result.state);
+                            crate::alertlog::record_delivery(&w.name, Some(&w.id), "webhook", "retrying", result.state);
                         }
                     }
                     let mut state = snapshot(&watched);
@@ -803,6 +803,7 @@ fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reaction {
             };
             crate::alertlog::record_delivery(
                 &w.name,
+                Some(&w.id),
                 "desktop",
                 if accepted { "accepted" } else { "rejected" },
                 a,

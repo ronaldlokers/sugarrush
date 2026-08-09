@@ -52,6 +52,8 @@ pub struct Record {
     /// Epoch ms.
     pub ts: i64,
     pub site: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site_id: Option<String>,
     /// `"alert"` when an episode began, `"recovered"` when it ended.
     pub event: String,
     /// The alert label, e.g. `"URGENT LOW"`.
@@ -82,6 +84,7 @@ pub fn record(site: &str, event: &str, state: Alert, sgv: Option<f64>) {
     let entry = Record {
         ts: crate::now_ms(),
         site: site.to_string(),
+        site_id: None,
         event: event.to_string(),
         state: state.label().to_string(),
         sgv,
@@ -94,10 +97,17 @@ pub fn record(site: &str, event: &str, state: Alert, sgv: Option<f64>) {
 /// Persist a privacy-safe channel outcome. "accepted" means only that the
 /// local API or remote endpoint accepted the request; it never means a person
 /// saw, read, or heard it.
-pub fn record_delivery(site: &str, channel: &str, outcome: &str, state: Alert) {
+pub fn record_delivery(
+    site: &str,
+    site_id: Option<&str>,
+    channel: &str,
+    outcome: &str,
+    state: Alert,
+) {
     let entry = Record {
         ts: crate::now_ms(),
         site: site.to_string(),
+        site_id: site_id.map(str::to_string),
         event: "delivery".into(),
         state: state.label().to_string(),
         sgv: None,
@@ -107,11 +117,19 @@ pub fn record_delivery(site: &str, channel: &str, outcome: &str, state: Alert) {
     let _ = append(&entry);
 }
 
-pub fn latest_delivery(site: &str) -> Option<Record> {
+pub fn latest_delivery(site_id: &str, legacy_name: &str) -> Option<Record> {
     read(crate::now_ms() - RETAIN_DAYS * 86_400_000)
         .into_iter()
         .rev()
-        .find(|record| record.site == site && record.event == "delivery")
+        .find(|record| delivery_matches(record, site_id, legacy_name))
+}
+
+fn delivery_matches(record: &Record, site_id: &str, legacy_name: &str) -> bool {
+    record.event == "delivery"
+        && record
+            .site_id
+            .as_deref()
+            .map_or(record.site == legacy_name, |id| id == site_id)
 }
 
 fn append(entry: &Record) -> Result<()> {
@@ -428,6 +446,7 @@ mod tests {
         Record {
             ts,
             site: site.into(),
+            site_id: None,
             event: event.into(),
             state: state.into(),
             sgv: Some(45.0),
@@ -441,6 +460,7 @@ mod tests {
         let record = Record {
             ts: T,
             site: "alice".into(),
+            site_id: Some("site-alice".into()),
             event: "delivery".into(),
             state: "URGENT LOW".into(),
             sgv: None,
@@ -452,6 +472,17 @@ mod tests {
         assert!(!json.contains("token"));
         assert!(!json.contains("sgv"));
         assert_eq!(episodes(&[record]), Vec::new());
+    }
+
+    #[test]
+    fn immutable_delivery_identity_beats_a_reused_name() {
+        let mut record = rec(T, "Alex", "delivery", "LOW");
+        record.site_id = Some("old-person".into());
+        assert!(!delivery_matches(&record, "new-person", "Alex"));
+        assert!(delivery_matches(&record, "old-person", "Renamed Alex"));
+
+        record.site_id = None;
+        assert!(delivery_matches(&record, "new-person", "Alex"));
     }
 
     const T: i64 = 1_700_000_000_000;
