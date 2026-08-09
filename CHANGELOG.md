@@ -8,6 +8,16 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **A slow or wedged Nightscout no longer freezes the dashboard.** The run
+  loop waited for the whole fetch chain — up to five requests at a 12-second
+  timeout each — before it would handle a keypress, redraw, or sound the alarm.
+  A site that accepted the connection and then went quiet left an app that
+  looked alive and answered nothing, with the alarm silent for the duration.
+  Fetches now run in the background: keys, the graph and the alarm keep working
+  throughout, and the reading updates when the data lands.
+- **The alarm no longer fires a burst after a stall.** Missed ticks were
+  replayed back-to-back, so waking a suspended laptop set off one alarm sound
+  per missed three-second tick instead of one alarm.
 - **A warning no longer hides the way to fix it.** Any error or warning took
   over the whole footer, including `? help` and `s settings` — and two of them
   (a readable config file, an unencrypted site) never go away on their own, so

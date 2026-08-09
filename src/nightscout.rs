@@ -45,6 +45,7 @@ impl Entry {
     }
 }
 
+#[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
     base_url: String,
@@ -507,6 +508,28 @@ pub mod fake {
             name: "fake".into(),
             url: format!("http://127.0.0.1:{port}"),
             token: "test-token".into(),
+        }
+    }
+
+    /// Accept connections and never answer them. Models the failure mode the
+    /// run loop has to survive: a Nightscout that is reachable but wedged, so
+    /// every request runs to the client's own timeout.
+    pub async fn serve_stalled() -> Site {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            loop {
+                let Ok((sock, _)) = listener.accept().await else {
+                    return;
+                };
+                held.push(sock); // hold it open, answer nothing
+            }
+        });
+        Site {
+            name: "stalled".into(),
+            url: format!("http://127.0.0.1:{port}"),
+            token: String::new(),
         }
     }
 }
