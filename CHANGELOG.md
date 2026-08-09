@@ -8,6 +8,18 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **`sugarrush about` is now a real diagnostic.** The issue template asks for
+  its output, and it printed a version number and the safety note — so every
+  bug report arrived without the answers that matter for a CGM alarm. It now
+  reports the build and toolchain, terminal and session type, config path and
+  validity, site count with hosts (not URLs) and whether a token is set,
+  thresholds, which alarm channels are switched on, whether a watcher or
+  dashboard is running, any active snooze, and how many alerts were logged this
+  week. No secrets: the token is reported as set or not set.
+- **`sugarrush --man` writes a man page.** Packagers had nothing to install as
+  `sugarrush.1`, so `man sugarrush` said "No manual entry" everywhere. The man
+  page, `--help` and the README command table now all render from one table in
+  the source, with a test that keeps the README in step.
 - **`sugarrush alerts` shows what the alarm has actually done.** Nothing kept a
   record, so "did it go off last night, and for how long?" was unanswerable —
   the systemd journal only exists if you run the daemon that way, is rotated by
