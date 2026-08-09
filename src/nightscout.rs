@@ -12,6 +12,7 @@ use crate::config::Site;
 
 const PRED_STEP_MS: i64 = 5 * 60_000;
 const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_FUTURE_SKEW_MS: i64 = 5 * 60_000;
 
 /// Lowest SGV treated as a real glucose reading (mg/dL). Nightscout encodes
 /// sensor errors as small codes (0–12); anything below a physiological floor is
@@ -102,7 +103,7 @@ impl Client {
             })?;
         let entries: Vec<Entry> =
             bounded_json(check_status(resp)?, "failed to parse Nightscout response").await?;
-        Ok(clean_newest_first(entries))
+        Ok(clean_newest_first(entries, end_ms))
     }
 
     /// Fetch the latest `/api/v1/devicestatus` record and read both things we
@@ -474,10 +475,13 @@ impl std::error::Error for NsError {
 /// `entries[0]` as *the* latest reading. Nightscout normally sorts descending
 /// by `date`, but a mirror, proxy, or `find[]` query variation that returns
 /// another order would silently make an old reading the displayed one.
-fn clean_newest_first(entries: Vec<Entry>) -> Vec<Entry> {
+fn clean_newest_first(entries: Vec<Entry>, requested_end_ms: i64) -> Vec<Entry> {
     let mut out: Vec<Entry> = entries
         .into_iter()
-        .filter(|e| e.sgv >= MIN_PHYSIOLOGICAL_SGV)
+        .filter(|e| {
+            e.sgv >= MIN_PHYSIOLOGICAL_SGV
+                && e.date <= requested_end_ms.saturating_add(MAX_FUTURE_SKEW_MS)
+        })
         .collect();
     out.sort_by_key(|e| std::cmp::Reverse(e.date));
     // A site fed by two uploaders (xDrip plus a bridge, say) holds the same
@@ -621,11 +625,14 @@ mod tests {
 
     #[test]
     fn newest_first_regardless_of_server_order() {
-        let out = clean_newest_first(vec![
-            entry(100.0, 1_000),
-            entry(120.0, 3_000),
-            entry(110.0, 2_000),
-        ]);
+        let out = clean_newest_first(
+            vec![
+                entry(100.0, 1_000),
+                entry(120.0, 3_000),
+                entry(110.0, 2_000),
+            ],
+            3_000,
+        );
         assert_eq!(
             out.iter().map(|e| e.date).collect::<Vec<_>>(),
             vec![3_000, 2_000, 1_000]
@@ -869,19 +876,26 @@ mod tests {
     fn duplicate_timestamps_are_collapsed() {
         // Two uploaders posting the same reading. Left in, the delta between
         // the newest two is 0 during a real rise.
-        let out = clean_newest_first(vec![
-            entry(120.0, 2_000),
-            entry(120.0, 2_000),
-            entry(95.0, 1_000),
-        ]);
+        let out = clean_newest_first(
+            vec![entry(120.0, 2_000), entry(120.0, 2_000), entry(95.0, 1_000)],
+            2_000,
+        );
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].sgv - out[1].sgv, 25.0);
     }
 
     #[test]
     fn drops_sensor_error_codes() {
-        let out = clean_newest_first(vec![entry(5.0, 2_000), entry(90.0, 1_000)]);
+        let out = clean_newest_first(vec![entry(5.0, 2_000), entry(90.0, 1_000)], 2_000);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].sgv, 90.0);
+    }
+
+    #[test]
+    fn far_future_readings_cannot_suppress_staleness() {
+        let now = 1_000_000;
+        let out = clean_newest_first(vec![entry(100.0, now), entry(110.0, now + 86_400_000)], now);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].date, now);
     }
 }

@@ -95,6 +95,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Alarm runtime edge cases now fail visibly without blocking detection.** The
+  watcher warns when a configured push destination uses cleartext HTTP,
+  implausibly future-dated readings cannot suppress stale-data detection,
+  audio-player discovery runs off the async alarm loop, and the documented
+  delivery policy explains why failed one-shot notifications are surfaced but
+  not blindly replayed after recovery.
 - **Local files and Nightscout responses now have explicit safety bounds.**
   Alarm WAVs live in an owner-only runtime directory instead of predictable
   shared-temp paths, alert-log append and compaction are serialized across the
