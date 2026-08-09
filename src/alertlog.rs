@@ -42,6 +42,12 @@ pub struct Record {
     /// itself the story for a sensor gap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sgv: Option<f64>,
+    /// Delivery channel and outcome for `event = "delivery"`. These contain
+    /// no destination URL, token, reading, or message body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
 }
 
 fn path() -> PathBuf {
@@ -61,8 +67,33 @@ pub fn record(site: &str, event: &str, state: Alert, sgv: Option<f64>) {
         event: event.to_string(),
         state: state.label().to_string(),
         sgv,
+        channel: None,
+        outcome: None,
     };
     let _ = append(&entry);
+}
+
+/// Persist a privacy-safe channel outcome. "accepted" means only that the
+/// local API or remote endpoint accepted the request; it never means a person
+/// saw, read, or heard it.
+pub fn record_delivery(site: &str, channel: &str, outcome: &str, state: Alert) {
+    let entry = Record {
+        ts: crate::now_ms(),
+        site: site.to_string(),
+        event: "delivery".into(),
+        state: state.label().to_string(),
+        sgv: None,
+        channel: Some(channel.to_string()),
+        outcome: Some(outcome.to_string()),
+    };
+    let _ = append(&entry);
+}
+
+pub fn latest_delivery(site: &str) -> Option<Record> {
+    read(crate::now_ms() - RETAIN_DAYS * 86_400_000)
+        .into_iter()
+        .rev()
+        .find(|record| record.site == site && record.event == "delivery")
 }
 
 fn append(entry: &Record) -> Result<()> {
@@ -289,6 +320,27 @@ pub fn report(days: i64, units: Units) -> String {
         out.push_str(&format!(" ({ongoing} still open, not counted)"));
     }
     out.push('\n');
+    let deliveries: Vec<_> = records
+        .iter()
+        .filter(|record| record.event == "delivery")
+        .collect();
+    if !deliveries.is_empty() {
+        out.push_str("\nDelivery attempts (accepted does not mean seen or heard)\n");
+        out.push_str("---------------------------------------------------------\n");
+        for record in deliveries {
+            let when = Local
+                .timestamp_millis_opt(record.ts)
+                .single()
+                .map(|time| time.format("%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| "--".into());
+            out.push_str(&format!(
+                "{when}  [{}] {} {}\n",
+                record.site,
+                record.channel.as_deref().unwrap_or("unknown"),
+                record.outcome.as_deref().unwrap_or("unknown")
+            ));
+        }
+    }
     out
 }
 
@@ -303,7 +355,27 @@ mod tests {
             event: event.into(),
             state: state.into(),
             sgv: Some(45.0),
+            channel: None,
+            outcome: None,
         }
+    }
+
+    #[test]
+    fn delivery_records_carry_no_health_value_or_destination() {
+        let record = Record {
+            ts: T,
+            site: "alice".into(),
+            event: "delivery".into(),
+            state: "URGENT LOW".into(),
+            sgv: None,
+            channel: Some("webhook".into()),
+            outcome: Some("accepted".into()),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(!json.contains("https://"));
+        assert!(!json.contains("token"));
+        assert!(!json.contains("sgv"));
+        assert_eq!(episodes(&[record]), Vec::new());
     }
 
     const T: i64 = 1_700_000_000_000;

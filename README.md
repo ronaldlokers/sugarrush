@@ -277,6 +277,17 @@ An episode still running shows `—` rather than a duration and isn't counted:
 one we haven't seen the end of has no length yet, and guessing would be worse
 than saying so.
 
+The same report records privacy-safe channel outcomes (`accepted` or
+`rejected`) without storing webhook destinations, tokens, messages, or glucose
+values. “Accepted” only means the local notification API or remote endpoint
+accepted the request; it cannot prove anyone saw, read, or heard it.
+
+For external monitoring, `sugarrush health --json` reports watcher liveness,
+per-site endpoint/data freshness, active snoozes, alarm state, and the last
+delivery attempt. It exits non-zero when the watcher is down or any site's data
+is stale, and deliberately keeps process health, data health, and delivery
+outcomes as separate fields rather than claiming one overall “safe” state.
+
 ## Snoozing the alarm
 
 `sugarrush snooze` silences a running `sugarrush watch` — the alarm daemon —
@@ -425,6 +436,7 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush watch --test [--quiet]` | check that every alarm channel actually works |
 | `sugarrush snooze [15m\|2h\|off] [--site NAME\|--all]` | silence the alarm daemon without stopping it |
 | `sugarrush alerts [--days N]` | what the alarm has actually done |
+| `sugarrush health --json` | machine-readable watcher, data and delivery health |
 | `sugarrush export [--days N] [--out DIR]` | CSV + a clinical summary |
 | `sugarrush status [--format FORMAT]` | one line for a status bar |
 | `sugarrush waybar` | alias for --format waybar |
