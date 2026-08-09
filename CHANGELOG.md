@@ -8,6 +8,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The documentation now covers the human and technical on-ramp for
+  following.** It explains consent, shared expectations, read-only access and
+  the limits of remote monitoring, then points Libre and Dexcom users to the
+  maintained Nightscout uploader paths so a new user can get readings into
+  Nightscout before configuring sugarrush.
 - **`sugarrush about` is now a real diagnostic.** The issue template asks for
   its output, and it printed a version number and the safety note — so every
   bug report arrived without the answers that matter for a CGM alarm. It now

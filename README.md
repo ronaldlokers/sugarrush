@@ -25,6 +25,21 @@ sugarrush --demo
 That's the recording above. When you're ready, point it at your own site
 ([configure](#configuration)).
 
+## Who this is for
+
+You can use sugarrush for your own readings or to follow someone else's
+Nightscout site. Following is a relationship, not just a URL: the person whose
+data is shown should know what you can see, why you are watching, and when you
+will act on an alert. Agree those expectations together, use a separate
+read-only token, and remove that access when it is no longer wanted.
+
+The person wearing the sensor remains the authority on treatment and on who
+may see their health data. Sugarrush is an additional display and alarm layer;
+it does not replace their official CGM app, agreed care plan, or emergency
+arrangements. This matters especially for children and other people who may not
+be able to grant or withdraw access on their own: involve them at a level they
+can understand and revisit the arrangement as their independence changes.
+
 ## What it does
 
 **At a glance**
@@ -108,6 +123,27 @@ mkdir -p ~/.config/sugarrush
 cp config.example.toml ~/.config/sugarrush/config.toml
 chmod 600 ~/.config/sugarrush/config.toml
 ```
+
+### Getting CGM data into Nightscout
+
+Sugarrush reads an existing Nightscout site; it does not connect directly to a
+Libre or Dexcom sensor. If you do not see fresh readings in Nightscout itself,
+set up or repair the uploader before configuring sugarrush. Nightscout's
+[supported uploaders guide](https://nightscout.github.io/uploader/uploaders/)
+is the maintained starting point because the right path depends on sensor,
+phone, region, and whether a loop app is already uploading.
+
+- **Dexcom G6/G7/ONE/ONE+/Stelo:** Nightscout can pull from Dexcom Share using
+  its connector, or an uploader such as xDrip+ / xDrip4iOS can send readings.
+  If a DIY loop already uploads, Nightscout recommends using that single path
+  instead of adding the Share bridge.
+- **FreeStyle Libre:** the route varies more by generation and region. Current
+  options include Juggluco, xDrip+ / xDrip4iOS, or a LibreView-to-Nightscout
+  connector; older Libre sensors may need a separate transmitter.
+
+Confirm a current value and timestamp on the Nightscout web page first. Then
+run sugarrush and enter the site's base URL plus a dedicated read-only token.
+Do not put Dexcom, LibreView, or Nightscout admin credentials in sugarrush.
 
 ### Nightscout token (read-only)
 
@@ -307,6 +343,12 @@ With more than one `[[sites]]` entry it watches **all of them**, each with its
 own independent alert state — a low for one person doesn't silence the
 announcement for another — and names whose reading it is in every notification
 and log line.
+
+Before following another person, agree what “watching” means: whether the
+watcher is expected to respond, which hours are covered, how to contact each
+other, and what happens if Nightscout or the watcher is offline. A green screen
+is not proof that another person is actively watching; use the watcher status,
+alarm self-test, and an out-of-band check-in for safety-critical arrangements.
 
 The dashboard shows `⚑ watcher up` in its header while the watcher is running,
 and warns you with `⚠ watcher stopped` if it was running and then stopped — so
