@@ -261,6 +261,9 @@ pub struct App {
     /// Carb/insulin treatments within the current window.
     pub treatments: Vec<Treatment>,
     /// Epoch ms of the latest sensor start/change, if known.
+    /// The last state `react` reported, so it can tell an episode ending from
+    /// one that was never running.
+    last_reported: Option<Alert>,
     pub sensor_start_ms: Option<i64>,
     /// When the sensor-start lookup last ran. A sensor lasts ten to fourteen
     /// days, so asking every refresh cost a second `/treatments` request per
@@ -370,6 +373,35 @@ pub struct App {
     pub show_help: bool,
 }
 
+/// Everything one pass of the alarm machine decided to announce.
+///
+/// The reaction sequence used to be written out twice — once in the TUI's
+/// `apply`, once in `watch::react` — and a third partial copy on the TUI's
+/// 3-second alarm ticker. They had already drifted: the daemon called
+/// `update_urgent` before consuming the notification and the TUI called it
+/// after, and the TUI only consumed a notification when desktop notifications
+/// were *enabled*, so switching them on could fire a queued announcement for an
+/// episode that ended hours earlier.
+///
+/// `App::react` is now the only path. It decides *what* happened; each front
+/// end decides how to deliver it (journal line, desktop toast, webhook, sound).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reaction {
+    /// The state after this pass.
+    pub state: Alert,
+    /// A desktop notification is due for this alert.
+    pub notification: Option<Alert>,
+    /// A predictive ("heading low") warning is due.
+    pub predictive: Option<String>,
+    /// A webhook POST is due: the URL and the message.
+    pub push: Option<(String, String)>,
+    /// An alerting episode ended on this pass. A journal with "URGENT LOW" and
+    /// nothing after it doesn't say whether it lasted two minutes or all night.
+    pub recovered: bool,
+    /// The audible alarm should be sounding right now.
+    pub sound: bool,
+}
+
 impl App {
     pub fn new(cfg: &Config, alerts: Alerts, sites: Vec<Site>) -> Self {
         Self {
@@ -387,6 +419,7 @@ impl App {
             predictions: Vec::new(),
             device: DeviceStatus::default(),
             treatments: Vec::new(),
+            last_reported: None,
             sensor_start_ms: None,
             sensor_fetched_ms: 0,
             alerts,
@@ -876,6 +909,35 @@ impl App {
             let mins = self.alerts.snooze_minutes.max(1);
             self.snooze_until = Some(now_ms + mins * 60_000);
             self.status = Some(format!("alarm snoozed {mins}m"));
+        }
+    }
+
+    /// Run one pass of the alarm machine and report what to announce.
+    ///
+    /// Every consumer of a pending announcement lives here, and consumption is
+    /// unconditional — a front end that can't deliver something drops it rather
+    /// than leaving it queued for later. This is called on every refresh *and*
+    /// on the TUI's 3-second tick, so a transition is announced within seconds
+    /// rather than waiting out the refresh interval.
+    pub fn react(&mut self, now_ms: i64) -> Reaction {
+        let state = self.evaluate_alert(now_ms);
+        // Before the announcements: `take_push` reads the episode timers this
+        // maintains, so escalation can fire on the pass that earns it.
+        self.update_urgent(now_ms);
+
+        let recovered = self.last_reported.is_some_and(Alert::is_alerting) && !state.is_alerting();
+        self.last_reported = Some(state);
+
+        Reaction {
+            state,
+            notification: self.take_notification(),
+            predictive: self.take_predictive(now_ms),
+            push: self
+                .take_push(now_ms)
+                .zip(self.alerts.push_url.clone())
+                .map(|(msg, url)| (url, msg)),
+            recovered,
+            sound: self.alarm_active(now_ms),
         }
     }
 
@@ -1396,6 +1458,111 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_700_000_000_000;
+
+    /// The audible alarm and the notification channels used to run on separate
+    /// clocks. The dashboard's 3-second ticker classified and sounded but never
+    /// consumed a notification or a push, so a sensor gap that crossed into
+    /// Stale between refreshes started beeping immediately while the desktop
+    /// notification and the escalation webhook waited out the whole refresh
+    /// interval — 60 seconds by default, and as long as the user configured.
+    ///
+    /// One pass, one decision: whatever sounds also announces.
+    #[test]
+    fn a_gap_announces_on_the_same_pass_that_sounds_it() {
+        let mut a = app();
+        a.alerts.push_url = Some("http://example.invalid/hook".into());
+        a.alerts.push_enabled = true;
+        // A reading that was fine when it arrived.
+        a.entries = vec![entry(100.0, NOW)];
+        let r = a.react(NOW);
+        assert_eq!(r.state, Alert::InRange);
+        assert!(!r.sound);
+
+        // Nothing new arrives. Well past the staleness threshold, the *same*
+        // pass that starts the alarm must also produce the announcements —
+        // no fetch has happened, and none is needed to know this.
+        let later = NOW + (a.alerts.stale_minutes + 5) * 60_000;
+        let r = a.react(later);
+        assert_eq!(r.state, Alert::Stale);
+        assert!(r.sound, "a sensor gap should sound");
+        assert_eq!(
+            r.notification,
+            Some(Alert::Stale),
+            "…and announce, on the same pass"
+        );
+        assert!(r.push.is_some(), "…and escalate, on the same pass");
+    }
+
+    /// Consumption is unconditional: the machine advances whether or not the
+    /// front end can deliver. The dashboard used to call `take_notification`
+    /// only inside `if app.alerts.desktop`, so the debounce marker went stale
+    /// whenever notifications were off and the two front ends disagreed about
+    /// what had already been announced.
+    #[test]
+    fn a_notification_is_consumed_even_when_it_cannot_be_delivered() {
+        let mut a = app();
+        a.alerts.desktop = false;
+        a.entries = vec![entry(40.0, NOW)];
+
+        let r = a.react(NOW);
+        assert_eq!(r.notification, Some(Alert::UrgentLow));
+
+        // Switching desktop notifications on must not resurrect it.
+        a.alerts.desktop = true;
+        assert_eq!(
+            a.react(NOW).notification,
+            None,
+            "an announcement already consumed must not fire again later"
+        );
+    }
+
+    /// `take_push` reads the episode timers `update_urgent` maintains, so the
+    /// order between them is load-bearing and now has exactly one definition.
+    #[test]
+    fn escalation_fires_on_the_pass_that_earns_it() {
+        let mut a = app();
+        a.alerts.push_url = Some("http://example.invalid/hook".into());
+        a.alerts.push_enabled = true;
+        a.alerts.escalate_minutes = 10;
+        a.entries = vec![entry(40.0, NOW)];
+
+        // Onset: the first push.
+        let r = a.react(NOW);
+        assert!(r.push.is_some(), "urgent onset should push");
+
+        // Still urgent, nothing new to say.
+        a.entries = vec![entry(40.0, NOW + 60_000)];
+        assert!(a.react(NOW + 60_000).push.is_none());
+
+        // Ten minutes in, unacknowledged: the escalation, on this pass.
+        a.entries = vec![entry(40.0, NOW + 600_000)];
+        let r = a.react(NOW + 600_000);
+        let (_, msg) = r.push.expect("escalation should push");
+        assert!(msg.contains("STILL"), "got {msg:?}");
+    }
+
+    /// An episode ending is reportable exactly once, and only if one was
+    /// actually running.
+    #[test]
+    fn recovery_is_reported_once_and_only_after_an_alarm() {
+        let mut a = app();
+
+        // In range from the start: nothing recovered.
+        a.entries = vec![entry(100.0, NOW)];
+        assert!(!a.react(NOW).recovered);
+
+        a.entries = vec![entry(40.0, NOW + 60_000)];
+        assert!(!a.react(NOW + 60_000).recovered);
+
+        a.entries = vec![entry(100.0, NOW + 120_000)];
+        assert!(a.react(NOW + 120_000).recovered, "the low ended");
+
+        a.entries = vec![entry(100.0, NOW + 180_000)];
+        assert!(
+            !a.react(NOW + 180_000).recovered,
+            "recovery is news once, not every pass afterwards"
+        );
+    }
 
     /// Two settings rows answer ←/→ with a hint instead of a change. The tail
     /// of `settings_adjust` used to clear the status unconditionally, so both

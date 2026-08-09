@@ -23,6 +23,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **A sensor gap now notifies and escalates as fast as it starts beeping.** The
+  audible alarm ran on a 3-second tick while notifications and the escalation
+  webhook only went out on a refresh, so a gap that crossed into "no recent
+  readings" between refreshes sounded immediately and then stayed silent on
+  every other channel for up to a full refresh interval. All channels now fire
+  on the same pass.
 - **Refreshes are faster and ask for less.** The five supplementary reads
   (treatments, device status, sensor age, history, overview) were awaited one
   after another, costing the sum of five round trips to your Nightscout; they

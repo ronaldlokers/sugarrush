@@ -338,22 +338,26 @@ pub async fn run() -> Result<()> {
             }
             _ = alarm_ticker.tick() => {
                 let now = now_ms();
+                // The same reaction the poll runs, not a partial copy of it:
+                // re-classifying here is what makes a sensor gap start sounding
+                // within seconds instead of waiting out the poll interval, and
+                // routing it through `react` means the announcement that comes
+                // with it goes out on the same schedule.
+                //
                 // Any site in an urgent state sounds the alarm; the tone comes
                 // from the worst of them, so a low is never masked by a high
                 // somewhere else.
-                let mut worst: Option<&App> = None;
+                let mut worst: Option<(Alert, sound::Tone)> = None;
                 for w in watched.iter_mut() {
-                    w.app.evaluate_alert(now);
-                    w.app.update_urgent(now);
-                    if w.app.alarm_active(now)
-                        && worst.is_none_or(|c| w.app.alert.severity() < c.alert.severity())
-                    {
-                        worst = Some(&w.app);
+                    let r = react(w, now, multi).await;
+                    let alert = w.app.alert;
+                    if r.sound && worst.is_none_or(|(a, _)| alert.severity() < a.severity()) {
+                        worst = Some((alert, w.app.alarm_tone()));
                     }
                 }
-                if let Some(app) = worst {
+                if let Some((_, tone)) = worst {
                     if !deferring(now) {
-                        sound::alarm(app.alarm_tone());
+                        sound::alarm(tone);
                     }
                 }
             }
@@ -404,8 +408,13 @@ async fn poll(app: &mut App, client: &Client, now_ms: i64) -> Result<()> {
     Ok(())
 }
 
-/// Classify and act: notify, push, and warn about a forecast crossing.
-async fn react(w: &mut Watched, now_ms: i64, multi: bool) {
+/// Deliver the alarm machine's reaction to the journal, the desktop and the
+/// webhook.
+///
+/// The sequence itself lives in `App::react` — this used to reimplement it,
+/// and had already drifted from the dashboard's copy over where
+/// `update_urgent` sat relative to the announcements.
+async fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reaction {
     // Whose reading this is only matters when there's more than one person
     // being watched; prefixing every line with "default" otherwise is noise.
     let who = if multi {
@@ -414,24 +423,22 @@ async fn react(w: &mut Watched, now_ms: i64, multi: bool) {
         String::new()
     };
     let app = &mut w.app;
-    let last_logged = &mut w.last_logged;
-    let state = app.evaluate_alert(now_ms);
-    app.update_urgent(now_ms);
+    let r = app.react(now_ms);
 
     if deferring(now_ms) {
-        // Still classify (so episode state stays correct and a later handover
-        // is seamless), but let the dashboard do the announcing. Track the
-        // state anyway, so a low that cleared while the dashboard was up isn't
-        // reported as a recovery the moment it closes.
-        *last_logged = Some(state);
-        return;
+        // The dashboard is up and doing the announcing. Everything above still
+        // ran, so episode state stays correct and a later handover is seamless;
+        // the announcements are dropped rather than held, or they would all
+        // arrive at once the moment the dashboard closed.
+        w.last_logged = Some(r.state);
+        return r;
     }
 
     // Log every transition, then notify if desktop notifications are on. The
     // logging is deliberately outside that check: someone running the watcher
     // with `desktop = false` (push only, or just the audible alarm) still needs
     // a journal that says what happened and when.
-    if let Some(a) = app.take_notification() {
+    if let Some(a) = r.notification {
         println!("{} · {who}{}", stamp(now_ms), a.label());
         if app.alerts.desktop {
             // The notification names the site, or a caregiver gets "URGENT
@@ -448,7 +455,7 @@ async fn react(w: &mut Watched, now_ms: i64, multi: bool) {
             }
         }
     }
-    if let Some(msg) = app.take_predictive(now_ms) {
+    if let Some(msg) = r.predictive.clone() {
         println!("{} · {who}{msg}", stamp(now_ms));
         if app.alerts.desktop {
             if app.alerts.notify_content {
@@ -460,21 +467,20 @@ async fn react(w: &mut Watched, now_ms: i64, multi: bool) {
     }
     // An alarm that ends is news too: a journal with "URGENT LOW" and nothing
     // after it doesn't say whether it lasted two minutes or all night.
-    if last_logged.is_some_and(Alert::is_alerting) && !state.is_alerting() {
-        println!("{} · {who}recovered · {}", stamp(now_ms), state.label());
+    if r.recovered {
+        println!("{} · {who}recovered · {}", stamp(now_ms), r.state.label());
     }
-    *last_logged = Some(state);
+    w.last_logged = Some(r.state);
 
-    if let Some(msg) = app.take_push(now_ms) {
-        if let Some(url) = app.alerts.push_url.clone() {
-            if !crate::push(&url, &msg).await {
-                eprintln!("sugarrush watch: push failed — check push_url");
-            }
+    if let Some((url, msg)) = r.push.clone() {
+        if !crate::push(&url, &msg).await {
+            eprintln!("sugarrush watch: push failed — check push_url");
         }
     }
-    if state == Alert::Stale && !app.online {
+    if r.state == Alert::Stale && !w.app.online {
         println!("{} · {who}offline", stamp(now_ms));
     }
+    r
 }
 
 /// A one-line "still here, and here's what I can see" summary, so an otherwise
