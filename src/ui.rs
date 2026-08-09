@@ -702,48 +702,94 @@ fn draw_followers(f: &mut Frame, app: &App) {
     let inner = block.inner(chunks[1]);
     f.render_widget(block, chunks[1]);
 
-    let lines: Vec<Line> = if app.followers.is_empty() {
+    let mut lines: Vec<Line> = if app.followers.is_empty() {
         vec![Line::from(format!("  {}", empty_reason(app)))]
     } else {
-        app.followers
-            .iter()
-            .map(|s| {
-                let color = match s.alert {
-                    crate::alert::Alert::UrgentLow | crate::alert::Alert::UrgentHigh => {
-                        app.theme.urgent
-                    }
-                    crate::alert::Alert::Low => app.theme.low,
-                    crate::alert::Alert::High => app.theme.high,
-                    crate::alert::Alert::Stale => Color::DarkGray,
-                    crate::alert::Alert::InRange => app.theme.in_range,
-                };
-                // The age is what tells you whether to trust the value, so it
-                // sits next to it rather than at the end of the row.
-                let age = match s.age_min(now) {
-                    Some(m) => format!("{m}m ago"),
-                    None => s.error.clone().unwrap_or_else(|| "no data".into()),
-                };
-                Line::from(vec![
-                    Span::styled(
-                        format!("  {:<12}", s.name),
-                        Style::default().add_modifier(Modifier::BOLD),
+        let wide = inner.width >= 82;
+        let mut rows: Vec<Line> = Vec::with_capacity(app.followers.len() + 1);
+        rows.push(Line::from(Span::styled(
+            if wide {
+                format!(
+                    "  {:<12} {:>9} {:>7}  {:<18} {:<10} {}",
+                    "PERSON",
+                    app.units.label(),
+                    "DELTA",
+                    "STATE",
+                    "AGE",
+                    "LAST HOUR"
+                )
+            } else {
+                format!(
+                    "  {:<10} {:>7} {:<13} {}",
+                    "PERSON",
+                    app.units.label(),
+                    "STATE",
+                    "TREND"
+                )
+            },
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )));
+        rows.extend(app.followers.iter().map(|s| {
+            let color = match s.alert {
+                crate::alert::Alert::UrgentLow | crate::alert::Alert::UrgentHigh => {
+                    app.theme.urgent
+                }
+                crate::alert::Alert::Low => app.theme.low,
+                crate::alert::Alert::High => app.theme.high,
+                crate::alert::Alert::Stale => Color::DarkGray,
+                crate::alert::Alert::InRange => app.theme.in_range,
+            };
+            // The age is what tells you whether to trust the value, so it
+            // sits next to it rather than at the end of the row.
+            let age = match s.age_min(now) {
+                Some(m) => format!("{m}m ago"),
+                None => s.error.clone().unwrap_or_else(|| "no data".into()),
+            };
+            let spark = sparkline_str(&s.history);
+            let mut spans = vec![
+                // A solid severity rail makes the row's state visible even
+                // when the text columns no longer line up on a narrow TTY.
+                Span::styled("▌ ", Style::default().fg(color)),
+                Span::styled(
+                    format!("{:<width$}", s.name, width = if wide { 12 } else { 10 }),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(
+                        "{:>width$} {} ",
+                        s.value(app.units),
+                        s.arrow(),
+                        width = if wide { 6 } else { 4 }
                     ),
-                    Span::styled(
-                        format!("{:>6} {} ", s.value(app.units), s.arrow()),
-                        Style::default().fg(color).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(format!("{:>6}  ", s.delta_text(app.units))),
-                    // The label repeats what the colour says, for anyone who
-                    // can't rely on the colour.
-                    Span::styled(
-                        format!("{:<28}", s.alert.label()),
-                        Style::default().fg(color),
-                    ),
-                    Span::styled(age, Style::default().fg(Color::DarkGray)),
-                ])
-            })
-            .collect()
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+            ];
+            if wide {
+                spans.push(Span::raw(format!("{:>7}  ", s.delta_text(app.units))));
+                spans.push(Span::styled(
+                    format!("{:<18}", s.alert.label()),
+                    Style::default().fg(color),
+                ));
+                spans.push(Span::styled(
+                    format!("{age:<10}"),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    format!("{:<13}", s.alert.label()),
+                    Style::default().fg(color),
+                ));
+            }
+            spans.push(Span::styled(spark, Style::default().fg(app.theme.graph)));
+            Line::from(spans)
+        }));
+        rows
     };
+    if lines.len() > inner.height as usize {
+        lines.truncate(inner.height as usize);
+    }
     f.render_widget(Paragraph::new(lines), inner);
 
     let footer = match &app.status {
@@ -2592,6 +2638,31 @@ mod tests {
             text.contains("press enter"),
             "the row should say how to run it"
         );
+    }
+
+    #[test]
+    fn followers_have_units_severity_rails_and_sparklines() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = demo_app();
+        app.screen = Screen::Followers;
+        app.followers = crate::follow::demo(
+            chrono::Utc::now().timestamp_millis(),
+            &[app.alerts.clone(), app.alerts.clone(), app.alerts.clone()],
+        );
+        let mut term = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains(app.units.label()));
+        assert!(text.contains("LAST HOUR"));
+        assert!(text.contains('▌'));
+        assert!(text.contains('█') || text.contains('▁'));
     }
 
     /// An app on demo config with one fixed, in-range reading.
