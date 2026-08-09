@@ -69,6 +69,10 @@ impl GraphView {
 mod settings;
 pub use settings::{Field, FieldEdit};
 
+#[path = "alert_engine.rs"]
+mod alert_engine;
+use alert_engine::{AlertEngine, PushDue};
+
 pub struct App {
     pub units: Units,
     /// Entries loaded for the current window, newest first.
@@ -103,9 +107,6 @@ pub struct App {
     /// Carb/insulin treatments within the current window.
     pub treatments: Vec<Treatment>,
     /// Epoch ms of the latest sensor start/change, if known.
-    /// The last state `react` reported, so it can tell an episode ending from
-    /// one that was never running.
-    last_reported: Option<Alert>,
     /// Result of the last in-app alarm self-test, shown on its settings row.
     /// "Audible alarm: on" is a claim about a config field; this is a claim
     /// about whether this machine can make a noise.
@@ -119,21 +120,9 @@ pub struct App {
     pub alerts: Alerts,
     /// Current alert state (only meaningful in live mode).
     pub alert: Alert,
-    /// Last alert we sent a desktop notification for, to debounce repeats.
-    last_notified: Option<Alert>,
-    /// While `Some`, the audible alarm is silenced until this epoch-ms.
-    snooze_until: Option<i64>,
-    /// When the current urgent episode began (for escalation timing).
-    urgent_since: Option<i64>,
-    /// Which urgent state the current episode belongs to. An episode is tied to
-    /// one variant, not to "urgent" in general — see `evaluate_alert`.
-    episode_kind: Option<Alert>,
-    /// Whether we've already pushed for the current urgent episode.
-    pushed_episode: bool,
-    /// Whether the current urgent episode has escalated.
-    escalated: bool,
-    /// Whether we've already notified for the current predicted crossing.
-    predicted_notified: bool,
+    /// State that spans alert passes: episode identity, debounce, escalation,
+    /// predictive notification, and snoozing.
+    alert_engine: AlertEngine,
 
     // Settings / persistence.
     pub screen: Screen,
@@ -318,19 +307,12 @@ impl App {
             predictions: Vec::new(),
             device: DeviceStatus::default(),
             treatments: Vec::new(),
-            last_reported: None,
             alarm_test: None,
             sensor_start_ms: None,
             sensor_fetched_ms: 0,
             alerts,
             alert: Alert::InRange,
-            last_notified: None,
-            snooze_until: None,
-            urgent_since: None,
-            episode_kind: None,
-            pushed_episode: false,
-            escalated: false,
-            predicted_notified: false,
+            alert_engine: AlertEngine::default(),
             screen: Screen::Dashboard,
             settings_sel: 0,
             refresh_secs: cfg.refresh_secs,
@@ -596,14 +578,7 @@ impl App {
         // LOW after 20 min" for a low two minutes old.
         //
         // A different urgent state is a different emergency: re-arm everything.
-        let kind = self.alert.is_urgent().then_some(self.alert);
-        if kind != self.episode_kind {
-            self.snooze_until = None;
-            self.urgent_since = None;
-            self.pushed_episode = false;
-            self.escalated = false;
-            self.episode_kind = kind;
-        }
+        self.alert_engine.transition_to(self.alert);
         self.alert
     }
 
@@ -612,7 +587,7 @@ impl App {
         if !(self.alerts.sound && self.alert.is_urgent()) {
             return false;
         }
-        if self.snooze_until.is_some_and(|t| now_ms < t) {
+        if self.alert_engine.snooze_until().is_some_and(|t| now_ms < t) {
             return false;
         }
         // During quiet hours only urgent-low sounds (safety override).
@@ -661,15 +636,15 @@ impl App {
         let horizon = self.alerts.predict_horizon_minutes;
         match self.prediction_eta(now_ms) {
             Some((rising, mins)) if horizon > 0 && mins <= horizon => {
-                if self.predicted_notified {
+                if self.alert_engine.predictive_was_notified() {
                     return None;
                 }
-                self.predicted_notified = true;
+                self.alert_engine.set_predictive_notified(true);
                 let dir = if rising { "high" } else { "low" };
                 Some(format!("heading {dir} in ~{mins} min"))
             }
             _ => {
-                self.predicted_notified = false;
+                self.alert_engine.set_predictive_notified(false);
                 None
             }
         }
@@ -686,7 +661,8 @@ impl App {
 
     /// Minutes left on an active snooze, if the alarm is currently silenced.
     pub fn snooze_remaining_min(&self, now_ms: i64) -> Option<i64> {
-        self.snooze_until
+        self.alert_engine
+            .snooze_until()
             .filter(|t| *t > now_ms)
             .map(|t| (t - now_ms) / 60_000 + 1)
     }
@@ -729,7 +705,7 @@ impl App {
     pub fn snooze_alarm(&mut self, now_ms: i64) {
         if self.alert.is_urgent() {
             let mins = self.alerts.snooze_minutes.max(1);
-            self.snooze_until = Some(now_ms + mins * 60_000);
+            self.alert_engine.snooze(now_ms + mins * 60_000);
             self.status = Some(format!("alarm snoozed {mins}m"));
         }
     }
@@ -782,8 +758,7 @@ impl App {
         // maintains, so escalation can fire on the pass that earns it.
         self.update_urgent(now_ms);
 
-        let recovered = self.last_reported.is_some_and(Alert::is_alerting) && !state.is_alerting();
-        self.last_reported = Some(state);
+        let recovered = self.alert_engine.record_state(state);
 
         Reaction {
             state,
@@ -800,15 +775,7 @@ impl App {
 
     /// Track the urgent-episode lifecycle used for escalation and push.
     pub fn update_urgent(&mut self, now_ms: i64) {
-        if self.alert.is_urgent() {
-            if self.urgent_since.is_none() {
-                self.urgent_since = Some(now_ms);
-                self.pushed_episode = false;
-                self.escalated = false;
-            }
-        } else {
-            self.urgent_since = None;
-        }
+        self.alert_engine.update_urgent(self.alert, now_ms);
     }
 
     /// A message to POST to the push URL if one is warranted now — at urgent
@@ -840,34 +807,24 @@ impl App {
         } else {
             String::new()
         };
-        if !self.pushed_episode {
-            self.pushed_episode = true;
-            return Some(format!("sugarrush: {who}{}{value}", self.alert.label()));
+        match self
+            .alert_engine
+            .take_push(self.alert, now_ms, self.alerts.escalate_minutes)?
+        {
+            PushDue::Onset => Some(format!("sugarrush: {who}{}{value}", self.alert.label())),
+            PushDue::Escalation => Some(format!(
+                "sugarrush: {who}STILL {} after {} min{value}",
+                self.alert.label(),
+                self.alerts.escalate_minutes,
+            )),
         }
-        if self.alerts.escalate_minutes > 0 && !self.escalated {
-            if let Some(s) = self.urgent_since {
-                if now_ms - s >= self.alerts.escalate_minutes * 60_000 {
-                    self.escalated = true;
-                    return Some(format!(
-                        "sugarrush: {who}STILL {} after {} min{value}",
-                        self.alert.label(),
-                        self.alerts.escalate_minutes,
-                    ));
-                }
-            }
-        }
-        None
     }
 
     /// If the alert level changed into an alerting state since the last desktop
     /// notification, return it (once) and record it. Returning to range or
     /// staying at the same level yields `None`, debouncing repeats.
     pub fn take_notification(&mut self) -> Option<Alert> {
-        if self.last_notified == Some(self.alert) {
-            return None;
-        }
-        self.last_notified = Some(self.alert);
-        self.alert.is_alerting().then_some(self.alert)
+        self.alert_engine.take_notification(self.alert)
     }
 
     // ---- Episode state, for the headless watcher ----
@@ -875,37 +832,37 @@ impl App {
     // `sugarrush watch` persists these across restarts so a restarted service
     // doesn't re-announce an ongoing low, restart an escalation timer, or
     // cancel a snooze someone deliberately set. They're read-only accessors
-    // plus one restore hook rather than public fields, so the invariants stay
-    // in this file.
+    // plus one restore hook rather than public fields, so the engine keeps the
+    // invariants together.
 
     pub fn last_notified(&self) -> Option<Alert> {
-        self.last_notified
+        self.alert_engine.last_notified()
     }
 
     pub fn urgent_since(&self) -> Option<i64> {
-        self.urgent_since
+        self.alert_engine.urgent_since()
     }
 
     pub fn episode_kind(&self) -> Option<Alert> {
-        self.episode_kind
+        self.alert_engine.episode_kind()
     }
 
     pub fn pushed_episode(&self) -> bool {
-        self.pushed_episode
+        self.alert_engine.pushed_episode()
     }
 
     pub fn escalated(&self) -> bool {
-        self.escalated
+        self.alert_engine.escalated()
     }
 
     pub fn snooze_until(&self) -> Option<i64> {
-        self.snooze_until
+        self.alert_engine.snooze_until()
     }
 
     /// Adopt a snooze set from outside this process — `sugarrush snooze`
     /// writing the daemon's state file, or the dashboard handing one over.
     pub fn set_snooze(&mut self, until: Option<i64>) {
-        self.snooze_until = until;
+        self.alert_engine.set_snooze(until);
     }
 
     /// Resume a previously-running alert episode.
@@ -919,19 +876,14 @@ impl App {
         snooze_until: Option<i64>,
         episode_kind: Option<Alert>,
     ) {
-        self.last_notified = last_notified;
-        // A restart used to lose the fact that an episode was running, so its
-        // end was never reported — the journal showed a low starting and
-        // nothing after it, and the alert log left it open forever. What we
-        // last *announced* is exactly the state we were in.
-        self.last_reported = last_notified;
-        self.urgent_since = urgent_since;
-        self.pushed_episode = pushed_episode;
-        self.escalated = escalated;
-        self.snooze_until = snooze_until;
-        // Without this the first evaluate_alert after a restart would see a
-        // "changed" variant and wipe the very episode we just restored.
-        self.episode_kind = episode_kind;
+        self.alert_engine.restore(
+            last_notified,
+            urgent_since,
+            pushed_episode,
+            escalated,
+            snooze_until,
+            episode_kind,
+        );
     }
 }
 
