@@ -47,9 +47,9 @@ jobs:
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "$BASE"
           changed=$(git diff --name-only "origin/$BASE"...HEAD)
-          # app.rs produces every string on the settings screen and agp.rs the
-          # AGP title text, so both change what the recording shows.
-          ui=$(echo "$changed" | grep -E '^(src/ui\.rs|src/theme\.rs|src/bigfont\.rs|src/app\.rs|src/agp\.rs|assets/demo\.tape)$' || true)
+          # settings.rs produces every string on the settings screen and agp.rs
+          # the AGP title text, so both change what the recording shows.
+          ui=$(echo "$changed" | grep -E '^(src/ui\.rs|src/theme\.rs|src/bigfont\.rs|src/app\.rs|src/settings\.rs|src/agp\.rs|assets/demo\.tape)$' || true)
           if [ -n "$ui" ] && ! echo "$changed" | grep -qx 'assets/demo.gif'; then
             echo "::error::UI/rendering changed but assets/demo.gif was not regenerated:"
             echo "$ui"

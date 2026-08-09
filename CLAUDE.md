@@ -13,7 +13,8 @@ glucose, trend, history, forecasts, alerts, and stats. Not a medical device.
 | File | Responsibility |
 |------|----------------|
 | `src/main.rs` | Entry point, CLI parsing (`watch`/`export`/`status`/`waybar`/`about`/`--help`), run loop, input, notifications |
-| `src/app.rs` | `App` state, the alert episode machine, and the settings screen (`Field`, edit, persist) |
+| `src/app.rs` | `App` state, the alert episode machine, graph navigation, and fetch state |
+| `src/settings.rs` | Settings rows, text editing, adjustment, display, and config persistence |
 | `src/ui.rs` | All rendering — dashboard, settings, AGP, minimap, followers, help overlay, footer |
 | `src/watch.rs` | The headless alarm daemon: per-site pipelines, the TUI handshake, persisted episode state |
 | `src/config.rs` | `Config` and its parts, threshold validation, atomic owner-only writes, URL normalization |
@@ -74,7 +75,7 @@ Config round-tripping and settings-row completeness are covered by tests in
   are written in the user's display unit and converted on load
   (`AlertsConfig::resolve`). Keep that split.
 - **Config persistence**: settings are serialized back to `config.toml` from
-  `App::build_config` (`src/app.rs`). Anything user-editable must round-trip.
+  `App::build_config` (`src/settings.rs`). Anything user-editable must round-trip.
 - **`waybar/` examples stay compositor-generic** — no distro-specific config
   (no Omarchy helpers, no bespoke launchers). It ships to the general public.
 - **Versioning (CalVer)**: `YYYY.M.N` — year, month (not zero-padded), and an
@@ -154,7 +155,7 @@ screen** — do not leave it config-file-only. For a setting to be complete:
 
 1. Add the field to the relevant struct in `src/config.rs` (with a serde
    default) and to `App` in `src/app.rs`.
-2. Add a `Field` variant in `src/app.rs` and include it in `Field::ALL`.
+2. Add a `Field` variant in `src/settings.rs` and include it in `Field::ALL`.
 3. Render its value in `App::field_value`.
 4. Make it editable in `App::settings_adjust` (toggle / step / cycle).
 5. Persist it in `App::build_config` so `w` writes it back.
