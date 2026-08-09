@@ -41,6 +41,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Treatment writes now survive ambiguous failures safely.** An operation is
+  durably recorded before sending, transport uncertainty is distinct from
+  rejection, explicit retries reuse one UUID, remote acceptance is reported
+  even if final auditing fails, future entries are rejected, and interactive
+  writes require reviewing the person, amounts, and timestamp.
+
 - Webhook delivery no longer blocks the watcher's three-second alarm loop, so
   a slow destination cannot delay sound or stale-data detection for other
   followed people.
