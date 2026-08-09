@@ -106,8 +106,13 @@ impl Client {
         Ok(())
     }
 
-    pub async fn create_treatment(site: &Site, body: &Value) -> anyhow::Result<()> {
-        Self::verify_treatment_write(site).await?;
+    pub async fn create_treatment(
+        site: &Site,
+        body: &Value,
+    ) -> std::result::Result<(), TreatmentWriteError> {
+        Self::verify_treatment_write(site)
+            .await
+            .map_err(|error| TreatmentWriteError::Definitive(error.to_string()))?;
         let token = site.write_token.as_deref().unwrap_or_default();
         let url = format!("{}/api/v1/treatments.json", site.base_url());
         let response = reqwest::Client::builder()
@@ -115,20 +120,40 @@ impl Client {
             .timeout(std::time::Duration::from_secs(12))
             .connect_timeout(std::time::Duration::from_secs(6))
             .build()
-            .map_err(NsError::Client)?
+            .map_err(|error| TreatmentWriteError::Definitive(error.to_string()))?
             .post(url)
             .query(&[("token", token)])
             .json(body)
             .send()
             .await
-            .map_err(|e| NsError::Request("treatment write failed", redact(e)))?;
-        let result: Value =
-            bounded_json(check_status(response)?, "invalid treatment response").await?;
+            .map_err(|_| {
+                TreatmentWriteError::Unknown(
+                    "connection ended without a definitive Nightscout response".into(),
+                )
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = format!("Nightscout returned HTTP {}", status.as_u16());
+            return Err(if status.is_client_error() {
+                TreatmentWriteError::Definitive(message)
+            } else {
+                TreatmentWriteError::Unknown(message)
+            });
+        }
+        let result: Value = bounded_json(response, "invalid treatment response")
+            .await
+            .map_err(|_| {
+                TreatmentWriteError::Unknown(
+                    "Nightscout returned an unreadable success response".into(),
+                )
+            })?;
         if result
             .as_array()
             .is_some_and(|rejected| !rejected.is_empty())
         {
-            anyhow::bail!("Nightscout rejected the treatment payload");
+            return Err(TreatmentWriteError::Definitive(
+                "Nightscout rejected the treatment payload".into(),
+            ));
         }
         Ok(())
     }
@@ -238,6 +263,23 @@ impl Client {
         Ok(parse_treatments(&value, start_ms, end_ms))
     }
 }
+
+#[derive(Debug)]
+pub enum TreatmentWriteError {
+    Definitive(String),
+    Unknown(String),
+}
+
+impl std::fmt::Display for TreatmentWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Definitive(message) => write!(f, "treatment rejected: {message}"),
+            Self::Unknown(message) => write!(f, "treatment outcome unknown: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for TreatmentWriteError {}
 
 fn has_treatment_create_permission(value: &Value) -> bool {
     value

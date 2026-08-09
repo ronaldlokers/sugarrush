@@ -160,6 +160,8 @@ fn parse_args() -> Mode {
     let mut treatment_note = None;
     let mut treatment_at = None;
     let mut treatment_confirm = false;
+    let mut treatment_non_interactive = false;
+    let mut treatment_operation_id = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -199,6 +201,8 @@ fn parse_args() -> Mode {
                     note: None,
                     at: None,
                     confirm: false,
+                    non_interactive: false,
+                    operation_id: None,
                 }))
             }
             "snooze" => {
@@ -260,6 +264,14 @@ fn parse_args() -> Mode {
                 }));
             }
             "--confirm" => treatment_confirm = true,
+            "--non-interactive" => treatment_non_interactive = true,
+            "--operation-id" => {
+                i += 1;
+                treatment_operation_id = Some(args.get(i).cloned().unwrap_or_else(|| {
+                    eprintln!("sugarrush: --operation-id needs a UUID");
+                    std::process::exit(2)
+                }));
+            }
             "--all" => snooze_all = true,
             "--json" if matches!(mode, Some(Mode::Health)) => {}
             "--install-unit" | "--install-service" => {
@@ -364,6 +376,8 @@ fn parse_args() -> Mode {
             note: treatment_note,
             at: treatment_at,
             confirm: treatment_confirm,
+            non_interactive: treatment_non_interactive,
+            operation_id: treatment_operation_id,
         }),
         Some(m) => m,
         None => Mode::Tui { screen, demo },
@@ -606,8 +620,8 @@ const COMMANDS: &[(&str, &str)] = &[
         "machine-readable watcher, data and delivery health",
     ),
     (
-        "sugarrush treatment --site NAME [--carbs G] [--insulin U] [--note TEXT] [--at RFC3339] --confirm",
-        "write a validated, audited CarePortal treatment",
+        "sugarrush treatment --site NAME [--carbs G] [--insulin U] [--note TEXT] [--at RFC3339]",
+        "review and write a durable CarePortal treatment",
     ),
     (
         "sugarrush export [--days N] [--out DIR]",
@@ -645,6 +659,10 @@ const OPTIONS: &[(&str, &str)] = &[
         "with snooze: explicitly target every configured site",
     ),
     ("--json", "with health: emit the stable JSON report"),
+    (
+        "--non-interactive --confirm --operation-id UUID",
+        "automation-only treatment confirmation with a stable retry identity",
+    ),
     (
         "--install-service",
         "install and start the native watcher service",
