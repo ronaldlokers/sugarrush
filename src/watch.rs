@@ -400,8 +400,14 @@ pub async fn run() -> Result<()> {
     let cfg = Config::load()?;
     let sites = cfg.resolve_sites()?;
     for site in &sites {
-        let (_, warnings) = site.resolve_alerts(&cfg.alerts, cfg.units);
+        let (alerts, warnings) = site.resolve_alerts(&cfg.alerts, cfg.units);
         crate::warn_about_config(&warnings);
+        if insecure_push(&alerts) {
+            eprintln!(
+                "sugarrush watch [{}]: ⚠ push_url uses unencrypted http://; alert content may be readable in transit",
+                site.name
+            );
+        }
     }
 
     // One pipeline per site. A caregiver watching three people needs three
@@ -538,6 +544,14 @@ pub async fn run() -> Result<()> {
             }
         }
     }
+}
+
+fn insecure_push(alerts: &crate::config::Alerts) -> bool {
+    alerts.push_enabled
+        && alerts
+            .push_url
+            .as_deref()
+            .is_some_and(|url| url.starts_with("http://"))
 }
 
 fn snapshot(watched: &[Watched]) -> State {
@@ -779,6 +793,17 @@ mod tests {
         assert!(!is_fresh(NOW - 31_000, NOW));
         // A stamp from the future is a clock problem, not proof of life.
         assert!(!is_fresh(NOW + 5_000, NOW));
+    }
+
+    #[test]
+    fn cleartext_push_is_detected_for_headless_warning() {
+        let cfg = Config::demo();
+        let mut alerts = cfg.alerts.resolve_checked(cfg.units).0;
+        alerts.push_enabled = true;
+        alerts.push_url = Some("http://example.test/topic".into());
+        assert!(insecure_push(&alerts));
+        alerts.push_url = Some("https://example.test/topic".into());
+        assert!(!insecure_push(&alerts));
     }
 
     #[test]

@@ -36,6 +36,13 @@ Three rules follow from this, and each of them was once broken:
    drops it. It must never skip the `take_*` call, because that leaves the
    machine's idea of "already announced" out of step with reality — and the two
    front ends then disagree.
+
+This also defines failed-delivery policy: one-shot desktop and webhook events
+are consumed even when the operating system or remote endpoint rejects them.
+Blind automatic retries can deliver an old alert after recovery or duplicate a
+message accepted just before a timeout. Reliability is established before the
+episode with `sugarrush watch --test`; runtime failures are surfaced in the TUI
+or watcher journal and are not silently queued for later.
 2. **Whatever sounds also announces.** The dashboard's 3-second ticker used to
    classify and sound without consuming a notification or a push, so a sensor
    gap crossing into `Stale` between refreshes beeped immediately while the

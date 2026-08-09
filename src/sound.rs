@@ -24,7 +24,12 @@ pub enum Tone {
 /// Play the alarm sound for `tone` once. Falls back to the terminal bell if no
 /// player actually produced sound.
 pub fn alarm(tone: Tone) {
-    let _ = sound_check(tone);
+    // Player discovery can probe several binaries for ~1s on first use. Never
+    // spend that time on the async alarm/event loop: it must keep classifying,
+    // fetching and accepting snooze input while audio starts.
+    std::thread::spawn(move || {
+        let _ = sound_check(tone);
+    });
 }
 
 /// What happened when we tried to make a noise.
@@ -329,6 +334,13 @@ mod tests {
                 0o700
             );
         }
+    }
+
+    #[test]
+    fn alarm_player_discovery_does_not_block_the_caller() {
+        let started = std::time::Instant::now();
+        alarm(Tone::Stale);
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
     }
 
     /// The C3 failure: a player that exists on PATH, spawns fine, and exits
