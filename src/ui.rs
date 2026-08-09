@@ -6,7 +6,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Axis, Block, Borders, Chart, Clear, Dataset, GraphType, Paragraph, Tabs},
+    widgets::{Axis, Block, Borders, Chart, Clear, Dataset, GraphType, Paragraph, Tabs, Wrap},
     Frame,
 };
 
@@ -523,6 +523,54 @@ fn fmt_age(ms: i64) -> String {
     }
 }
 
+fn field_controls(field: Field) -> &'static str {
+    match field {
+        Field::SiteName | Field::SiteUrl | Field::SiteToken => "Enter to edit",
+        Field::AddSite | Field::RemoveSite | Field::TestAlarm => "Enter to run",
+        _ => "← / → to change",
+    }
+}
+
+fn field_detail(field: Field) -> &'static str {
+    match field {
+        Field::SiteName => "The name used in follower rows, notifications, logs, and persisted alarm episodes. It must be unique.",
+        Field::SiteUrl => "The Nightscout base URL for the selected person. HTTPS keeps the read-only token and readings encrypted in transit.",
+        Field::SiteToken => "A dedicated read-only Nightscout token. It is masked here and stored in the owner-only config file.",
+        Field::AddSite => "Create another followed person without copying the current person's credential. Fill in its name, URL, and token next.",
+        Field::RemoveSite => "Remove the selected site from the saved list. At least one site is always retained.",
+        Field::SiteAlerts => "Use the global alert profile, or make a complete threshold and delivery profile for only this person.",
+        Field::Units => "How glucose values and editable thresholds are displayed. Internally, safety comparisons remain in mg/dL.",
+        Field::Refresh => "How often the dashboard asks Nightscout for new data. The watcher uses its own conservative polling policy.",
+        Field::Desktop => "Send a desktop notification when an alert episode starts or a predictive warning becomes due.",
+        Field::NotifyContent => "Choose whether notifications include the reading and state, or stay generic for shared and locked screens.",
+        Field::Sound => "Play the looping audible alarm for urgent and stale states. Use the test below to verify the machine can actually sound.",
+        Field::TestAlarm => "Play the audible half of the alarm self-test now. Run `sugarrush watch --test` for every delivery channel.",
+        Field::Snooze => "How long acknowledgement silences the active alarm before it can sound again.",
+        Field::QuietHours => "Schedule a daily period when alarms are muted. The urgent-low override below can remain armed.",
+        Field::QuietStart | Field::QuietEnd => "Start or end of the daily quiet window, adjusted in 30-minute steps.",
+        Field::QuietUrgentLow => "Keep urgent-low audio active during quiet hours as a safety override.",
+        Field::Escalate => "Send the configured push webhook when an urgent episode remains unacknowledged for this long.",
+        Field::PushAlerts => "Enable or disable the configured phone/webhook destination without discarding its URL.",
+        Field::PredictHorizon => "Warn when a forecast crosses low or high within this many minutes. Zero disables predictive alerts.",
+        Field::UrgentLow => "At or below this value, classify the reading as urgent low and use the urgent alarm path.",
+        Field::Low => "Below this value, classify the reading as low after applying hysteresis on recovery.",
+        Field::High => "Above this value, classify the reading as high after applying hysteresis on recovery.",
+        Field::UrgentHigh => "At or above this value, classify the reading as urgent high and use the urgent alarm path.",
+        Field::Stale => "Treat the data as a sensor gap when the newest reading is older than this many minutes.",
+        Field::GraphStyle => "Draw readings as a connected line, small dots, or larger blocks.",
+        Field::AgpDays => "The fixed clinical window used by the AGP, time-in-range statistics, and default export.",
+        Field::MinimapEnabled => "Show the overview strip and enable mouse click/drag navigation through history.",
+        Field::MinimapSpan => "How much history the overview strip covers, from 6 to 72 hours.",
+        Field::ThemeLow => "Colour used for low readings and low-state text.",
+        Field::ThemeInRange => "Colour used for in-range readings and target-band cues.",
+        Field::ThemeHigh => "Colour used for high readings and high-state text.",
+        Field::ThemeUrgent => "Colour used for urgent lows, urgent highs, and safety-critical banners.",
+        Field::ThemePrediction => "Colour used for the forecast centre and uncertainty cone.",
+        Field::ThemeGraph => "Primary graph, AGP median, percentile fan, and sparkline colour.",
+        Field::Colorblind => "Switch the full palette to colourblind-safe colours with distinct alert roles.",
+    }
+}
+
 fn draw_settings(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -550,10 +598,6 @@ fn draw_settings(f: &mut Frame, app: &App) {
     let header = Paragraph::new(Line::from(title)).block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
 
-    let block = Block::default().borders(Borders::ALL);
-    let inner = block.inner(chunks[1]);
-    f.render_widget(block, chunks[1]);
-
     // Build display rows: a dim section header whenever the group changes,
     // then each field. Headers aren't selectable — navigation stays over
     // Field::ALL, so `settings_sel` still indexes fields directly.
@@ -572,8 +616,19 @@ fn draw_settings(f: &mut Frame, app: &App) {
         display.push(Row::Field(i, field));
     }
 
+    let split = chunks[1].width >= 80;
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(if split {
+            [Constraint::Percentage(55), Constraint::Percentage(45)]
+        } else {
+            [Constraint::Percentage(100), Constraint::Percentage(0)]
+        })
+        .split(chunks[1]);
+    let list_area = panes[0];
+    let height = list_area.height.saturating_sub(2).max(1) as usize;
+
     // Scroll so the selected field (and ideally its header) stays visible.
-    let height = inner.height.max(1) as usize;
     let sel_display = display
         .iter()
         .position(|r| matches!(r, Row::Field(i, _) if *i == app.settings_sel))
@@ -583,6 +638,17 @@ fn draw_settings(f: &mut Frame, app: &App) {
     } else {
         (sel_display + 1 - height).min(display.len().saturating_sub(height))
     };
+    let above = offset > 0;
+    let below = offset + height < display.len();
+    let list_title = match (above, below) {
+        (true, true) => " ↑ more · fields · ↓ more ",
+        (true, false) => " ↑ more · fields ",
+        (false, true) => " fields · ↓ more ",
+        (false, false) => " fields ",
+    };
+    let list_block = Block::default().borders(Borders::ALL).title(list_title);
+    let inner = list_block.inner(list_area);
+    f.render_widget(list_block, list_area);
 
     let lines: Vec<Line> = display
         .iter()
@@ -620,6 +686,34 @@ fn draw_settings(f: &mut Frame, app: &App) {
         .collect();
     f.render_widget(Paragraph::new(lines), inner);
 
+    if split {
+        let field = app.selected_field();
+        let detail = vec![
+            Line::from(vec![
+                Span::styled("Current  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    app.field_value(field),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::default(),
+            Line::from(field_detail(field)),
+            Line::default(),
+            Line::from(Span::styled(
+                field_controls(field),
+                Style::default().fg(Color::Cyan),
+            )),
+        ];
+        f.render_widget(
+            Paragraph::new(detail).wrap(Wrap { trim: true }).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" {} ", field.label())),
+            ),
+            panes[1],
+        );
+    }
+
     // Where the real terminal cursor goes, set after the footer is rendered.
     // A screen reader's caret tracking and a braille display's cursor routing
     // both follow the *terminal* cursor; nothing here ever set one, so someone
@@ -649,7 +743,7 @@ fn draw_settings(f: &mut Frame, app: &App) {
             Style::default().fg(Color::Green),
         )),
         (None, None) => Line::from(Span::raw(
-            " ↑/↓ select · ←/→ change · enter edit · w save · s/esc back · ? help · q quit ",
+            " ↑/↓ select · ←/→ change · enter edit/action · w save · s/esc back · ? help · q quit ",
         )),
     };
     f.render_widget(Paragraph::new(footer), chunks[2]);
@@ -2672,6 +2766,38 @@ mod tests {
             text.contains("press enter"),
             "the row should say how to run it"
         );
+    }
+
+    #[test]
+    fn settings_show_field_detail_and_scroll_affordance() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = demo_app();
+        app.screen = Screen::Settings;
+        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let first: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(first.contains("Current"));
+        assert!(first.contains("↓ more"));
+        assert!(first.contains("name used in follower rows"));
+
+        app.settings_sel = Field::ALL.len() - 1;
+        term.draw(|f| draw(f, &app)).unwrap();
+        let last: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(last.contains("↑ more"));
+        assert!(last.contains("Colorblind palette"));
     }
 
     #[test]
