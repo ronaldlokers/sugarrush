@@ -1,6 +1,8 @@
 //! Summary statistics over a set of readings: time-in-range, mean, GMI, and
 //! glycaemic variability.
 
+use crate::alert::Alert;
+use crate::config::Alerts;
 use crate::nightscout::Entry;
 
 /// Share of readings in each clinical band, as percentages summing to 100.
@@ -40,17 +42,27 @@ pub fn tir(
     if entries.is_empty() {
         return None;
     }
+    // Classify through `alert::from_value` rather than repeating its ladder.
+    // The ordering is not obvious — `urgent_high` is checked before `high` —
+    // and this test file's own comment claimed the bands "land where
+    // alert::from_value puts it" while nothing enforced it. Changing a
+    // boundary in one place used to desync the stats panel from the alarm.
+    let alerts = Alerts {
+        urgent_low,
+        low,
+        high,
+        urgent_high,
+        ..Alerts::default()
+    };
     let total = entries.len() as f64;
     let (mut vlo, mut lo, mut hi, mut vhi) = (0.0, 0.0, 0.0, 0.0);
     for e in entries {
-        if e.sgv <= urgent_low {
-            vlo += 1.0;
-        } else if e.sgv < low {
-            lo += 1.0;
-        } else if e.sgv >= urgent_high {
-            vhi += 1.0;
-        } else if e.sgv > high {
-            hi += 1.0;
+        match crate::alert::from_value(e.sgv, &alerts) {
+            Alert::UrgentLow => vlo += 1.0,
+            Alert::Low => lo += 1.0,
+            Alert::High => hi += 1.0,
+            Alert::UrgentHigh => vhi += 1.0,
+            Alert::InRange | Alert::Stale => {}
         }
     }
     let pct = |n: f64| n / total * 100.0;
@@ -101,6 +113,45 @@ pub fn gmi(mean_mgdl: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The five TIR bands and the alarm must classify a value identically —
+    /// they are the same clinical thresholds, and a user who sees "URGENT LOW"
+    /// on the headline while the stats panel counts that reading as merely
+    /// "low" has been shown two different answers to one question.
+    ///
+    /// Boundary-exact, because that is where the two used to be able to drift:
+    /// the ladder is inclusive at `urgent_low`/`urgent_high` and exclusive at
+    /// `low`/`high`.
+    #[test]
+    fn bands_agree_with_the_alarm_at_every_boundary() {
+        let (ul, lo, hi, uh) = (55.0, 70.0, 180.0, 250.0);
+        for step in 0..=600 {
+            let sgv = step as f64;
+            let t = tir(&[e(sgv)], ul, lo, hi, uh).unwrap();
+            let band = if t.very_low > 0.0 {
+                Alert::UrgentLow
+            } else if t.low > 0.0 {
+                Alert::Low
+            } else if t.high > 0.0 {
+                Alert::High
+            } else if t.very_high > 0.0 {
+                Alert::UrgentHigh
+            } else {
+                Alert::InRange
+            };
+            let alarm = crate::alert::from_value(
+                sgv,
+                &Alerts {
+                    urgent_low: ul,
+                    low: lo,
+                    high: hi,
+                    urgent_high: uh,
+                    ..Alerts::default()
+                },
+            );
+            assert_eq!(band, alarm, "band disagrees with the alarm at {sgv} mg/dL");
+        }
+    }
 
     fn e(sgv: f64) -> Entry {
         Entry {
