@@ -1,5 +1,6 @@
 mod agp;
 mod alert;
+mod alertlog;
 mod app;
 mod bigfont;
 mod config;
@@ -65,6 +66,8 @@ enum Mode {
     Snooze { minutes: Option<i64> },
     /// Walk every alarm channel and report which ones actually work.
     AlarmTest { quiet: bool },
+    /// Print what the alarm has actually done.
+    Alerts { days: i64 },
     /// Print usage and exit.
     Help,
     /// Print the version and exit.
@@ -136,6 +139,7 @@ fn parse_args() -> Mode {
                     *quiet = true;
                 }
             }
+            "alerts" => mode = Some(Mode::Alerts { days: 7 }),
             "snooze" => {
                 // An optional duration follows: `15m`, `2h`, a bare number of
                 // minutes, or `off` to cancel. No argument means the configured
@@ -206,6 +210,9 @@ fn parse_args() -> Mode {
             days: export_days.unwrap_or(0),
             dir: export_dir,
         },
+        Some(Mode::Alerts { .. }) => Mode::Alerts {
+            days: export_days.map(i64::from).unwrap_or(7),
+        },
         Some(Mode::Status { .. }) => Mode::Status {
             format: status_format
                 .as_deref()
@@ -250,6 +257,11 @@ async fn main() -> Result<()> {
         Mode::Watch => watch::run().await,
         Mode::Snooze { minutes } => run_snooze(minutes),
         Mode::AlarmTest { quiet } => selftest::run(quiet).await,
+        Mode::Alerts { days } => {
+            let cfg = Config::load()?;
+            print!("{}", alertlog::report(days, cfg.units));
+            Ok(())
+        }
         Mode::InstallUnit => install_unit(),
         Mode::Help => {
             print_help();
@@ -350,6 +362,7 @@ USAGE:
     sugarrush status [--format FORMAT]       one line for a status bar
     sugarrush snooze [15m|2h|off]            silence the alarm daemon
     sugarrush watch --test [--quiet]         check every alarm channel works
+    sugarrush alerts [--days N]              what the alarm has actually done
     sugarrush waybar                         alias for --format waybar
     sugarrush about                          version, repo and the safety note
 
@@ -1104,6 +1117,24 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
 /// notification held back because desktop notifications were off used to fire
 /// the moment they were switched on, for an episode long finished.
 fn deliver(app: &mut App, r: app::Reaction, fetch: &Fetcher) {
+    // Record what the alarm did before delivering it: "did it go off last
+    // night, and for how long" is a question the journal could only answer if
+    // the daemon happened to be running under systemd, and never for alarms the
+    // dashboard handled.
+    if !app.demo {
+        let site = app.active_site().name.clone();
+        if let Some(a) = r.notification {
+            alertlog::record(&site, "alert", a, app.live_latest().map(|e| e.sgv));
+        }
+        if r.recovered {
+            alertlog::record(
+                &site,
+                "recovered",
+                r.state,
+                app.live_latest().map(|e| e.sgv),
+            );
+        }
+    }
     if let Some(a) = r.notification {
         if app.alerts.desktop {
             // A discarded result meant "Desktop: on" could be a lie: with no

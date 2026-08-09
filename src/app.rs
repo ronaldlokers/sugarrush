@@ -1177,6 +1177,11 @@ impl App {
         episode_kind: Option<Alert>,
     ) {
         self.last_notified = last_notified;
+        // A restart used to lose the fact that an episode was running, so its
+        // end was never reported — the journal showed a low starting and
+        // nothing after it, and the alert log left it open forever. What we
+        // last *announced* is exactly the state we were in.
+        self.last_reported = last_notified;
         self.urgent_since = urgent_since;
         self.pushed_episode = pushed_episode;
         self.escalated = escalated;
@@ -1680,6 +1685,31 @@ mod tests {
 
         a.alerts.quiet_urgent_low = false;
         assert!(a.armed_state(NOW).label().contains("all alarms silent"));
+    }
+
+    /// An episode that spans a restart still has an end. The daemon restores
+    /// what it last announced, and that is what makes the recovery reportable —
+    /// without it the journal showed a low beginning and nothing after it.
+    #[test]
+    fn an_episode_that_survives_a_restart_still_reports_its_recovery() {
+        let mut a = app();
+        a.restore_episode(
+            Some(Alert::UrgentLow),
+            Some(NOW),
+            true,
+            false,
+            None,
+            Some(Alert::UrgentLow),
+        );
+
+        // Back in range after the restart.
+        a.entries = vec![entry(100.0, NOW + 60_000)];
+        let r = a.react(NOW + 60_000);
+        assert_eq!(r.state, Alert::InRange);
+        assert!(
+            r.recovered,
+            "the low that was running before the restart has ended"
+        );
     }
 
     /// The audible alarm and the notification channels used to run on separate
