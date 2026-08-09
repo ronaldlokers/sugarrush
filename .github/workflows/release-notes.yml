@@ -30,7 +30,7 @@ jobs:
       TAG: ${{ github.event.inputs.tag || github.event.workflow_run.head_branch }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Rewrite title + body to house format
         run: |

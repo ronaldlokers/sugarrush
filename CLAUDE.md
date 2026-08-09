@@ -12,18 +12,26 @@ glucose, trend, history, forecasts, alerts, and stats. Not a medical device.
 
 | File | Responsibility |
 |------|----------------|
-| `src/main.rs` | Entry point, CLI parsing (`waybar`/`about`/`--screen`), run loop, input |
-| `src/app.rs` | `App` state + the settings screen (`Field`, edit, persist) |
-| `src/config.rs` | `Config` and its parts (`AlertsConfig`, `Site`, `GraphStyle`, `MinimapConfig`) |
-| `src/nightscout.rs` | REST client + data models (entries, devicestatus, treatments) |
-| `src/ui.rs` | All rendering |
-| `src/view.rs` | Graph viewport (pan/zoom/jump) |
-| `src/alert.rs` | Alert classification |
-| `src/predict.rs` | AR2 forecast |
-| `src/stats.rs` | Time-in-range, mean, GMI |
-| `src/theme.rs` | Configurable colors |
+| `src/main.rs` | Entry point, CLI parsing (`watch`/`export`/`status`/`waybar`/`about`/`--help`), run loop, input, notifications |
+| `src/app.rs` | `App` state, the alert episode machine, and the settings screen (`Field`, edit, persist) |
+| `src/ui.rs` | All rendering — dashboard, settings, AGP, minimap, followers, help overlay, footer |
+| `src/watch.rs` | The headless alarm daemon: per-site pipelines, the TUI handshake, persisted episode state |
+| `src/config.rs` | `Config` and its parts, threshold validation, atomic owner-only writes, URL normalization |
+| `src/nightscout.rs` | REST client + data models (entries, devicestatus, treatments) and `FetchError` |
+| `src/follow.rs` | Multi-site polling and worst-first ordering for the followers screen |
+| `src/export.rs` | CSV + the plain-text clinical summary |
+| `src/status.rs` | One-shot status-bar output (text/tmux/polybar/i3blocks/waybar) |
+| `src/agp.rs` | Ambulatory glucose profile percentiles, and the pattern insights |
+| `src/stats.rs` | Five-band time-in-range, mean, GMI, CV |
+| `src/alert.rs` | Alert classification, hysteresis, severity and colour |
+| `src/predict.rs` | AR2 forecast fallback |
+| `src/view.rs` | Graph viewport (pan/zoom/page/day-step/jump) |
+| `src/wizard.rs` | First-run setup |
+| `src/sound.rs` | Audible alarm: synthesized WAV, player selection, terminal-bell fallback |
+| `src/theme.rs` | Configurable colors and the colourblind preset |
 | `src/units.rs` | mg/dL ↔ mmol/L |
-| `src/waybar.rs` | One-shot Waybar JSON output |
+| `src/demo.rs`, `src/bigfont.rs` | Synthetic data for `--demo`; block-glyph digits |
+| `src/waybar.rs` | Thin wrapper over `status.rs`, kept so `sugarrush waybar` still works |
 
 ## Commands
 
