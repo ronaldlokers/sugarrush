@@ -122,7 +122,9 @@ One subtlety worth keeping: **the dashboard only claims the alarm when it
 covers everything the daemon would.** The TUI alerts on the active site alone,
 so with several sites configured it must not silence a watcher handling all of
 them. That hole left a caregiver's other sites unalarmed while the dashboard
-was open.
+was open. This rule applies at startup as well as later heartbeats: changing
+between one and several configured sites immediately creates or clears the
+claim instead of waiting for its 30-second expiry.
 
 ## What can silence the alarm
 

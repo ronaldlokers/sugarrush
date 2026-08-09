@@ -365,9 +365,7 @@ async fn run_tui(screen: Screen, demo: bool) -> Result<()> {
 
     install_panic_hook();
     let mut terminal = setup_terminal(app.minimap_enabled)?;
-    if !demo {
-        watch::heartbeat(watch::Role::Tui, now_ms());
-    }
+    sync_tui_alarm_claim(app.demo, app.sites.len(), now_ms());
     let res = run(&mut terminal, &mut app).await;
     restore_terminal(&mut terminal)?;
     // Hand the alarm back to the watcher immediately on exit, rather than
@@ -376,6 +374,23 @@ async fn run_tui(screen: Screen, demo: bool) -> Result<()> {
         watch::clear_heartbeat(watch::Role::Tui);
     }
     res
+}
+
+fn tui_claims_alarm(demo: bool, site_count: usize) -> bool {
+    !demo && site_count == 1
+}
+
+/// Keep the TUI/watch handoff aligned with what this window actually covers.
+/// A multi-site TUI alarms for only its active site, so it must never claim
+/// responsibility for a watcher that protects every configured person.
+fn sync_tui_alarm_claim(demo: bool, site_count: usize, now_ms: i64) {
+    if tui_claims_alarm(demo, site_count) {
+        watch::heartbeat(watch::Role::Tui, now_ms);
+    } else if !demo {
+        // Clear a claim left by startup or by adding/removing sites. Waiting
+        // for its 30-second expiry would be a real multi-site alarm gap.
+        watch::clear_heartbeat(watch::Role::Tui);
+    }
 }
 
 /// Usage. Kept in one place so the README, the man page and this can't drift.
@@ -834,8 +849,8 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                 // watcher that is handling all of them — that hole meant a
                 // caregiver's other sites went unalarmed while the dashboard
                 // was open.
-                if !app.demo && app.sites.len() == 1 {
-                    watch::heartbeat(watch::Role::Tui, now);
+                sync_tui_alarm_claim(app.demo, app.sites.len(), now);
+                if !app.demo {
                     // Read the other side of the handshake too: until now
                     // nothing ever did, so a dead watcher and a quiet night
                     // looked identical from in here.
@@ -1674,6 +1689,14 @@ mod tests {
         let mut a = App::new(&cfg, alerts, sites);
         a.demo = false;
         a
+    }
+
+    #[test]
+    fn only_a_single_site_tui_claims_the_alarm_handoff() {
+        assert!(tui_claims_alarm(false, 1));
+        assert!(!tui_claims_alarm(false, 2));
+        assert!(!tui_claims_alarm(false, 3));
+        assert!(!tui_claims_alarm(true, 1));
     }
 
     /// `--demo` means synthetic data and no network. On `watch` it used to be

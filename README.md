@@ -65,7 +65,8 @@ can understand and revisit the arrangement as their independence changes.
 
 **Alerts & safety**
 - A **headless watcher** (`sugarrush watch`) that keeps alarming with no
-  terminal open — the 3am case — and stays quiet while the dashboard is up
+  terminal open — the 3am case — and hands a single-site alarm to the dashboard
+  while it is up
 - In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows),
   switchable to **content-free** so nothing readable lands on a lock screen
 - **Audible alarm** for urgent lows/highs with snooze, per-level tones,
@@ -369,11 +370,12 @@ line every 15 minutes even when nothing happens (`ok · 5.6 mmol/L · in range �
 2m ago`), so a quiet journal is evidence it was watching rather than evidence
 of nothing.
 
-It's safe to leave running alongside the TUI: both processes write a heartbeat,
-and the watcher goes quiet whenever the dashboard is on screen, so you never get
-two alarms for one low. It also persists episode state, so restarting the
-service doesn't re-announce a low you already saw, reset an escalation timer, or
-cancel a snooze.
+It's safe to leave running alongside the TUI: with one configured site, the
+dashboard claims that alarm and the watcher stays quiet. With several sites the
+watcher remains authoritative for all of them, because the dashboard only
+alarms for the person currently selected. The watcher also persists episode
+state, so restarting the service doesn't re-announce a low you already saw,
+reset an escalation timer, or cancel a snooze.
 
 To run it as a user service — this writes a unit pointing at wherever your
 binary actually is, so it works whichever way you installed:

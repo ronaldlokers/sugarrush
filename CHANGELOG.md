@@ -85,6 +85,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Opening a multi-site dashboard no longer silences every followed person's
+  watcher for 30 seconds.** The TUI wrote an alarm-claim heartbeat at startup
+  before checking how many sites it covered. Startup and later site changes now
+  use the same rule: only a single-site dashboard claims the alarm, while a
+  multi-site watcher remains active and its liveness is shown in the header.
 - **A slow followed site can no longer stall every alarm.** The headless
   watcher used to await entries and device status for each person in sequence
   inside the same loop that rechecks alarms every three seconds. Polls now run
