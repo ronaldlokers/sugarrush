@@ -62,7 +62,7 @@ impl GraphView {
 
 #[path = "settings.rs"]
 mod settings;
-pub use settings::{Field, FieldEdit};
+pub use settings::{Field, FieldEdit, SettingsExit};
 
 #[path = "alert_engine.rs"]
 mod alert_engine;
@@ -103,6 +103,10 @@ pub struct App {
     /// Every edit applies live, so without this there's nothing to distinguish
     /// "changed and saved" from "changed and lost on quit".
     pub settings_dirty: bool,
+    /// Last successfully loaded/saved configuration, used to make Discard a
+    /// real rollback rather than merely hiding the dirty marker.
+    pub settings_baseline: Config,
+    pub settings_exit: Option<SettingsExit>,
     /// Forecast points `(epoch_ms, mg/dL)`, live mode only.
     pub predictions: Vec<Prediction>,
     /// Uploader/device metadata + IOB/COB (live mode only).
@@ -147,6 +151,7 @@ pub struct App {
     theme_names: [String; 6],
     /// Configured sites, and which one is active.
     pub sites: Vec<Site>,
+    pub site_validated: Vec<bool>,
     pub site_idx: usize,
     /// Set when the active site changed so the run loop rebuilds its client.
     pub site_dirty: bool,
@@ -281,6 +286,7 @@ pub struct Reaction {
 
 impl App {
     pub fn new(cfg: &Config, alerts: Alerts, sites: Vec<Site>) -> Self {
+        let site_count = sites.len();
         let site_alerts: Vec<Option<Alerts>> = sites
             .iter()
             .map(|site| {
@@ -302,6 +308,8 @@ impl App {
             followers: Vec::new(),
             follower_scroll: 0,
             settings_dirty: false,
+            settings_baseline: cfg.clone(),
+            settings_exit: None,
             predictions: Vec::new(),
             device: DeviceStatus::default(),
             treatments: Vec::new(),
@@ -324,6 +332,7 @@ impl App {
             theme: cfg.theme.resolve(),
             theme_names: names_from_config(&cfg.theme),
             sites,
+            site_validated: vec![true; site_count],
             site_idx: 0,
             site_dirty: false,
             graph_style: cfg.graph_style,
@@ -1610,6 +1619,73 @@ mod tests {
         a.begin_field_edit();
         a.commit_field_edit();
         assert_eq!(a.active_site().token, "s3cret-token");
+    }
+
+    #[test]
+    fn push_url_edit_is_masked_replaceable_and_clearable() {
+        let mut a = app();
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::PushUrl)
+            .unwrap();
+        assert!(a.begin_field_edit());
+        assert!(a.field_edit.as_ref().unwrap().masked);
+        assert!(a.field_edit.as_ref().unwrap().buffer.is_empty());
+        a.field_edit.as_mut().unwrap().buffer = "https://ntfy.sh/private-topic".into();
+        a.commit_field_edit();
+        assert_eq!(a.field_value(Field::PushUrl), "set · hidden");
+        assert!(!a.field_value(Field::PushUrl).contains("private-topic"));
+        assert!(a.alerts.push_enabled);
+
+        assert!(a.begin_field_edit());
+        a.field_edit.as_mut().unwrap().buffer = "off".into();
+        a.commit_field_edit();
+        assert!(a.alerts.push_url.is_none());
+        assert!(!a.alerts.push_enabled);
+    }
+
+    #[test]
+    fn edited_sites_must_pass_a_fresh_reading_test_before_save() {
+        let mut a = app();
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::SiteToken)
+            .unwrap();
+        a.begin_field_edit();
+        a.field_edit.as_mut().unwrap().buffer = "replacement".into();
+        a.commit_field_edit();
+        assert!(!a.site_validated[a.site_idx]);
+        assert!(
+            !a.save_config(),
+            "an untested credential must not be persisted"
+        );
+        assert!(a.status.as_deref().unwrap().contains("test every"));
+    }
+
+    #[test]
+    fn dirty_settings_require_a_decision_and_discard_really_rolls_back() {
+        let mut a = app();
+        a.screen = Screen::Settings;
+        let before = a.alerts.low;
+        a.settings_sel = Field::ALL.iter().position(|&f| f == Field::Low).unwrap();
+        a.settings_adjust(1);
+        assert_ne!(a.alerts.low, before);
+
+        a.request_settings_exit(SettingsExit::Back);
+        assert_eq!(a.settings_exit, Some(SettingsExit::Back));
+        assert_eq!(
+            a.screen,
+            Screen::Settings,
+            "the dialog must keep settings open"
+        );
+        a.cancel_settings_exit();
+        assert!(a.settings_exit.is_none());
+
+        a.request_settings_exit(SettingsExit::Back);
+        a.discard_settings();
+        a.finish_settings_exit(SettingsExit::Back);
+        assert_eq!(a.alerts.low, before);
+        assert!(!a.settings_dirty);
     }
 
     #[test]

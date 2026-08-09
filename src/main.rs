@@ -942,7 +942,7 @@ fn handle_key(app: &mut App, fetch: &Fetcher, key: KeyEvent) {
         return;
     }
     if app.screen == Screen::Settings {
-        handle_settings_key(app, key.code);
+        handle_settings_key(app, fetch, key.code);
         return;
     }
 
@@ -1061,7 +1061,23 @@ fn handle_mouse(app: &mut App, fetch: &Fetcher, m: MouseEvent) {
 }
 
 /// Handle keys on the settings screen. All edits apply live; `w` persists.
-fn handle_settings_key(app: &mut App, code: KeyCode) {
+fn handle_settings_key(app: &mut App, fetch: &Fetcher, code: KeyCode) {
+    if let Some(action) = app.settings_exit {
+        match code {
+            KeyCode::Char('w') => {
+                if app.save_config() {
+                    app.finish_settings_exit(action);
+                }
+            }
+            KeyCode::Char('d') => {
+                app.discard_settings();
+                app.finish_settings_exit(action);
+            }
+            KeyCode::Esc => app.cancel_settings_exit(),
+            _ => {}
+        }
+        return;
+    }
     // A row being edited as text swallows the keys — otherwise typing a URL
     // would trigger the single-letter shortcuts underneath it.
     if app.field_edit.is_some() {
@@ -1075,8 +1091,8 @@ fn handle_settings_key(app: &mut App, code: KeyCode) {
         return;
     }
     match code {
-        KeyCode::Char('q') => app.should_quit = true,
-        KeyCode::Char('s') | KeyCode::Esc => app.toggle_settings(),
+        KeyCode::Char('q') => app.request_settings_exit(app::SettingsExit::Quit),
+        KeyCode::Char('s') | KeyCode::Esc => app.request_settings_exit(app::SettingsExit::Back),
         KeyCode::Char('j') | KeyCode::Down => app.settings_move(1),
         KeyCode::Char('k') | KeyCode::Up => app.settings_move(-1),
         KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('-') => app.settings_adjust(-1),
@@ -1085,6 +1101,11 @@ fn handle_settings_key(app: &mut App, code: KeyCode) {
         }
         KeyCode::Enter => match app.selected_field() {
             app::Field::TestAlarm => app.run_alarm_test(),
+            app::Field::TestSite => {
+                app.view.follow();
+                app.status = Some("testing site for a fresh reading…".into());
+                fetch.request(app);
+            }
             app::Field::AddSite => app.add_site(),
             app::Field::RemoveSite => app.remove_site(),
             _ => {
@@ -1092,7 +1113,9 @@ fn handle_settings_key(app: &mut App, code: KeyCode) {
             }
         },
         KeyCode::Char('?') => app.show_help = true,
-        KeyCode::Char('w') => app.save_config(),
+        KeyCode::Char('w') => {
+            app.save_config();
+        }
         _ => {}
     }
 }
@@ -1326,6 +1349,17 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
     match g.entries {
         Some(Ok(entries)) => {
             if p.live {
+                let fresh = entries
+                    .first()
+                    .is_some_and(|entry| now - entry.date <= 3_600_000);
+                if app.screen == Screen::Settings {
+                    app.site_validated[app.site_idx] = fresh;
+                    app.status = Some(if fresh {
+                        "site test passed · fresh reading received".into()
+                    } else {
+                        "site test failed · no reading from the last hour".into()
+                    });
+                }
                 app.live_edge = entries.first().cloned();
             }
             app.entries = entries;

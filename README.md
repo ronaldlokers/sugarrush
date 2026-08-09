@@ -478,8 +478,8 @@ source of truth for the current version.
 ## Roadmap
 
 Planned and in-progress work lives in the
-[GitHub issues](https://github.com/ronaldlokers/sugarrush/issues) — see the
-[product roadmap](https://github.com/ronaldlokers/sugarrush/issues/51).
+[open GitHub issues](https://github.com/ronaldlokers/sugarrush/issues?q=is%3Aissue%20state%3Aopen).
+Completed product roadmaps remain available in the closed-issue history.
 
 ## License
 
