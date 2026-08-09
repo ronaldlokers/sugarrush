@@ -11,6 +11,7 @@
 
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use chrono::{Local, TimeZone};
@@ -69,6 +70,7 @@ fn append(entry: &Record) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
+    let _lock = AlertLogLock::acquire(&path.with_extension("lock"))?;
     if std::fs::metadata(&path).is_ok_and(|m| m.len() > COMPACT_BYTES) {
         compact(&path)?;
     }
@@ -89,6 +91,46 @@ fn append(entry: &Record) -> Result<()> {
     let mut f = opts.open(&path)?;
     f.write_all(line.as_bytes())?;
     Ok(())
+}
+
+struct AlertLogLock(PathBuf);
+
+impl AlertLogLock {
+    fn acquire(path: &std::path::Path) -> Result<Self> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(path) {
+                Ok(_) => return Ok(Self(path.to_path_buf())),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(path)
+                        .and_then(|m| m.modified())
+                        .and_then(|t| t.elapsed().map_err(std::io::Error::other))
+                        .is_ok_and(|age| age > Duration::from_secs(30));
+                    if stale {
+                        let _ = std::fs::remove_file(path);
+                    } else if Instant::now() >= deadline {
+                        anyhow::bail!("timed out waiting to update alert history");
+                    } else {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+}
+
+impl Drop for AlertLogLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// Rewrite the file keeping only the recent tail.

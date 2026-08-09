@@ -64,15 +64,57 @@ pub fn sound_check(tone: Tone) -> Played {
 fn wav_path(tone: Tone) -> Option<PathBuf> {
     static PATHS: OnceLock<[Option<PathBuf>; 3]> = OnceLock::new();
     let paths = PATHS.get_or_init(|| {
-        let dir = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
+        let Some(dir) = private_audio_dir() else {
+            return [None, None, None];
+        };
         [Tone::Low, Tone::High, Tone::Stale].map(|t| {
             let path = dir.join(format!("sugarrush-alarm-{}.wav", t.suffix()));
-            std::fs::write(&path, alarm_wav(t)).ok().map(|_| path)
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&path).ok()?;
+            std::io::Write::write_all(&mut file, &alarm_wav(t)).ok()?;
+            Some(path)
         })
     });
     paths[tone.index()].clone()
+}
+
+fn private_audio_dir() -> Option<PathBuf> {
+    #[cfg(unix)]
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            #[cfg(unix)]
+            {
+                let uid = dirs::home_dir()
+                    .and_then(|p| std::fs::metadata(p).ok())
+                    .map(|m| m.uid())
+                    .unwrap_or(0);
+                std::env::temp_dir().join(format!("sugarrush-{uid}"))
+            }
+            #[cfg(not(unix))]
+            std::env::temp_dir().join("sugarrush")
+        })
+        .join("sugarrush-audio");
+    std::fs::create_dir_all(&base).ok()?;
+    #[cfg(unix)]
+    {
+        let ours = dirs::home_dir()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .is_some_and(|home| std::fs::metadata(&base).is_ok_and(|dir| dir.uid() == home.uid()));
+        if !ours {
+            return None;
+        }
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700)).ok()?;
+    }
+    Some(base)
 }
 
 impl Tone {
@@ -274,6 +316,19 @@ mod tests {
         // Declared data length matches the actual sample bytes.
         let declared = u32::from_le_bytes([wav[40], wav[41], wav[42], wav[43]]) as usize;
         assert_eq!(declared, wav.len() - 44);
+    }
+
+    #[test]
+    fn alarm_files_use_a_private_directory() {
+        let dir = private_audio_dir().expect("a private runtime directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
     }
 
     /// The C3 failure: a player that exists on PATH, spawns fine, and exits
