@@ -42,6 +42,7 @@ use config::Config;
 use nightscout::{Client, FetchError};
 
 /// How the binary was invoked.
+#[derive(Debug)]
 enum Mode {
     /// Run the interactive TUI, starting on the given screen; `demo` uses
     /// synthetic data with no config/network.
@@ -63,6 +64,23 @@ enum Mode {
     Help,
     /// Print the version and exit.
     Version,
+}
+
+/// The subcommand `--demo` cannot honour, if this is one.
+///
+/// Demo mode means synthetic data and no network. `watch` starts the alarm
+/// daemon against the configured site, and `export`/`status`/`waybar` all read
+/// the real config — so `--demo` there did the opposite of what it says,
+/// silently. `sugarrush watch --demo` in particular looked like a safe way to
+/// try the alarm out.
+fn subcommand_without_demo(mode: &Option<Mode>) -> Option<&'static str> {
+    match mode {
+        Some(Mode::Watch) => Some("watch"),
+        Some(Mode::Export { .. }) => Some("export"),
+        Some(Mode::Status { .. }) => Some("status"),
+        Some(Mode::Waybar) => Some("waybar"),
+        _ => None,
+    }
 }
 
 fn parse_args() -> Mode {
@@ -118,6 +136,19 @@ fn parse_args() -> Mode {
         }
         i += 1;
     }
+    // A flag that a subcommand can't honour must be an error, not a shrug.
+    // `sugarrush watch --demo` used to start the alarm daemon against the real
+    // config and the real site — the exact opposite of what --demo means
+    // everywhere else, and silent about it. The same held for export, status
+    // and waybar.
+    if demo {
+        if let Some(name) = subcommand_without_demo(&mode) {
+            eprintln!("sugarrush: --demo is not supported by '{name}'");
+            eprintln!("It only applies to the dashboard: run 'sugarrush --demo'.");
+            std::process::exit(2);
+        }
+    }
+
     match mode {
         // `--days` / `--out` are only meaningful for export; fill them in here
         // so the flags can appear on either side of the subcommand.
@@ -269,7 +300,7 @@ USAGE:
     sugarrush about                          version, repo and the safety note
 
 OPTIONS:
-    --demo                 synthetic data, no config and no network
+    --demo                 synthetic data, no config and no network (dashboard only)
     --screen settings      open straight to the settings screen
     --days N               export window in days (default: the AGP days setting)
     --out DIR              where to write exports (default: the current directory)
@@ -1155,6 +1186,38 @@ mod tests {
         let mut a = App::new(&cfg, alerts, sites);
         a.demo = false;
         a
+    }
+
+    /// `--demo` means synthetic data and no network. On `watch` it used to be
+    /// ignored, so the alarm daemon started against the real site and the real
+    /// config — the opposite of what the flag says, with nothing printed.
+    #[test]
+    fn demo_is_rejected_by_the_subcommands_that_cannot_honour_it() {
+        for (mode, expected) in [
+            (Some(Mode::Watch), Some("watch")),
+            (Some(Mode::Export { days: 0, dir: None }), Some("export")),
+            (
+                Some(Mode::Status {
+                    format: status::Format::Text,
+                }),
+                Some("status"),
+            ),
+            (Some(Mode::Waybar), Some("waybar")),
+            // The dashboard is what --demo is for.
+            (None, None),
+            (
+                Some(Mode::Tui {
+                    screen: Screen::Dashboard,
+                    demo: true,
+                }),
+                None,
+            ),
+            // Neither of these reads config or the network at all.
+            (Some(Mode::About), None),
+            (Some(Mode::Version), None),
+        ] {
+            assert_eq!(subcommand_without_demo(&mode), expected, "for {mode:?}");
+        }
     }
 
     fn fetcher(site: &config::Site) -> (Fetcher, mpsc::UnboundedReceiver<(Plan, Gathered)>) {
