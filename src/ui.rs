@@ -171,10 +171,20 @@ fn draw_help(f: &mut Frame, area: Rect, screen: Screen) {
         ("Ctrl+C", "quit from anywhere"),
         ("drag the overview", "scrub through history (mouse)"),
     ];
-    let rows: &[(&str, &str)] = if screen == Screen::Settings {
-        &settings_rows
-    } else {
-        &dashboard_rows
+    let follower_rows = [
+        ("↑ / ↓ · j / k", "scroll through followed people"),
+        ("PgUp / PgDn", "scroll five people"),
+        ("Home / End", "first / last person"),
+        ("r", "refresh everyone"),
+        ("m / Esc", "back to dashboard"),
+        ("s", "open settings"),
+        ("?", "toggle this help"),
+        ("q / Ctrl+C", "quit"),
+    ];
+    let rows: &[(&str, &str)] = match screen {
+        Screen::Settings => &settings_rows,
+        Screen::Followers => &follower_rows,
+        Screen::Dashboard => &dashboard_rows,
     };
     // Two columns of key text now; keep the popup wide enough for the longest.
     let key_w = 17usize;
@@ -792,11 +802,22 @@ fn draw_followers(f: &mut Frame, app: &App) {
     f.render_widget(header, chunks[0]);
 
     let now = chrono::Utc::now().timestamp_millis();
-    let block = Block::default().borders(Borders::ALL);
+    let available = chunks[1].height.saturating_sub(2) as usize;
+    let data_rows = available.saturating_sub(1);
+    let max_start = app.followers.len().saturating_sub(data_rows.max(1));
+    let start = app.follower_scroll.min(max_start);
+    let end = (start + data_rows).min(app.followers.len());
+    let rows_title = match (start > 0, end < app.followers.len()) {
+        (true, true) => " ↑ more · people · ↓ more ",
+        (true, false) => " ↑ more · people ",
+        (false, true) => " people · ↓ more ",
+        (false, false) => " people ",
+    };
+    let block = Block::default().borders(Borders::ALL).title(rows_title);
     let inner = block.inner(chunks[1]);
     f.render_widget(block, chunks[1]);
 
-    let mut lines: Vec<Line> = if app.followers.is_empty() {
+    let lines: Vec<Line> = if app.followers.is_empty() {
         vec![Line::from(format!("  {}", empty_reason(app)))]
     } else {
         let wide = inner.width >= 82;
@@ -825,7 +846,7 @@ fn draw_followers(f: &mut Frame, app: &App) {
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         )));
-        rows.extend(app.followers.iter().map(|s| {
+        rows.extend(app.followers[start..end].iter().map(|s| {
             let color = match s.alert {
                 crate::alert::Alert::UrgentLow | crate::alert::Alert::UrgentHigh => {
                     app.theme.urgent
@@ -839,7 +860,8 @@ fn draw_followers(f: &mut Frame, app: &App) {
             // sits next to it rather than at the end of the row.
             let age = match s.age_min(now) {
                 Some(m) => format!("{m}m ago"),
-                None => s.error.clone().unwrap_or_else(|| "no data".into()),
+                None if s.error.is_some() => "unavailable".into(),
+                None => "no data".into(),
             };
             let spark = sparkline_str(&s.history);
             let mut spans = vec![
@@ -847,7 +869,11 @@ fn draw_followers(f: &mut Frame, app: &App) {
                 // when the text columns no longer line up on a narrow TTY.
                 Span::styled("▌ ", Style::default().fg(color)),
                 Span::styled(
-                    format!("{:<width$}", s.name, width = if wide { 12 } else { 10 }),
+                    format!(
+                        "{:<width$}",
+                        fit_cell(&s.name, if wide { 12 } else { 10 }),
+                        width = if wide { 12 } else { 10 }
+                    ),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
@@ -881,16 +907,26 @@ fn draw_followers(f: &mut Frame, app: &App) {
         }));
         rows
     };
-    if lines.len() > inner.height as usize {
-        lines.truncate(inner.height as usize);
-    }
     f.render_widget(Paragraph::new(lines), inner);
 
     let footer = match &app.status {
         Some(msg) => Span::styled(format!(" {msg} "), Style::default().fg(Color::Green)),
-        None => Span::raw(" m / esc dashboard · r refresh · s settings · ? help · q quit "),
+        None => Span::raw(
+            " ↑/↓ scroll · pgup/pgdn page · m/esc dashboard · r refresh · ? help · q quit ",
+        ),
     };
     f.render_widget(Paragraph::new(Line::from(footer)), chunks[2]);
+}
+
+fn fit_cell(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    if len <= width {
+        return text.to_string();
+    }
+    text.chars()
+        .take(width.saturating_sub(1))
+        .chain(['…'])
+        .collect()
 }
 
 fn draw_banner(f: &mut Frame, area: Rect, app: &App) {
@@ -2436,16 +2472,19 @@ mod tests {
             );
             // Settings gets its own vocabulary — a dashboard cheatsheet there
             // would be wrong on every line.
-            if screen == Screen::Settings {
-                assert!(
+            match screen {
+                Screen::Settings => assert!(
                     text.contains("save to config.toml"),
                     "settings help should document the settings keys"
-                );
-            } else {
-                assert!(
+                ),
+                Screen::Followers => {
+                    assert!(text.contains("scroll through followed people"));
+                    assert!(!text.contains("pan back / forward"));
+                }
+                Screen::Dashboard => assert!(
                     text.contains("pan back / forward"),
                     "dashboard help should document the graph keys"
-                );
+                ),
             }
         }
     }
@@ -2823,6 +2862,39 @@ mod tests {
         assert!(text.contains("LAST HOUR"));
         assert!(text.contains('▌'));
         assert!(text.contains('█') || text.contains('▁'));
+    }
+
+    #[test]
+    fn follower_overflow_is_scrollable_and_keeps_columns_bounded() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = demo_app();
+        app.screen = Screen::Followers;
+        let sample =
+            crate::follow::demo(chrono::Utc::now().timestamp_millis(), &[app.alerts.clone()])[0]
+                .clone();
+        app.followers = (0..20)
+            .map(|i| {
+                let mut row = sample.clone();
+                row.name = format!("{i:02}-person-with-a-very-long-name");
+                row
+            })
+            .collect();
+        app.follower_scroll = 10;
+
+        let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("↑ more"));
+        assert!(text.contains("↓ more"));
+        assert!(text.contains('…'), "long names should be ellipsized");
+        assert!(text.contains("10") || text.contains("11"));
     }
 
     /// An app on demo config with one fixed, in-range reading.

@@ -201,8 +201,10 @@ Settings screen: `↑`/`↓` select, `←`/`→` change, `Enter` edit or run an 
 (including add/remove site), `w` save, `?` help, `s`/`Esc` back. The overlay is screen-aware — on settings it
 lists the settings keys, not the graph ones.
 
-Caregiver view: `m`/`Esc` back to the dashboard, `r` refresh, `s` settings,
-`?` help, `q` quit.
+Caregiver view: `↑`/`↓` or `j`/`k` scroll, `PgUp`/`PgDn` move five people,
+`Home`/`End` jump to the first/last person, `m`/`Esc` return to the dashboard,
+`r` refresh, `s` settings, `?` help, `q` quit. The worst state stays summarized
+in the header even while the list is scrolled.
 When the minimap is on, click or drag it to move the window — or use `H`/`L`
 and `End` for the same navigation from the keyboard.
 
