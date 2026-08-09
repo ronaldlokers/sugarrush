@@ -20,10 +20,15 @@ pub async fn run() -> Result<()> {
     println!("  always confirm with your meter, pump, or official app.\n");
     println!("  No config found. Let's connect to your Nightscout site.");
     println!("  Use a read-only token (Nightscout → Admin Tools → Subject with the");
-    println!("  `readable` role). Not your API_SECRET.\n");
+    println!("  `readable` role). Not your API_SECRET.");
+    println!("  Token help: https://nightscout.github.io/nightscout/security/");
+    println!("  Enter q at the URL prompt to leave setup.\n");
 
     loop {
-        let typed = prompt("  Nightscout URL (https://…): ")?;
+        let typed = prompt("  Nightscout URL (https://…, or q to quit): ")?;
+        if is_exit(&typed) {
+            bail!("setup cancelled");
+        }
         // The token is echoed nowhere: it's the one secret in this flow, and a
         // terminal scrollback (or a shoulder) outlives the setup session.
         let token = prompt_secret("  Read-only token: ")?;
@@ -61,7 +66,9 @@ pub async fn run() -> Result<()> {
                 println!("ok");
                 let units = prompt_units()?;
                 write_config(&path, &url, &token, units)?;
-                println!("\n  Saved to {}. Launching…\n", path.display());
+                println!("\n  Saved to {}.", path.display());
+                print_orientation();
+                println!("\n  Launching…\n");
                 return Ok(());
             }
             Err(e) => {
@@ -71,6 +78,17 @@ pub async fn run() -> Result<()> {
             }
         }
     }
+}
+
+fn is_exit(input: &str) -> bool {
+    input.eq_ignore_ascii_case("q") || input.eq_ignore_ascii_case("quit")
+}
+
+fn print_orientation() {
+    println!("  You're ready. In the dashboard:");
+    println!("    ? help · s settings · Tab graph views · m followers");
+    println!("  For an always-on alarm, run: sugarrush watch --install-unit");
+    println!("  Before relying on alarms, run: sugarrush watch --test");
 }
 
 /// Read a trimmed line; error on EOF (Ctrl+D) so the caller can exit cleanly.
@@ -161,7 +179,13 @@ fn prompt_units() -> Result<&'static str> {
 async fn test(site: &Site) -> Result<()> {
     let client = Client::for_site(site)?;
     let now = chrono::Utc::now().timestamp_millis();
-    client.entries_range(now - 3_600_000, now, 1).await?;
+    let entries = client.entries_range(now - 3_600_000, now, 1).await?;
+    if entries.is_empty() {
+        bail!(
+            "connected, but Nightscout returned no readings from the last hour; \
+             confirm that your uploader is sending fresh data"
+        );
+    }
     Ok(())
 }
 
@@ -200,5 +224,20 @@ mod tests {
         assert_eq!(cfg.token.as_deref(), Some(token));
         assert_eq!(cfg.url.as_deref(), Some("https://ns.example"));
         assert_eq!(cfg.refresh_secs, 30);
+    }
+
+    #[test]
+    fn the_url_prompt_has_an_explicit_exit_hatch() {
+        assert!(is_exit("q"));
+        assert!(is_exit("QUIT"));
+        assert!(!is_exit("https://q.example"));
+    }
+
+    #[tokio::test]
+    async fn connection_test_rejects_an_empty_recent_response() {
+        let site = crate::nightscout::fake::serve(200, "[]").await;
+        let err = test(&site).await.unwrap_err().to_string();
+        assert!(err.contains("no readings from the last hour"), "{err}");
+        assert!(err.contains("uploader"), "{err}");
     }
 }
