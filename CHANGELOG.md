@@ -8,6 +8,15 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Treatment submissions have a privacy-safe receipt view.** `treatments`
+  filters the bounded local audit by person and time, emits text/JSON/CSV, and
+  exposes stable operation IDs for reconciliation without notes or credentials.
+
+- **Managed watchers now point to usable diagnostics on every platform.**
+  macOS and Windows services write to a private user-data log, install/status
+  print its path plus the strict health command, and uninstall says that logs
+  remain; platform session and independent dead-man limits are documented.
+
 - **Operational health is explicit instead of collapsing unlike guarantees.**
   JSON now separates process, data, configured-channel, suppression, and known
   delivery status; `--strict-delivery` gives external monitors an opt-in

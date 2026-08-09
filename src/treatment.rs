@@ -13,6 +13,24 @@ use crate::nightscout::{Client, TreatmentWriteError};
 
 const RETAIN_DAYS: i64 = 90;
 
+#[derive(Debug, Clone, Copy)]
+pub enum Format {
+    Text,
+    Json,
+    Csv,
+}
+
+impl Format {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "text" => Some(Self::Text),
+            "json" => Some(Self::Json),
+            "csv" => Some(Self::Csv),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Request {
     pub site: String,
@@ -37,6 +55,97 @@ struct Audit {
     carbs: Option<f64>,
     insulin: Option<f64>,
     note_present: bool,
+}
+
+pub fn render(days: i64, site: Option<&str>, format: Format) -> Result<String> {
+    let days = days.clamp(1, RETAIN_DAYS);
+    let cutoff = Utc::now().timestamp_millis() - days * 86_400_000;
+    let (records, corrupt) = read_audit()?;
+    let records: Vec<_> = records
+        .into_iter()
+        .filter(|record| record.ts >= cutoff && site.is_none_or(|site| record.site == site))
+        .collect();
+    if corrupt > 0 {
+        eprintln!("sugarrush treatments: {corrupt} corrupt audit line(s) were skipped");
+    }
+    if let Some(site) = site {
+        let cfg = Config::load()?;
+        let names: Vec<_> = cfg
+            .resolve_sites()?
+            .into_iter()
+            .map(|site| site.name)
+            .collect();
+        if !names.iter().any(|name| name == site)
+            && !records.iter().any(|record| record.site == site)
+        {
+            bail!("unknown site '{site}'; available: {}", names.join(", "));
+        }
+    }
+    match format {
+        Format::Json => Ok(serde_json::to_string_pretty(&records)? + "\n"),
+        Format::Csv => {
+            let mut out =
+                "attempted_at_ms,site,intended_at_ms,operation_id,outcome,carbs_g,insulin_u,note_present\n"
+                    .to_string();
+            for record in &records {
+                out.push_str(&format!(
+                    "{},{},{},{},{},{},{},{}\n",
+                    record.ts,
+                    csv_field(&record.site),
+                    record.intended_at,
+                    record.operation_id,
+                    record.outcome,
+                    record.carbs.map(|v| v.to_string()).unwrap_or_default(),
+                    record.insulin.map(|v| v.to_string()).unwrap_or_default(),
+                    record.note_present
+                ));
+            }
+            Ok(out)
+        }
+        Format::Text => {
+            let mut out = String::from(
+                "Local submission audit — not a complete or clinically verified Nightscout record.\n",
+            );
+            for record in &records {
+                let at = DateTime::from_timestamp_millis(record.intended_at)
+                    .map(|value| value.to_rfc3339())
+                    .unwrap_or_else(|| record.intended_at.to_string());
+                out.push_str(&format!(
+                    "{at}  {:<12} {:<9} {}  carbs={} insulin={} note={}\n",
+                    record.site,
+                    record.outcome,
+                    record.operation_id,
+                    record
+                        .carbs
+                        .map(|v| format!("{v}g"))
+                        .unwrap_or_else(|| "—".into()),
+                    record
+                        .insulin
+                        .map(|v| format!("{v}U"))
+                        .unwrap_or_else(|| "—".into()),
+                    if record.note_present { "yes" } else { "no" }
+                ));
+            }
+            if records.is_empty() {
+                out.push_str("No matching submission attempts.\n");
+            }
+            if corrupt > 0 {
+                out.push_str(&format!(
+                    "WARNING: {corrupt} corrupt audit line(s) were skipped.\n"
+                ));
+            }
+            Ok(out)
+        }
+    }
+}
+
+fn csv_field(value: &str) -> String {
+    let guarded = if value.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{value}")
+    } else {
+        value.to_string()
+    };
+    format!("\"{}\"", guarded.replace('"', "\"\""))
 }
 
 pub async fn run(request: Request) -> Result<()> {
@@ -267,16 +376,29 @@ fn audit_path() -> PathBuf {
 }
 
 fn latest(operation_id: &str) -> Result<Option<Audit>> {
-    let path = audit_path();
-    let body = match std::fs::read_to_string(path) {
+    Ok(read_audit()?
+        .0
+        .into_iter()
+        .rfind(|record| record.operation_id == operation_id))
+}
+
+fn read_audit() -> Result<(Vec<Audit>, usize)> {
+    let body = match std::fs::read_to_string(audit_path()) {
         Ok(body) => body,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((Vec::new(), 0));
+        }
         Err(error) => return Err(error.into()),
     };
-    Ok(body
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Audit>(line).ok())
-        .rfind(|record| record.operation_id == operation_id))
+    let mut records = Vec::new();
+    let mut corrupt = 0;
+    for line in body.lines() {
+        match serde_json::from_str(line) {
+            Ok(record) => records.push(record),
+            Err(_) => corrupt += 1,
+        }
+    }
+    Ok((records, corrupt))
 }
 
 fn append(entry: &Audit) -> Result<()> {
@@ -362,5 +484,10 @@ mod tests {
     #[test]
     fn bounds_are_enforced() {
         assert!(checked_amount("carbs", Some(0.0), 0.1, 300.0).is_err());
+    }
+    #[test]
+    fn audit_csv_cannot_execute_a_person_name() {
+        assert_eq!(csv_field("=cmd()"), "\"'=cmd()\"");
+        assert_eq!(csv_field("Alice \"A\""), "\"Alice \"\"A\"\"\"");
     }
 }
