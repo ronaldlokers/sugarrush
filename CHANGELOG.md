@@ -8,6 +8,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Every time-in-range band now has a number, not just a colour.** The stats
+  panel printed only "in range" and "below"; above-range and very-low existed
+  solely as segments of the bar — and on the default palette two of those
+  segments are the same red. The line now reads e.g. `43% in range · 29% below
+  (14% very low) · 29% above`, shedding detail whole as the pane narrows rather
+  than clipping a percentage into a different number.
 - **The clinical export cites its sources.** Time-in-range and CV goals now
   reference the 2019 international consensus (Battelino et al., Diabetes Care)
   and GMI references Bergenstal et al. 2018, with a note that the consensus

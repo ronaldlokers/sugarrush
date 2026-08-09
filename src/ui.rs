@@ -318,20 +318,43 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
             // half-width panel and the reader never learns they existed.
             let width = inner.width as usize;
             let in_range = format!(" {:.0}% in range", t.in_range);
+            // Three of the five bands used to have no textual form at all —
+            // above-range and very-high were only ever a colour in the bar,
+            // which is unreadable to anyone who can't distinguish the two reds
+            // or isn't looking at colour at all.
             let mut below = if t.below() > 0.0 {
-                format!(" · {:.0}% below", t.below())
+                if t.very_low > 0.0 {
+                    format!(" · {:.0}% below ({:.0}% very low)", t.below(), t.very_low)
+                } else {
+                    format!(" · {:.0}% below", t.below())
+                }
+            } else {
+                String::new()
+            };
+            let mut above = if t.above() > 0.0 {
+                format!(" · {:.0}% above", t.above())
             } else {
                 String::new()
             };
             // Order of sacrifice as the pane narrows: the bar shrinks, then the
-            // below-range suffix goes whole, then the bar goes. A clipped
-            // "· 7%" is worse than no suffix — it reads as a different number.
+            // very-low detail, then above-range, then below-range, then the bar
+            // goes. A clipped "· 7%" is worse than no suffix — it reads as a
+            // different number. Below outlives above because it is the one that
+            // changes what someone does tonight.
             const MIN_BAR: usize = 5;
-            if 6 + in_range.len() + below.len() + MIN_BAR > width {
+            let budget =
+                |a: &str, b: &str| 6 + in_range.len() + a.len() + b.len() + MIN_BAR > width;
+            if budget(&below, &above) && t.very_low > 0.0 {
+                below = format!(" · {:.0}% below", t.below());
+            }
+            if budget(&below, &above) {
+                above.clear();
+            }
+            if budget(&below, &above) {
                 below.clear();
             }
             let bar_w = width
-                .saturating_sub(6 + in_range.len() + below.len())
+                .saturating_sub(6 + in_range.len() + below.len() + above.len())
                 .min(40);
             let bar_w = if bar_w < MIN_BAR { 0 } else { bar_w };
             // Cells are allocated to the urgent bands first: a single very-low
@@ -361,6 +384,9 @@ fn draw_stats(f: &mut Frame, area: Rect, app: &App) {
             // out rather than leaving it to be read off the bar.
             if !below.is_empty() {
                 spans.push(Span::styled(below, Style::default().fg(app.theme.low)));
+            }
+            if !above.is_empty() {
+                spans.push(Span::styled(above, Style::default().fg(app.theme.high)));
             }
             Line::from(spans)
         }
@@ -2327,6 +2353,88 @@ mod tests {
         assert_eq!(thinned[1], "08-09 02:35");
         assert_eq!(fit_labels(15, three()).len(), 1);
         assert!(fit_labels(4, three()).is_empty());
+    }
+
+    /// Three of the five clinical bands had no textual form: above-range and
+    /// very-high existed only as colours in the bar, and with the default
+    /// palette two of those colours were the same red. Anyone not reading
+    /// colour got two numbers out of five.
+    #[test]
+    fn every_time_in_range_band_has_a_number() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = demo_app();
+        let now = chrono::Utc::now().timestamp_millis();
+        // A window that lands in all five bands.
+        app.agp_entries = [40.0, 60.0, 100.0, 200.0, 300.0]
+            .iter()
+            .enumerate()
+            .map(|(i, sgv)| crate::nightscout::Entry {
+                sgv: *sgv,
+                date: now - i as i64 * 300_000,
+                direction: None,
+            })
+            .collect();
+
+        let mut term = Terminal::new(TestBackend::new(200, 40)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+
+        for expected in ["in range", "below", "very low", "above"] {
+            assert!(
+                text.contains(expected),
+                "{expected:?} has no textual form in the stats panel"
+            );
+        }
+    }
+
+    /// …and the suffixes are dropped whole as the pane narrows, never clipped:
+    /// a truncated "· 7%" reads as a different number.
+    #[test]
+    fn time_in_range_suffixes_are_dropped_whole() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        for w in [40u16, 50, 60, 70, 80, 90, 110, 140, 200] {
+            let mut app = demo_app();
+            let now = chrono::Utc::now().timestamp_millis();
+            app.agp_entries = [40.0, 60.0, 100.0, 200.0, 300.0]
+                .iter()
+                .enumerate()
+                .map(|(i, sgv)| crate::nightscout::Entry {
+                    sgv: *sgv,
+                    date: now - i as i64 * 300_000,
+                    direction: None,
+                })
+                .collect();
+
+            let mut term = Terminal::new(TestBackend::new(w, 40)).unwrap();
+            term.draw(|f| draw(f, &app)).unwrap();
+            let b = term.backend().buffer();
+            for y in 0..40u16 {
+                let row: String = (0..w).map(|x| b[(x, y)].symbol()).collect();
+                if !row.contains("TIR") {
+                    continue;
+                }
+                // Any "%" on the line must be followed by a whole word, not by
+                // the pane border or the end of the row.
+                for (i, _) in row.match_indices('%') {
+                    let rest = row[i + 1..].trim_start();
+                    assert!(
+                        rest.starts_with("in range")
+                            || rest.starts_with("below")
+                            || rest.starts_with("above")
+                            || rest.starts_with("very low"),
+                        "a percentage was clipped at width {w}: {row:?}"
+                    );
+                }
+            }
+        }
     }
 
     /// An app on demo config with one fixed, in-range reading.

@@ -26,6 +26,11 @@ impl Tir {
     pub fn below(&self) -> f64 {
         self.very_low + self.low
     }
+
+    /// Everything above the target range (high + very high).
+    pub fn above(&self) -> f64 {
+        self.high + self.very_high
+    }
 }
 
 /// Time-in-range over `entries`. Bounds are mg/dL and match [`crate::alert`]'s
