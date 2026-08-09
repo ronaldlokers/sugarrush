@@ -20,6 +20,8 @@ mod waybar;
 mod wizard;
 
 use std::io::{self, IsTerminal, Stdout};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -33,6 +35,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
+use tokio::time::MissedTickBehavior;
 
 use app::{App, Screen};
 use config::Config;
@@ -379,21 +382,31 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
         }
     });
 
+    // The first fetch is awaited: there is nothing to show until it lands.
     refresh(app, &client).await;
     terminal.draw(|f| ui::draw(f, app))?;
 
+    let (fetch_tx, mut fetch_rx) = mpsc::unbounded_channel::<(Plan, Gathered)>();
+    let (err_tx, mut err_rx) = mpsc::unbounded_channel::<String>();
+    let mut fetch = Fetcher::new(client.clone(), fetch_tx, err_tx);
+
     let mut ticker = tokio::time::interval(Duration::from_secs(app.refresh_secs.max(5)));
+    // Delay, not the default Burst: after a stall (a suspended laptop, a slow
+    // fetch) Burst fires every missed tick back-to-back. On the 3-second alarm
+    // ticker that is a machine-gun of alarm sounds the moment the machine wakes.
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     ticker.tick().await; // consume the immediate first tick
                          // A fast ticker to loop the audible alarm while an urgent state persists.
     let mut alarm_ticker = tokio::time::interval(Duration::from_secs(3));
+    alarm_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     alarm_ticker.tick().await;
 
     loop {
         tokio::select! {
             maybe_input = rx.recv() => {
                 match maybe_input {
-                    Some(Input::Key(key)) => handle_key(app, &client, key).await,
-                    Some(Input::Mouse(m)) => handle_mouse(app, &client, m).await,
+                    Some(Input::Key(key)) => handle_key(app, &fetch, key),
+                    Some(Input::Mouse(m)) => handle_mouse(app, &fetch, m),
                     Some(Input::Resize) => {} // fall through to the redraw below
                     None => break,
                 }
@@ -403,8 +416,14 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                 // history window doesn't change on its own (and never while
                 // fetching is paused on a bad token / URL).
                 if app.should_auto_refresh() {
-                    refresh(app, &client).await;
+                    fetch.request(app);
                 }
+            }
+            Some((p, g)) = fetch_rx.recv() => {
+                fetch.deliver(app, p, g);
+            }
+            Some(e) = err_rx.recv() => {
+                app.last_error = Some(e);
             }
             _ = alarm_ticker.tick() => {
                 let now = now_ms();
@@ -434,7 +453,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                 }
                 // Retry the connection sooner than the normal interval when down.
                 if app.should_retry(now) {
-                    refresh(app, &client).await;
+                    fetch.request(app);
                 }
             }
         }
@@ -447,9 +466,10 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
             match Client::for_site(app.active_site()) {
                 Ok(c) => {
                     client = c;
+                    fetch.client = client.clone();
                     // New credentials/URL — a previous pause no longer applies.
                     app.resume_fetching();
-                    refresh(app, &client).await;
+                    fetch.request(app);
                 }
                 Err(e) => app.last_error = Some(e.to_string()),
             }
@@ -467,7 +487,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
 }
 
 /// Dispatch a keypress, either into the date-jump prompt or the dashboard.
-async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
+fn handle_key(app: &mut App, fetch: &Fetcher, key: KeyEvent) {
     // Ctrl+C / Ctrl+D always quit — raw mode delivers these as keys, not signals.
     if key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
@@ -477,7 +497,7 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
     }
 
     if app.date_input.is_some() {
-        handle_date_input(app, client, key.code).await;
+        handle_date_input(app, fetch, key.code);
         return;
     }
 
@@ -486,7 +506,7 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
             KeyCode::Char('q') => app.should_quit = true,
             KeyCode::Char('m') | KeyCode::Esc => app.toggle_followers(),
             KeyCode::Char('s') => app.toggle_settings(),
-            KeyCode::Char('r') => refresh(app, client).await,
+            KeyCode::Char('r') => fetch.request(app),
             KeyCode::Char('?') => app.show_help = true,
             _ => {}
         }
@@ -513,7 +533,7 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
                 app.status = Some("press q to quit".to_string());
             } else {
                 app.view.follow();
-                refresh(app, client).await;
+                fetch.request(app);
             }
         }
         KeyCode::Char('?') => app.show_help = true,
@@ -523,62 +543,62 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
         // token/URL paused automatic fetching.
         KeyCode::Char('r') => {
             app.resume_fetching();
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::Tab => {
             app.cycle_graph_view(1);
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::BackTab => {
             app.cycle_graph_view(-1);
-            refresh(app, client).await;
+            fetch.request(app);
         }
         // Pan / zoom / jump operate on the timeline, not the AGP profile.
         KeyCode::Char('h') | KeyCode::Left if !app.is_agp() => {
             app.view.pan_back(now_ms());
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::Char('l') | KeyCode::Right if !app.is_agp() => {
             app.view.pan_forward(now_ms());
-            refresh(app, client).await;
+            fetch.request(app);
         }
         // Whole-window paging and a jump to the far edge of the overview: the
         // keyboard equivalents of dragging and clicking the minimap, which was
         // otherwise mouse-only.
         KeyCode::Char('H') | KeyCode::PageUp if !app.is_agp() => {
             app.view.page_back(now_ms());
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::Char('L') | KeyCode::PageDown if !app.is_agp() => {
             app.view.page_forward(now_ms());
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::End if !app.is_agp() => {
             app.view.jump_to_oldest(now_ms(), app.minimap_span_ms);
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::Char('+') | KeyCode::Char('=') if !app.is_agp() => {
             app.view.zoom_in();
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::Char('-') | KeyCode::Char('_') if !app.is_agp() => {
             app.view.zoom_out();
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::Char('f') | KeyCode::Home if !app.is_agp() => {
             app.view.follow();
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::Char('g') if !app.is_agp() => app.begin_date_input(),
         // Walk day by day without typing a date each time — "how was last
         // night?" is the common case, and `g` makes you spell it out.
         KeyCode::Char('[') if !app.is_agp() => {
             app.view.shift_day(-1, now_ms());
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::Char(']') if !app.is_agp() => {
             app.view.shift_day(1, now_ms());
-            refresh(app, client).await;
+            fetch.request(app);
         }
         KeyCode::Char('n') => app.next_site(),
         KeyCode::Char('m') => {
@@ -586,7 +606,7 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
             // Fetch on entry: the list is the whole point of the screen, and
             // waiting out the refresh interval to see it reads as broken.
             if app.screen == Screen::Followers {
-                refresh(app, client).await;
+                fetch.request(app);
             }
         }
         KeyCode::Char('a') => app.snooze_alarm(now_ms()),
@@ -597,13 +617,13 @@ async fn handle_key(app: &mut App, client: &Client, key: KeyEvent) {
 
 /// Handle a mouse event: a press or drag over the minimap seeks the main
 /// window to that time.
-async fn handle_mouse(app: &mut App, client: &Client, m: MouseEvent) {
+fn handle_mouse(app: &mut App, fetch: &Fetcher, m: MouseEvent) {
     if !app.minimap_enabled || app.screen != Screen::Dashboard {
         return;
     }
     let seeking = matches!(m.kind, MouseEventKind::Down(_) | MouseEventKind::Drag(_));
     if seeking && app.minimap_seek(m.column, m.row, now_ms()) {
-        refresh(app, client).await;
+        fetch.request(app);
     }
 }
 
@@ -639,7 +659,7 @@ fn handle_settings_key(app: &mut App, code: KeyCode) {
 }
 
 /// Handle keys while the date-jump prompt is open.
-async fn handle_date_input(app: &mut App, client: &Client, code: KeyCode) {
+fn handle_date_input(app: &mut App, fetch: &Fetcher, code: KeyCode) {
     match code {
         KeyCode::Esc => app.cancel_date_input(),
         KeyCode::Backspace => {
@@ -657,7 +677,7 @@ async fn handle_date_input(app: &mut App, client: &Client, code: KeyCode) {
             match view::parse_date(&buf) {
                 Some(date) => {
                     app.view.jump_to(date, now_ms());
-                    refresh(app, client).await;
+                    fetch.request(app);
                 }
                 None => app.last_error = Some(format!("invalid date '{buf}', use YYYY-MM-DD")),
             }
@@ -666,18 +686,136 @@ async fn handle_date_input(app: &mut App, client: &Client, code: KeyCode) {
     }
 }
 
-async fn refresh(app: &mut App, client: &Client) {
-    let now = now_ms();
+/// What a refresh should fetch, snapshotted from `App` *before* the fetch
+/// starts.
+///
+/// The run loop used to `await` the whole fetch chain inside its `select!`,
+/// which meant a slow Nightscout froze keyboard input, the redraw and — worst
+/// of all — the 3-second alarm ticker. Five sequential requests at a 12s
+/// timeout is a minute of a dashboard that looks alive and answers nothing.
+/// Splitting the work in three (plan / gather / apply) lets the gather half run
+/// on its own task while the loop keeps drawing and sounding the alarm.
+struct Plan {
+    now: i64,
+    start: i64,
+    end: i64,
+    count: usize,
+    live: bool,
+    demo: bool,
+    minimap_span_ms: i64,
+    minimap: bool,
+    /// `Some((start, end, count))` when the heavy history buffer is due.
+    agp: Option<(i64, i64, usize)>,
+    followers: Option<(Vec<config::Site>, config::Alerts)>,
+}
+
+/// Whatever the network returned. Every field is best-effort except `entries`,
+/// whose failure is what marks the app offline.
+#[derive(Default)]
+struct Gathered {
+    entries: Option<Result<Vec<nightscout::Entry>>>,
+    treatments: Option<Result<Vec<nightscout::Treatment>>>,
+    device: Option<
+        Result<(
+            nightscout::DeviceStatus,
+            Option<Vec<nightscout::Prediction>>,
+        )>,
+    >,
+    sensor_start: Option<Result<Option<i64>>>,
+    agp: Option<Result<Vec<nightscout::Entry>>>,
+    minimap: Option<Result<Vec<nightscout::Entry>>>,
+    live_edge: Option<Vec<nightscout::Entry>>,
+    followers: Option<Vec<follow::SiteStatus>>,
+}
+
+fn plan(app: &mut App, now: i64) -> Plan {
     let (start, end) = app.view.bounds(now);
     app.view_start = start;
     app.view_end = end;
+    // The history buffer is heavy (up to 90 days), so outside the AGP view it
+    // only refreshes when empty or older than 15 minutes.
+    let agp_stale = now - app.agp_fetched_ms > 15 * 60 * 1000;
+    let agp = (app.is_agp() || app.agp_entries.is_empty() || agp_stale)
+        .then(|| (now - app.agp_span_ms(), now, app.agp_fetch_count()));
+    Plan {
+        now,
+        start,
+        end,
+        count: app.view.span.fetch_count(),
+        live: app.view.is_live(),
+        demo: app.demo,
+        minimap_span_ms: app.minimap_span_ms,
+        minimap: app.minimap_enabled && (app.view.is_live() || app.minimap_entries.is_empty()),
+        agp,
+        followers: (app.sites.len() > 1 && app.screen == Screen::Followers)
+            .then(|| (app.sites.clone(), app.alerts.clone())),
+    }
+}
+
+/// The network half. Touches no `App`, so it can run on its own task.
+async fn gather(client: &Client, p: &Plan) -> Gathered {
+    let mut g = Gathered::default();
+    if p.demo {
+        return g;
+    }
+    let entries = client.entries_range(p.start, p.end, p.count).await;
+    let online = entries.is_ok();
+    g.entries = Some(entries);
+
+    // Supplementary reads only happen when the primary one succeeded — on an
+    // outage we skip them, so a stalled network can't pile up doomed requests.
+    if online {
+        g.treatments = Some(client.treatments(p.start, p.end).await);
+        if p.live {
+            g.device = Some(client.device_status().await);
+            g.sensor_start = Some(client.sensor_start().await);
+        }
+        if let Some((s, e, n)) = p.agp {
+            g.agp = Some(client.entries_range(s, e, n).await);
+        }
+        if p.minimap {
+            g.minimap = Some(
+                client
+                    .entries_range(
+                        p.now - p.minimap_span_ms,
+                        p.now,
+                        2 * p.minimap_span_ms as usize / 60_000,
+                    )
+                    .await,
+            );
+        }
+        // While browsing history the primary fetch is a historical window, so
+        // the live edge has to be fetched separately — the alarm must not go
+        // quiet just because someone is looking at last night.
+        if !p.live {
+            g.live_edge = client
+                .entries_range(p.now - 3_600_000, p.now, 24)
+                .await
+                .ok();
+        }
+    }
+    if let Some((sites, alerts)) = &p.followers {
+        g.followers = Some(follow::poll(sites, alerts, p.now).await);
+    }
+    g
+}
+
+/// The mutation half: fold a finished `Gathered` back into `App`, then run the
+/// alert machine. Synchronous, so the run loop can never block in here.
+///
+/// Returns the push-webhook call to make, if any — the one remaining piece of
+/// network in the tail, handed back so the caller can spawn it rather than
+/// await it.
+#[must_use]
+fn apply(app: &mut App, p: &Plan, g: Gathered) -> Option<(String, String)> {
+    let now = p.now;
 
     // Demo mode: synthesize everything locally, no network.
-    if app.demo {
-        app.entries = demo::entries(start, end);
+    if p.demo {
+        app.entries = demo::entries(p.start, p.end);
         app.mark_online(now);
         app.evaluate_alert(now);
-        if app.view.is_live() {
+        if p.live {
             app.predictions = predict::ar2(&app.entries);
             app.device = demo::device();
             app.treatments = demo::treatments(now);
@@ -690,14 +828,12 @@ async fn refresh(app: &mut App, client: &Client) {
         // Always synthesized: the stats panel reads this clinical-window
         // buffer even outside the AGP view.
         app.agp_entries = demo::entries(now - app.agp_span_ms(), now);
-        return;
+        return None;
     }
-    match client
-        .entries_range(start, end, app.view.span.fetch_count())
-        .await
-    {
-        Ok(entries) => {
-            if app.view.is_live() {
+
+    match g.entries {
+        Some(Ok(entries)) => {
+            if p.live {
                 app.live_edge = entries.first().cloned();
             }
             app.entries = entries;
@@ -706,105 +842,69 @@ async fn refresh(app: &mut App, client: &Client) {
         // Keep the last-known readings on screen; just flag the outage. A
         // config-level failure (bad token / URL) is not a transient outage —
         // App pauses retries after a few of them.
-        Err(e) => {
+        Some(Err(e)) => {
             let permanent = e.downcast_ref::<FetchError>().is_some();
             app.mark_offline(now, e.to_string(), permanent);
         }
+        None => {}
     }
 
-    // Supplementary fetches only happen when the primary read succeeded — on an
-    // outage we skip them and go straight to (local) alert evaluation, so a
-    // stalled network can't pile up doomed requests behind it.
     if app.online {
         // Which supplementary reads failed. They're best-effort — the glucose
         // trace is what matters — but silently showing a stale IOB or a missing
         // carb marker as if it were current is its own kind of wrong, so the
         // dashboard says which part is missing.
         let mut missing: Vec<&str> = Vec::new();
-
-        // Treatment markers for the visible window (best-effort).
-        match client.treatments(start, end).await {
-            Ok(t) => app.treatments = t,
-            Err(_) => missing.push("treatments"),
+        match g.treatments {
+            Some(Ok(t)) => app.treatments = t,
+            Some(Err(_)) => missing.push("treatments"),
+            None => {}
         }
-
-        // Forecasts and device status only make sense at the live edge — and
-        // must be refreshed *before* predictive alerts read them below.
-        if app.view.is_live() {
+        if p.live {
             // One devicestatus fetch feeds both the uploader panel and the
             // forecast; falling back to the local AR2 projection when the
             // uploader publishes none (or the fetch failed).
-            let published = match client.device_status().await {
-                Ok((status, predicted)) => {
+            let published = match g.device {
+                Some(Ok((status, predicted))) => {
                     app.device = status;
                     predicted
                 }
-                Err(_) => {
+                _ => {
                     missing.push("device");
                     None
                 }
             };
             app.predictions = published.unwrap_or_else(|| predict::ar2(&app.entries));
-            match client.sensor_start().await {
-                Ok(started) => app.sensor_start_ms = started,
-                Err(_) => missing.push("sensor age"),
+            match g.sensor_start {
+                Some(Ok(started)) => app.sensor_start_ms = started,
+                _ => missing.push("sensor age"),
             }
         } else {
             app.predictions.clear();
         }
-
-        // The `agp_days` history buffer feeds both the AGP view and the stats
-        // panel's clinical TIR/mean/GMI, so it's kept warm in every view — but
-        // it's a heavy fetch (up to 90 days of readings), so outside the AGP
-        // view it only refreshes when empty or older than 15 minutes.
-        let agp_stale = now - app.agp_fetched_ms > 15 * 60 * 1000;
-        if app.is_agp() || app.agp_entries.is_empty() || agp_stale {
-            match client
-                .entries_range(now - app.agp_span_ms(), now, app.agp_fetch_count())
-                .await
-            {
-                Ok(entries) => {
-                    app.agp_entries = entries;
-                    app.agp_fetched_ms = now;
-                }
-                Err(_) => missing.push("history"),
+        match g.agp {
+            Some(Ok(entries)) => {
+                app.agp_entries = entries;
+                app.agp_fetched_ms = now;
             }
+            Some(Err(_)) => missing.push("history"),
+            None => {}
         }
-
-        // Refresh the trailing overview only at the live edge; while dragging
-        // into history it stays put (it's a now-anchored strip, so refetching
-        // on each drag frame would be wasteful).
-        if app.minimap_enabled && (app.view.is_live() || app.minimap_entries.is_empty()) {
-            match client
-                .entries_range(
-                    now - app.minimap_span_ms,
-                    now,
-                    2 * app.minimap_span_ms as usize / 60_000,
-                )
-                .await
-            {
-                Ok(entries) => app.minimap_entries = entries,
-                Err(_) => missing.push("overview"),
-            }
+        match g.minimap {
+            Some(Ok(entries)) => app.minimap_entries = entries,
+            Some(Err(_)) => missing.push("overview"),
+            None => {}
+        }
+        if let Some(live) = g.live_edge {
+            app.live_edge = live.first().cloned();
         }
         app.set_partial(&missing);
-    } else if !app.view.is_live() {
+    } else if !p.live {
         app.predictions.clear();
     }
 
-    // While browsing history the primary fetch is a historical window, so the
-    // live edge has to be fetched separately — the alarm must not go quiet
-    // just because someone is looking at last night.
-    if app.online && !app.view.is_live() {
-        if let Ok(live) = client.entries_range(now - 3_600_000, now, 24).await {
-            app.live_edge = live.first().cloned();
-        }
-    }
-
-    // Followed sites: only worth the extra requests when there's more than one
-    // site to follow, and only while that screen is what's on display.
-    if app.sites.len() > 1 && app.screen == Screen::Followers {
-        app.followers = follow::poll(&app.sites, &app.alerts, now).await;
+    if let Some(f) = g.followers {
+        app.followers = f;
     }
 
     // Alert evaluation and notifications run every refresh, online or not, so a
@@ -825,15 +925,6 @@ async fn refresh(app: &mut App, client: &Client) {
         }
     }
     app.update_urgent(now);
-    if let Some(msg) = app.take_push(now) {
-        if let Some(url) = app.alerts.push_url.clone() {
-            // The push webhook is a safety channel (unacknowledged-urgent
-            // escalation); a dead URL must not fail silently.
-            if !push(&url, &msg).await {
-                app.last_error = Some("push notification failed — check push_url".to_string());
-            }
-        }
-    }
     if let Some(msg) = app.take_predictive(now) {
         if app.alerts.desktop {
             if app.alerts.notify_content {
@@ -841,6 +932,94 @@ async fn refresh(app: &mut App, client: &Client) {
             } else {
                 let _ = notify_text("alert — open sugarrush");
             }
+        }
+    }
+    app.take_push(now)
+        .zip(app.alerts.push_url.clone())
+        .map(|(msg, url)| (url, msg))
+}
+
+/// Hands refreshes to background tasks so the run loop never awaits the
+/// network.
+///
+/// Two properties matter for safety. It never blocks: `request` returns
+/// immediately, so keys, the redraw and the 3-second alarm ticker keep running
+/// through a Nightscout that has stopped answering. And it never queues: while
+/// a fetch is out, further requests set `pending` instead of spawning, so
+/// holding down `h` to pan can't stack a task per keypress behind a 12-second
+/// timeout.
+#[derive(Clone)]
+struct Fetcher {
+    client: Client,
+    tx: mpsc::UnboundedSender<(Plan, Gathered)>,
+    /// Background failures that need to reach `app.last_error` — the push
+    /// webhook is fired off-loop, and a dead URL must not fail silently.
+    errors: mpsc::UnboundedSender<String>,
+    in_flight: Arc<AtomicBool>,
+    pending: Arc<AtomicBool>,
+}
+
+impl Fetcher {
+    fn new(
+        client: Client,
+        tx: mpsc::UnboundedSender<(Plan, Gathered)>,
+        errors: mpsc::UnboundedSender<String>,
+    ) -> Self {
+        Self {
+            client,
+            tx,
+            errors,
+            in_flight: Arc::new(AtomicBool::new(false)),
+            pending: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Snapshot what to fetch and start it. Returns at once.
+    fn request(&self, app: &mut App) {
+        // Planning is synchronous and updates the visible window, so the
+        // redraw that follows this keypress is already correct — only the data
+        // arrives late.
+        let p = plan(app, now_ms());
+        if self.in_flight.swap(true, Ordering::SeqCst) {
+            self.pending.store(true, Ordering::SeqCst);
+            return;
+        }
+        let (client, tx, in_flight) =
+            (self.client.clone(), self.tx.clone(), self.in_flight.clone());
+        tokio::spawn(async move {
+            let g = gather(&client, &p).await;
+            in_flight.store(false, Ordering::SeqCst);
+            let _ = tx.send((p, g));
+        });
+    }
+
+    /// Fold a finished fetch into `App`, and start the next one if the view
+    /// moved while this was in flight.
+    fn deliver(&self, app: &mut App, p: Plan, g: Gathered) {
+        if let Some((url, msg)) = apply(app, &p, g) {
+            let errors = self.errors.clone();
+            tokio::spawn(async move {
+                if !push(&url, &msg).await {
+                    let _ = errors.send("push notification failed — check push_url".to_string());
+                }
+            });
+        }
+        if self.pending.swap(false, Ordering::SeqCst) {
+            self.request(app);
+        }
+    }
+}
+
+/// Fetch and apply in one go. Used on the paths that genuinely have nothing
+/// else to do while waiting — startup, a site switch, an explicit `r`.
+async fn refresh(app: &mut App, client: &Client) {
+    let p = plan(app, now_ms());
+    let g = gather(client, &p).await;
+    if let Some((url, msg)) = apply(app, &p, g) {
+        // The push webhook is a safety channel (unacknowledged-urgent
+        // escalation); a dead URL must not fail silently.
+        if !push(&url, &msg).await {
+            app.last_error = Some("push notification failed — check push_url".to_string());
         }
     }
 }
@@ -960,4 +1139,94 @@ fn install_panic_hook() {
         restore();
         original(info);
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> App {
+        let cfg = Config::demo();
+        let alerts = cfg.alerts.resolve(cfg.units);
+        let sites = cfg.resolve_sites().unwrap();
+        let mut a = App::new(&cfg, alerts, sites);
+        a.demo = false;
+        a
+    }
+
+    fn fetcher(site: &config::Site) -> (Fetcher, mpsc::UnboundedReceiver<(Plan, Gathered)>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (etx, _) = mpsc::unbounded_channel();
+        (Fetcher::new(Client::for_site(site).unwrap(), tx, etx), rx)
+    }
+
+    /// The run loop used to `await` the whole fetch chain inside its `select!`,
+    /// so a Nightscout that accepted the connection and then went quiet froze
+    /// keyboard input, the redraw and the 3-second alarm ticker for as long as
+    /// the request timeouts took — up to a minute across five sequential reads.
+    ///
+    /// `request` must return immediately against exactly that server.
+    #[tokio::test]
+    async fn a_stalled_site_does_not_block_the_caller() {
+        let site = nightscout::fake::serve_stalled().await;
+        let (fetch, _rx) = fetcher(&site);
+        let mut app = app();
+
+        let t = std::time::Instant::now();
+        fetch.request(&mut app);
+        let elapsed = t.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "request() blocked for {elapsed:?} on a stalled site — the run loop \
+             would have been frozen for that long, alarm included"
+        );
+        assert!(
+            fetch.in_flight.load(Ordering::SeqCst),
+            "the fetch should be out on its own task"
+        );
+    }
+
+    /// Holding `h` to pan fires a refresh per keypress. Each one used to be
+    /// awaited in turn; spawning them instead would just move the pile-up onto
+    /// the task queue, with a 12-second timeout apiece. At most one is in
+    /// flight, and the rest collapse into a single follow-up.
+    #[tokio::test]
+    async fn requests_made_while_a_fetch_is_out_collapse_into_one() {
+        let site = nightscout::fake::serve_stalled().await;
+        let (fetch, mut rx) = fetcher(&site);
+        let mut app = app();
+
+        for _ in 0..10 {
+            fetch.request(&mut app);
+        }
+
+        assert!(fetch.in_flight.load(Ordering::SeqCst));
+        assert!(
+            fetch.pending.load(Ordering::SeqCst),
+            "the later requests should be remembered, not dropped"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing can have been delivered — the site never answered"
+        );
+    }
+
+    /// Planning is synchronous and moves the visible window, so the redraw that
+    /// follows a keypress is correct even though the data arrives later.
+    #[tokio::test]
+    async fn planning_moves_the_window_before_the_fetch_returns() {
+        let site = nightscout::fake::serve_stalled().await;
+        let (fetch, _rx) = fetcher(&site);
+        let mut app = app();
+        app.view_start = 0;
+        app.view_end = 0;
+
+        fetch.request(&mut app);
+
+        assert!(
+            app.view_end > app.view_start,
+            "the window should already be set when request() returns"
+        );
+    }
 }
