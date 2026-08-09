@@ -8,6 +8,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **The glucose reading no longer disappears on a short terminal.** Below
+  roughly 22 rows the fixed-height panes were crushed while the graph kept its
+  full size, so `current` collapsed to a border and the number itself was not
+  on screen at all — on a tiling window manager, a phone SSH session, or a
+  terminal at 200% zoom. The layout now sheds panes deliberately: stats first,
+  then the overview strip, then `current`'s borders in favour of a one-line
+  readout with the value, arrow, state and range bar. The reading is the last
+  thing to go.
 - **A slow or wedged Nightscout no longer freezes the dashboard.** The run
   loop waited for the whole fetch chain — up to five requests at a 12-second
   timeout each — before it would handle a keypress, redraw, or sound the alarm.
