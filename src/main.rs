@@ -70,6 +70,8 @@ enum Mode {
     Alerts { days: i64 },
     /// Print usage and exit.
     Help,
+    /// Write the man page to stdout.
+    Man,
     /// Print the version and exit.
     Version,
 }
@@ -162,6 +164,7 @@ fn parse_args() -> Mode {
                 mode = Some(Mode::Snooze { minutes });
             }
             "--install-unit" => mode = Some(Mode::InstallUnit),
+            "--man" => mode = Some(Mode::Man),
             "help" | "--help" | "-h" => mode = Some(Mode::Help),
             "--version" | "-V" => mode = Some(Mode::Version),
             "--days" => {
@@ -267,6 +270,10 @@ async fn main() -> Result<()> {
             print_help();
             Ok(())
         }
+        Mode::Man => {
+            print_man();
+            Ok(())
+        }
         Mode::Version => {
             println!("sugarrush {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -350,37 +357,143 @@ async fn run_tui(screen: Screen, demo: bool) -> Result<()> {
 }
 
 /// Usage. Kept in one place so the README, the man page and this can't drift.
+/// The command reference, in one place.
+///
+/// `--help`, the man page and the README table are all rendered from this. They
+/// used to be three hand-maintained lists, which is three chances to document a
+/// command that no longer exists — or, worse, to ship one that nothing
+/// documents. `sugarrush --man` writes the roff.
+const COMMANDS: &[(&str, &str)] = &[
+    ("sugarrush [--demo] [--screen settings]", "the dashboard"),
+    (
+        "sugarrush watch",
+        "headless alarm watcher (no terminal needed)",
+    ),
+    (
+        "sugarrush watch --test [--quiet]",
+        "check that every alarm channel actually works",
+    ),
+    (
+        "sugarrush snooze [15m|2h|off]",
+        "silence the alarm daemon without stopping it",
+    ),
+    (
+        "sugarrush alerts [--days N]",
+        "what the alarm has actually done",
+    ),
+    (
+        "sugarrush export [--days N] [--out DIR]",
+        "CSV + a clinical summary",
+    ),
+    (
+        "sugarrush status [--format FORMAT]",
+        "one line for a status bar",
+    ),
+    ("sugarrush waybar", "alias for --format waybar"),
+    ("sugarrush about", "version, config and a health check"),
+];
+
+/// Flags, likewise shared between `--help` and the man page.
+const OPTIONS: &[(&str, &str)] = &[
+    (
+        "--demo",
+        "synthetic data, no config and no network (dashboard only)",
+    ),
+    ("--screen settings", "open straight to the settings screen"),
+    (
+        "--days N",
+        "window in days (export: the AGP days setting; alerts: 7)",
+    ),
+    (
+        "--out DIR",
+        "where to write exports (default: the current directory)",
+    ),
+    ("--format FORMAT", "status-bar syntax"),
+    ("--test", "run the alarm self-test"),
+    ("--quiet", "with --test: check without making a noise"),
+    (
+        "--install-unit",
+        "write a systemd user unit for `watch` and explain how to enable it",
+    ),
+    ("--man", "write the man page to stdout"),
+    ("-h, --help", "this"),
+    ("-V, --version", "print the version"),
+];
+
 fn print_help() {
     println!(
-        "\
-sugarrush {version} — your Nightscout CGM data, in the terminal
-
-USAGE:
-    sugarrush [--demo] [--screen settings]   the dashboard
-    sugarrush watch                          headless alarm watcher (no terminal needed)
-    sugarrush export [--days N] [--out DIR]  CSV + a clinical summary
-    sugarrush status [--format FORMAT]       one line for a status bar
-    sugarrush snooze [15m|2h|off]            silence the alarm daemon
-    sugarrush watch --test [--quiet]         check every alarm channel works
-    sugarrush alerts [--days N]              what the alarm has actually done
-    sugarrush waybar                         alias for --format waybar
-    sugarrush about                          version, repo and the safety note
-
-OPTIONS:
-    --demo                 synthetic data, no config and no network (dashboard only)
-    --screen settings      open straight to the settings screen
-    --days N               export window in days (default: the AGP days setting)
-    --out DIR              where to write exports (default: the current directory)
-    --format FORMAT        {formats}
-    --install-unit         write a systemd user unit for `watch` and explain how to enable it
-    -h, --help             this
-    -V, --version          print the version
-
-Config lives at ~/.config/sugarrush/config.toml; the first run sets it up.
-sugarrush is not a medical device — don't use it for treatment decisions.",
-        version = env!("CARGO_PKG_VERSION"),
-        formats = status::Format::NAMES,
+        "sugarrush {} — your Nightscout CGM data, in the terminal\n",
+        env!("CARGO_PKG_VERSION")
     );
+    println!("USAGE:");
+    for (usage, what) in COMMANDS {
+        println!("    {usage:<40} {what}");
+    }
+    println!("\nOPTIONS:");
+    for (flag, what) in OPTIONS {
+        if *flag == "--format FORMAT" {
+            println!("    {flag:<22} {}", status::Format::NAMES);
+        } else {
+            println!("    {flag:<22} {what}");
+        }
+    }
+    println!("\nConfig lives at ~/.config/sugarrush/config.toml; the first run sets it up.");
+    println!("sugarrush is not a medical device — don't use it for treatment decisions.");
+}
+
+/// Write a roff man page to stdout, from the same table as `--help`.
+///
+/// Packagers had nothing to install as `sugarrush.1`, so `man sugarrush` said
+/// "No manual entry" on every distro that ships one.
+fn print_man() {
+    let version = env!("CARGO_PKG_VERSION");
+    println!(".TH SUGARRUSH 1 \"\" \"sugarrush {version}\" \"User Commands\"");
+    println!(".SH NAME");
+    println!("sugarrush \\- your Nightscout CGM data, in the terminal");
+    println!(".SH SYNOPSIS");
+    println!(".B sugarrush");
+    println!("[\\fICOMMAND\\fR] [\\fIOPTIONS\\fR]");
+    println!(".SH DESCRIPTION");
+    println!(
+        "A terminal dashboard, alarm daemon and status-bar source for a \
+         self-hosted Nightscout site: live glucose, trend, history, forecasts, \
+         alerts and stats."
+    );
+    println!(".PP");
+    println!("sugarrush is not a medical device. Do not use it for treatment decisions.");
+    println!(".SH COMMANDS");
+    for (usage, what) in COMMANDS {
+        println!(".TP");
+        println!(".B {}", roff(usage));
+        println!("{}", roff(what));
+    }
+    println!(".SH OPTIONS");
+    for (flag, what) in OPTIONS {
+        println!(".TP");
+        println!(".B {}", roff(flag));
+        if *flag == "--format FORMAT" {
+            println!("{}", roff(status::Format::NAMES));
+        } else {
+            println!("{}", roff(what));
+        }
+    }
+    println!(".SH FILES");
+    println!(".TP");
+    println!(".B ~/.config/sugarrush/config.toml");
+    println!("Configuration. Written by the first-run wizard; keep it mode 600.");
+    println!(".TP");
+    println!(".B $XDG_STATE_HOME/sugarrush/watch.json");
+    println!("Alert episode state, so a restart does not re-announce an ongoing low.");
+    println!(".TP");
+    println!(".B $XDG_STATE_HOME/sugarrush/alerts.jsonl");
+    println!("Alert history, 90 days, read by \\fBsugarrush alerts\\fR.");
+    println!(".SH SEE ALSO");
+    println!("Project page: https://github.com/ronaldlokers/sugarrush");
+}
+
+/// Escape the two characters roff treats specially at the start of a line.
+fn roff(s: &str) -> String {
+    s.replace('\\', "\\e").replace('-', "\\-")
 }
 
 /// `sugarrush snooze [15m|2h|90|off]` — silence the alarm daemon.
@@ -480,14 +593,138 @@ WantedBy=default.target
 
 /// Print name/version/repo and a not-a-medical-device note, and also fire a
 /// desktop notification (used by the Waybar About menu).
+/// `sugarrush about` — the diagnostic the bug template asks for.
+///
+/// It used to print three lines: version, repo, and the safety note. The issue
+/// template requires its output, so every bug report arrived with a version
+/// number and nothing else — and the questions that actually matter for a CGM
+/// alarm (which config, is the site reachable, is a watcher running, can this
+/// machine make a sound) had to be asked one at a time in the comments.
+///
+/// Nothing here leaks a secret: the token is reported as present or absent, and
+/// the site URL is reported as its host, since a self-hosted Nightscout URL can
+/// itself identify someone.
 fn print_about() {
     let version = env!("CARGO_PKG_VERSION");
     let repo = "https://github.com/ronaldlokers/sugarrush";
-    let body = format!(
-        "Nightscout CGM TUI\n{repo}\nNot a medical device — do not use for treatment decisions."
+    println!("sugarrush v{version}");
+    println!("{repo}");
+    println!("Not a medical device — do not use for treatment decisions.");
+    println!();
+
+    println!("build");
+    println!("  target          {}", env!("SUGARRUSH_TARGET"));
+    println!("  rustc           {}", env!("SUGARRUSH_RUSTC"));
+    if let Ok(exe) = std::env::current_exe() {
+        println!("  binary          {}", exe.display());
+    }
+
+    println!("environment");
+    println!("  os              {}", std::env::consts::OS);
+    for var in ["TERM", "COLORTERM", "XDG_SESSION_TYPE", "WAYLAND_DISPLAY"] {
+        if let Some(v) = std::env::var_os(var) {
+            println!("  {var:<15} {}", v.to_string_lossy());
+        }
+    }
+
+    println!("config");
+    match Config::path() {
+        Ok(p) => {
+            println!("  path            {}", p.display());
+            println!("  exists          {}", p.exists());
+        }
+        Err(e) => println!("  path            unresolved: {e}"),
+    }
+    match Config::load() {
+        Ok(cfg) => {
+            let (alerts, warnings) = cfg.alerts.resolve_checked(cfg.units);
+            println!("  units           {}", cfg.units.label());
+            println!("  refresh         {}s", cfg.refresh_secs);
+            match cfg.resolve_sites() {
+                // Hosts, not URLs with credentials — and a self-hosted
+                // Nightscout host is identifying enough on its own that it is
+                // worth someone deciding to paste it, rather than us printing
+                // the whole URL by default.
+                Ok(sites) => {
+                    println!("  sites           {}", sites.len());
+                    for site in &sites {
+                        let host = site
+                            .url
+                            .split("://")
+                            .nth(1)
+                            .and_then(|r| r.split('/').next())
+                            .unwrap_or("?");
+                        println!(
+                            "                {} · {host} · token {}",
+                            site.name,
+                            if site.token.is_empty() {
+                                "not set"
+                            } else {
+                                "set"
+                            }
+                        );
+                    }
+                }
+                Err(e) => println!("  sites           invalid: {e}"),
+            }
+            println!(
+                "  thresholds    {} / {} / {} / {} mg/dL",
+                alerts.urgent_low, alerts.low, alerts.high, alerts.urgent_high
+            );
+            println!(
+                "  alarm         sound {} · desktop {} · push {}",
+                onoff(alerts.sound),
+                onoff(alerts.desktop),
+                match (&alerts.push_url, alerts.push_enabled) {
+                    (Some(_), true) => "configured",
+                    (Some(_), false) => "configured but off",
+                    (None, _) => "not configured",
+                }
+            );
+            for w in warnings {
+                println!("  warning         {w}");
+            }
+        }
+        Err(e) => println!("  load          failed: {e}"),
+    }
+
+    println!("state");
+    let now = now_ms();
+    println!(
+        "  watcher       {}",
+        if watch::is_alive(watch::Role::Watch, now) {
+            "running"
+        } else {
+            "not running"
+        }
     );
-    println!("sugarrush v{version}\n{body}");
-    desktop_notify(&format!("v{version}\n{body}"), false);
+    println!(
+        "  dashboard     {}",
+        if watch::is_alive(watch::Role::Tui, now) {
+            "running"
+        } else {
+            "not running"
+        }
+    );
+    match watch::snoozed_until() {
+        Some(t) if t > now => println!("  snooze          active for {}m", (t - now) / 60_000),
+        _ => println!("  snooze          none"),
+    }
+    println!(
+        "  alert log       {} record(s) in 7d",
+        alertlog::read(now - 7 * 86_400_000).len()
+    );
+
+    println!();
+    println!("For the alarm channels specifically: sugarrush watch --test");
+}
+
+fn onoff(b: bool) -> &'static str {
+    if b {
+        "on"
+    } else {
+        "off"
+    }
 }
 
 /// One input event forwarded from the reader thread.
@@ -1496,6 +1733,56 @@ mod tests {
             ("", None),
         ] {
             assert_eq!(parse_snooze(input), expected, "for {input:?}");
+        }
+    }
+
+    /// `--help`, the man page and the README table are three places one
+    /// command list can rot. They render from `COMMANDS`; this keeps the
+    /// README honest, since it is the only one not generated at runtime.
+    #[test]
+    fn the_readme_lists_exactly_the_commands_we_ship() {
+        let readme = include_str!("../README.md");
+        let table = readme
+            .split("## Commands")
+            .nth(1)
+            .and_then(|s| s.split("## ").next())
+            .expect("no Commands section in README.md");
+
+        for (usage, what) in COMMANDS {
+            // The README escapes the pipes in `[15m|2h|off]` for the table.
+            let usage_md = usage.replace('|', "\\|");
+            assert!(
+                table.contains(&format!("`{usage_md}`")),
+                "README's command table is missing {usage:?}"
+            );
+            assert!(
+                table.contains(what),
+                "README's entry for {usage:?} doesn't say {what:?}"
+            );
+        }
+
+        // …and nothing extra: a row for a command that no longer exists is the
+        // same bug in the other direction.
+        let rows = table
+            .lines()
+            .filter(|l| l.starts_with("| `sugarrush"))
+            .count();
+        assert_eq!(
+            rows,
+            COMMANDS.len(),
+            "README lists {rows} commands, we ship {}",
+            COMMANDS.len()
+        );
+    }
+
+    /// The man page has to be valid roff, and carry every command.
+    #[test]
+    fn the_man_page_documents_every_command() {
+        // `roff` escapes the leading-dash problem; without it `.B --demo`
+        // starts a line with a control character man interprets.
+        assert_eq!(roff("--demo"), "\\-\\-demo");
+        for (usage, _) in COMMANDS {
+            assert!(!roff(usage).contains(" -"), "unescaped dash in {usage:?}");
         }
     }
 

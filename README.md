@@ -357,16 +357,25 @@ Other subcommands: `sugarrush about` (version + a notification) and
 
 ## Commands
 
+<!-- generated from COMMANDS in src/main.rs — a test keeps this in step -->
+
 | Command | What it does |
 |---------|--------------|
-| `sugarrush` | The dashboard. `--demo` for synthetic data, `--screen settings` to open straight to settings |
-| `sugarrush watch` | The headless alarm watcher. `--install-unit` writes a systemd user unit |
-| `sugarrush export` | CSV + a clinical summary. `--days N`, `--out DIR` |
-| `sugarrush status` | One line for a status bar. `--format text\|tmux\|polybar\|i3blocks\|waybar` |
-| `sugarrush waybar` | Alias for `status --format waybar` |
-| `sugarrush about` | Version, repo, and the safety note |
+| `sugarrush [--demo] [--screen settings]` | the dashboard |
+| `sugarrush watch` | headless alarm watcher (no terminal needed) |
+| `sugarrush watch --test [--quiet]` | check that every alarm channel actually works |
+| `sugarrush snooze [15m\|2h\|off]` | silence the alarm daemon without stopping it |
+| `sugarrush alerts [--days N]` | what the alarm has actually done |
+| `sugarrush export [--days N] [--out DIR]` | CSV + a clinical summary |
+| `sugarrush status [--format FORMAT]` | one line for a status bar |
+| `sugarrush waybar` | alias for --format waybar |
+| `sugarrush about` | version, config and a health check |
 
-`sugarrush --help` prints the same list.
+`sugarrush --help` prints the same list, `sugarrush --man` writes a man page:
+
+```bash
+sugarrush --man > /usr/local/share/man/man1/sugarrush.1
+```
 
 ## Troubleshooting
 
