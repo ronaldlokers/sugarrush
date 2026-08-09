@@ -578,6 +578,8 @@ fn field_detail(field: Field) -> &'static str {
         Field::Stale => "Treat the data as a sensor gap when the newest reading is older than this many minutes.",
         Field::GraphStyle => "Draw readings as a connected line, small dots, or larger blocks.",
         Field::AgpDays => "The fixed clinical window used by the AGP, time-in-range statistics, and default export.",
+        Field::CacheEnabled => "Opt in to an owner-only local reading cache for instant startup and outage context. Turning it off deletes every cached reading.",
+        Field::CacheDays => "Maximum local cache retention. Old readings are removed on every successful update; cached data is never presented as a live fetch.",
         Field::MinimapEnabled => "Show the overview strip and enable mouse click/drag navigation through history.",
         Field::MinimapSpan => "How much history the overview strip covers, from 6 to 72 hours.",
         Field::ThemeLow => "Colour used for low readings and low-state text.",
