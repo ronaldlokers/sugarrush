@@ -551,6 +551,10 @@ a `?` keybinding overlay. It also adds a first-run units prompt and an in-app
 
 ### Changed
 
+- **The AGP now labels what its reference lines mean.** The target range is
+  shaded behind the percentile fan, and the low/high rails carry their names
+  and values directly on the plot; the persistent legend and bold median remain
+  visible above both.
 - **The followers screen is now a real at-a-glance table.** It labels the
   display unit and columns, gives every person a coloured severity rail, and
   shows a one-hour sparkline alongside value, delta, state and reading age.
