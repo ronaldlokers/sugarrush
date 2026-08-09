@@ -75,6 +75,8 @@ pub enum Field {
     Desktop,
     NotifyContent,
     Sound,
+    /// Not a setting — an action. Runs the alarm self-test.
+    TestAlarm,
     Snooze,
     QuietHours,
     QuietStart,
@@ -102,7 +104,7 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 31] = [
+    pub const ALL: [Field; 32] = [
         Field::SiteUrl,
         Field::SiteToken,
         Field::Units,
@@ -110,6 +112,7 @@ impl Field {
         Field::Desktop,
         Field::NotifyContent,
         Field::Sound,
+        Field::TestAlarm,
         Field::Snooze,
         Field::QuietHours,
         Field::QuietStart,
@@ -145,6 +148,7 @@ impl Field {
             Field::Desktop => "Desktop notifications",
             Field::NotifyContent => "Notification detail",
             Field::Sound => "Audible alarm",
+            Field::TestAlarm => "Test the alarm",
             Field::Snooze => "Snooze",
             Field::QuietHours => "Quiet hours",
             Field::QuietStart => "Quiet start",
@@ -181,6 +185,7 @@ impl Field {
             Field::Desktop
             | Field::NotifyContent
             | Field::Sound
+            | Field::TestAlarm
             | Field::Snooze
             | Field::QuietHours
             | Field::QuietStart
@@ -264,6 +269,10 @@ pub struct App {
     /// The last state `react` reported, so it can tell an episode ending from
     /// one that was never running.
     last_reported: Option<Alert>,
+    /// Result of the last in-app alarm self-test, shown on its settings row.
+    /// "Audible alarm: on" is a claim about a config field; this is a claim
+    /// about whether this machine can make a noise.
+    pub alarm_test: Option<String>,
     pub sensor_start_ms: Option<i64>,
     /// When the sensor-start lookup last ran. A sensor lasts ten to fourteen
     /// days, so asking every refresh cost a second `/treatments` request per
@@ -420,6 +429,7 @@ impl App {
             device: DeviceStatus::default(),
             treatments: Vec::new(),
             last_reported: None,
+            alarm_test: None,
             sensor_start_ms: None,
             sensor_fetched_ms: 0,
             alerts,
@@ -612,6 +622,22 @@ impl App {
 
     /// Open the text editor for the selected settings row, if it takes text.
     /// Returns true when an editor opened.
+    /// Run the audible half of the alarm test in-app and record what happened.
+    ///
+    /// The full test is `sugarrush watch --test`; this is the part someone
+    /// actually wants at the moment they're looking at the setting — does this
+    /// machine make a noise — and the row says so rather than silently doing
+    /// nothing.
+    pub fn run_alarm_test(&mut self) {
+        let result = match crate::sound::sound_check(self.alarm_tone()) {
+            crate::sound::Played::Player(p) => format!("sounded via {p}"),
+            crate::sound::Played::Bell => "no audio player — terminal bell only".to_string(),
+            crate::sound::Played::Nothing => "couldn't write the sound file".to_string(),
+        };
+        self.status = Some(format!("{result} · full check: sugarrush watch --test"));
+        self.alarm_test = Some(result);
+    }
+
     pub fn begin_field_edit(&mut self) -> bool {
         let field = Field::ALL[self.settings_sel.min(Field::ALL.len() - 1)];
         let edit = match field {
@@ -1134,6 +1160,10 @@ impl App {
             Field::Units => self.toggle_units(),
             Field::Desktop => self.alerts.desktop = !self.alerts.desktop,
             Field::Sound => self.alerts.sound = !self.alerts.sound,
+            Field::TestAlarm => {
+                self.status = Some("press enter to run the alarm test".to_string());
+                self.settings_dirty = was_dirty;
+            }
             Field::Snooze => {
                 let next = self.alerts.snooze_minutes + dir as i64 * 5;
                 self.alerts.snooze_minutes = next.clamp(1, 120);
@@ -1325,6 +1355,10 @@ impl App {
             Field::Refresh => format!("{}s", self.refresh_secs),
             Field::Desktop => if self.alerts.desktop { "on" } else { "off" }.to_string(),
             Field::Sound => if self.alerts.sound { "on" } else { "off" }.to_string(),
+            Field::TestAlarm => self
+                .alarm_test
+                .clone()
+                .unwrap_or_else(|| "press enter".to_string()),
             Field::Snooze => format!("{} min", self.alerts.snooze_minutes),
             Field::QuietHours => if self.alerts.quiet_start.is_some() {
                 "on"

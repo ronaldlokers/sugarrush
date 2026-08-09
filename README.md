@@ -164,6 +164,36 @@ Caregiver view: `m`/`Esc` back to the dashboard, `r` refresh, `s` settings,
 When the minimap is on, click or drag it to move the window — or use `H`/`L`
 and `End` for the same navigation from the keyboard.
 
+## Checking the alarm works
+
+"Audible alarm: on" is a claim about a config field, not about whether your
+machine can make a noise. `sugarrush watch --test` checks the whole chain and
+says what it found:
+
+```
+$ sugarrush watch --test
+sugarrush alarm self-test
+
+✓ config                 1 site(s), thresholds valid
+✓ site                   reachable · newest reading 3m old (5.6 mmol/L)
+✓ audible alarm          played via paplay
+· quiet hours            set (23:00–07:00), not active now
+✓ snooze                 none active
+✓ desktop notification   delivered
+· push webhook           not configured
+✗ escalation             set to 10 min but the push webhook is its only
+                         channel — it will do nothing
+✓ watcher                running
+```
+
+It plays a real sound, sends a real notification and a real webhook, and exits
+non-zero if anything that is switched on doesn't work — so it can go in a cron
+or a health check. `--quiet` runs the checks without making a noise. Lines
+marked `·` are switched off on purpose; they're worth reading anyway.
+
+The settings screen has a **Test the alarm** row that runs the audible half
+in place.
+
 ## Snoozing the alarm
 
 `sugarrush snooze` silences a running `sugarrush watch` — the alarm daemon —

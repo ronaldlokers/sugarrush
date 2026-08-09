@@ -24,14 +24,39 @@ pub enum Tone {
 /// Play the alarm sound for `tone` once. Falls back to the terminal bell if no
 /// player actually produced sound.
 pub fn alarm(tone: Tone) {
-    let played = match wav_path(tone) {
-        Some(path) => play(&path),
-        // Even the WAV couldn't be written (read-only or full /tmp). Silence
-        // here would be indistinguishable from "glucose is fine".
-        None => false,
-    };
-    if !played {
+    let _ = sound_check(tone);
+}
+
+/// What happened when we tried to make a noise.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Played {
+    /// An audio player produced sound. Which one.
+    Player(&'static str),
+    /// No player worked, so we rang the terminal bell — which many terminals
+    /// render as a silent flash. This is a last resort, not a strategy.
+    Bell,
+    /// Not even the WAV could be written (read-only or full runtime dir).
+    Nothing,
+}
+
+/// Play the alarm and report which channel actually carried it.
+///
+/// `alarm` throws the answer away because the run loop has nothing to do with
+/// it; the self-test exists precisely to show it to a human, because "the
+/// audible alarm is on" and "this machine can make a sound" are different
+/// claims and only one of them was ever checked.
+pub fn sound_check(tone: Tone) -> Played {
+    let Some(path) = wav_path(tone) else {
+        // Silence here would be indistinguishable from "glucose is fine".
         bell();
+        return Played::Nothing;
+    };
+    match play(&path) {
+        Some(prog) => Played::Player(prog),
+        None => {
+            bell();
+            Played::Bell
+        }
     }
 }
 
@@ -125,8 +150,8 @@ fn produced_sound(child: &mut Child) -> bool {
 }
 
 /// Spawn the first working audio player on this platform, detached.
-/// Returns whether one of them actually produced sound.
-fn play(path: &Path) -> bool {
+/// Returns which one actually produced sound, if any.
+fn play(path: &Path) -> Option<&'static str> {
     // (program, args-before-file). The file path is appended last.
     let candidates: [(&str, &[&str]); 7] = [
         ("paplay", &[]),
@@ -172,11 +197,11 @@ fn play(path: &Path) -> bool {
             reap(&mut players);
             players.push(child);
         }
-        return true;
+        return Some(prog);
     }
     // Nothing on this machine can play it — headless boxes, minimal
     // containers, a bare SSH login, or an audio server that isn't answering.
-    false
+    None
 }
 
 /// Ring the terminal bell. Whether it makes a sound is the terminal's call

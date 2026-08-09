@@ -8,6 +8,7 @@ mod export;
 mod follow;
 mod nightscout;
 mod predict;
+mod selftest;
 mod sound;
 mod stats;
 mod status;
@@ -62,6 +63,8 @@ enum Mode {
     InstallUnit,
     /// Silence a running (or next-starting) alarm daemon.
     Snooze { minutes: Option<i64> },
+    /// Walk every alarm channel and report which ones actually work.
+    AlarmTest { quiet: bool },
     /// Print usage and exit.
     Help,
     /// Print the version and exit.
@@ -126,6 +129,13 @@ fn parse_args() -> Mode {
             "about" => mode = Some(Mode::About),
             "export" => mode = Some(Mode::Export { days: 0, dir: None }),
             "watch" => mode = Some(Mode::Watch),
+            // `watch --test` reads as "test the watcher"; accept it either way.
+            "--test" => mode = Some(Mode::AlarmTest { quiet: false }),
+            "--quiet" => {
+                if let Some(Mode::AlarmTest { quiet }) = mode.as_mut() {
+                    *quiet = true;
+                }
+            }
             "snooze" => {
                 // An optional duration follows: `15m`, `2h`, a bare number of
                 // minutes, or `off` to cancel. No argument means the configured
@@ -239,6 +249,7 @@ async fn main() -> Result<()> {
         Mode::Export { days, dir } => run_export(days, dir).await,
         Mode::Watch => watch::run().await,
         Mode::Snooze { minutes } => run_snooze(minutes),
+        Mode::AlarmTest { quiet } => selftest::run(quiet).await,
         Mode::InstallUnit => install_unit(),
         Mode::Help => {
             print_help();
@@ -338,6 +349,7 @@ USAGE:
     sugarrush export [--days N] [--out DIR]  CSV + a clinical summary
     sugarrush status [--format FORMAT]       one line for a status bar
     sugarrush snooze [15m|2h|off]            silence the alarm daemon
+    sugarrush watch --test [--quiet]         check every alarm channel works
     sugarrush waybar                         alias for --format waybar
     sugarrush about                          version, repo and the safety note
 
@@ -773,7 +785,11 @@ fn handle_settings_key(app: &mut App, code: KeyCode) {
             app.settings_adjust(1)
         }
         KeyCode::Enter => {
-            app.begin_field_edit();
+            if app.selected_field() == app::Field::TestAlarm {
+                app.run_alarm_test();
+            } else {
+                app.begin_field_edit();
+            }
         }
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('w') => app.save_config(),

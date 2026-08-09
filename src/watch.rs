@@ -230,6 +230,17 @@ pub fn set_snooze(until: Option<i64>) -> Result<usize> {
     Ok(n)
 }
 
+/// The snooze currently recorded on disk, if every site shares one.
+///
+/// Used by the alarm self-test: a forgotten snooze is one of the ways a night
+/// passes without a sound, and nothing in the app said so.
+pub fn snoozed_until() -> Option<i64> {
+    let state = State::load();
+    let mut values = state.sites.values().map(|e| e.snooze_until);
+    let first = values.next()??;
+    values.all(|v| v == Some(first)).then_some(first)
+}
+
 /// The parts of one site's alert episode worth carrying across a restart.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Episode {

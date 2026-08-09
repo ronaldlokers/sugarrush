@@ -8,6 +8,16 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **`sugarrush watch --test` checks that the alarm can actually reach you.**
+  There are eight independent reasons a night can pass without a sound — the
+  alarm switched off, quiet hours, a forgotten snooze, no working audio player,
+  no watcher running, a dead notification daemon, a broken push URL, or
+  escalation configured with no channel to escalate on — and nothing in the app
+  could tell you which applied. The self-test walks all of them, plays a real
+  sound, sends a real notification and a real webhook, and exits non-zero if
+  anything that is switched on doesn't work. `--quiet` checks without making a
+  noise. There's a **Test the alarm** row in the settings screen for the
+  audible half.
 - **`sugarrush snooze` silences the alarm daemon.** Until now the only way to
   stop a 3am alarm from `sugarrush watch` was `systemctl --user stop`, which
   also disarms the *next* one. `sugarrush snooze 15m` (or `2h`, or `off`)
