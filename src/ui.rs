@@ -2564,6 +2564,34 @@ mod tests {
         );
     }
 
+    /// The alarm self-test is reachable from the settings screen — a setting
+    /// that says "Audible alarm: on" is a claim about a config field, not about
+    /// whether this machine can make a noise.
+    #[test]
+    fn the_settings_screen_offers_the_alarm_test() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = demo_app();
+        app.screen = Screen::Settings;
+        let mut term = Terminal::new(TestBackend::new(100, 60)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(
+            text.contains("Test the alarm"),
+            "no self-test row in settings"
+        );
+        assert!(
+            text.contains("press enter"),
+            "the row should say how to run it"
+        );
+    }
+
     /// An app on demo config with one fixed, in-range reading.
     fn demo_app() -> App {
         let cfg = crate::config::Config::demo();
