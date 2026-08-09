@@ -8,6 +8,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **`sugarrush alerts` shows what the alarm has actually done.** Nothing kept a
+  record, so "did it go off last night, and for how long?" was unanswerable —
+  the systemd journal only exists if you run the daemon that way, is rotated by
+  someone else's policy, and says nothing about alarms the dashboard handled.
+  Episodes are now logged (owner-only, 90 days) and `sugarrush alerts --days 7`
+  prints them with durations. An empty report says so *and* says it might mean
+  nothing was running to notice — a quiet week and a dead watcher look
+  identical otherwise.
 - **The header always says whether your alarm is armed.** Four things could
   silence it with no on-screen evidence — quiet hours, a snooze, a watcher that
   stopped, and an alarm with nothing switched on to announce with — and the app

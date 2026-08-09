@@ -500,6 +500,7 @@ async fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reactio
     // with `desktop = false` (push only, or just the audible alarm) still needs
     // a journal that says what happened and when.
     if let Some(a) = r.notification {
+        crate::alertlog::record(&w.name, "alert", a, app.latest().map(|e| e.sgv));
         println!("{} · {who}{}", stamp(now_ms), a.label());
         if app.alerts.desktop {
             // The notification names the site, or a caregiver gets "URGENT
@@ -529,6 +530,7 @@ async fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reactio
     // An alarm that ends is news too: a journal with "URGENT LOW" and nothing
     // after it doesn't say whether it lasted two minutes or all night.
     if r.recovered {
+        crate::alertlog::record(&w.name, "recovered", r.state, app.latest().map(|e| e.sgv));
         println!("{} · {who}recovered · {}", stamp(now_ms), r.state.label());
     }
     w.last_logged = Some(r.state);

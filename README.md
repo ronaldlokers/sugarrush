@@ -211,6 +211,27 @@ marked `·` are switched off on purpose; they're worth reading anyway.
 The settings screen has a **Test the alarm** row that runs the audible half
 in place.
 
+## What the alarm has done
+
+```
+$ sugarrush alerts --days 7
+sugarrush alerts · last 7 day(s)
+
+08-07 03:14    22m  URGENT LOW  2.9 mmol/L
+08-08 02:51     9m  LOW  3.6 mmol/L
+08-09 10:43     0m  URGENT LOW  2.5 mmol/L
+
+3 episode(s), 31 minutes alarming
+```
+
+Episodes are recorded by both the dashboard and the daemon, kept for 90 days in
+`$XDG_STATE_HOME/sugarrush/alerts.jsonl`, owner-only — in follower mode it's
+someone else's alert history.
+
+An episode still running shows `—` rather than a duration and isn't counted:
+one we haven't seen the end of has no length yet, and guessing would be worse
+than saying so.
+
 ## Snoozing the alarm
 
 `sugarrush snooze` silences a running `sugarrush watch` — the alarm daemon —
