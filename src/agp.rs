@@ -21,17 +21,27 @@ pub struct Band {
     pub p50: f64,
     pub p75: f64,
     pub p95: f64,
+    /// How many distinct local dates contributed readings to this bucket.
+    ///
+    /// A percentile envelope computed from one night looks exactly like one
+    /// computed from a month — with a single day's readings p25 and p50 are
+    /// the same number — so without this an insight could call one bad night a
+    /// recurring pattern, and print that into a clinician's export.
+    pub days: usize,
 }
 
 /// Group `entries` by local time-of-day and compute the percentile envelope for
 /// each populated bucket, ordered by time of day. Empty buckets are skipped.
 pub fn profile(entries: &[Entry]) -> Vec<Band> {
     let mut buckets: Vec<Vec<f64>> = vec![Vec::new(); BUCKETS];
+    let mut dates: Vec<std::collections::BTreeSet<chrono::NaiveDate>> =
+        vec![std::collections::BTreeSet::new(); BUCKETS];
     for e in entries {
         if let Some(dt) = Local.timestamp_millis_opt(e.date).single() {
             let minute = dt.hour() as i64 * 60 + dt.minute() as i64;
             let idx = (minute / BUCKET_MIN).clamp(0, BUCKETS as i64 - 1) as usize;
             buckets[idx].push(e.sgv);
+            dates[idx].insert(dt.date_naive());
         }
     }
     let mut out = Vec::new();
@@ -39,6 +49,7 @@ pub fn profile(entries: &[Entry]) -> Vec<Band> {
         if vals.is_empty() {
             continue;
         }
+        let days = dates[i].len();
         let mut v = vals;
         v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         out.push(Band {
@@ -48,6 +59,7 @@ pub fn profile(entries: &[Entry]) -> Vec<Band> {
             p50: percentile(&v, 0.50),
             p75: percentile(&v, 0.75),
             p95: percentile(&v, 0.95),
+            days,
         });
     }
     out
@@ -77,6 +89,11 @@ pub enum Pattern {
 /// not a pattern you could act on.
 const MIN_RUN_MIN: i64 = 45;
 
+/// A pattern is something that happened on separate days. Below this, the
+/// window is one or two nights and the percentile spread describes those
+/// nights, not a habit — so it gets no name.
+const MIN_DAYS: usize = 3;
+
 /// Name the recurring patterns in a profile.
 ///
 /// The point of an AGP is that it shows *when* things go wrong, but reading
@@ -94,14 +111,14 @@ pub fn insights(bands: &[Band], low: f64, high: f64) -> Vec<Insight> {
         bands,
         MIN_RUN_MIN,
         Pattern::Lows,
-        |b| b.p25 < low,
+        |b| b.days >= MIN_DAYS && b.p25 < low,
         |b| b.p05,
     ));
     out.extend(runs(
         bands,
         MIN_RUN_MIN,
         Pattern::Highs,
-        |b| b.p50 > high,
+        |b| b.days >= MIN_DAYS && b.p50 > high,
         |b| b.p95,
     ));
     // Lows first: they're the ones that need acting on tonight.
@@ -288,9 +305,73 @@ mod tests {
                     p50: 110.0,
                     p75: 130.0,
                     p95: 150.0,
+                    days: 14,
                 }
             })
             .collect()
+    }
+
+    /// A percentile envelope built from one night is indistinguishable from one
+    /// built from a month — with a single day's readings p25 and p50 collapse
+    /// onto the same number — so the run guard has to look at how many separate
+    /// days fed the bucket, not just how long the run is. Naming one bad night
+    /// a "pattern" is bad enough on screen; it also went into the clinician
+    /// export.
+    #[test]
+    fn one_night_is_not_a_pattern() {
+        let mut bands = profile_with_low_window(120, 300);
+        for b in &mut bands {
+            b.days = 1;
+        }
+        assert!(
+            insights(&bands, 70.0, 180.0).is_empty(),
+            "a single night must not be named as a recurring pattern"
+        );
+
+        // Two nights is still two nights.
+        for b in &mut bands {
+            b.days = 2;
+        }
+        assert!(insights(&bands, 70.0, 180.0).is_empty());
+
+        // Three separate days is a habit worth naming.
+        for b in &mut bands {
+            b.days = 3;
+        }
+        assert!(!insights(&bands, 70.0, 180.0).is_empty());
+    }
+
+    /// `profile` has to count distinct local dates, not readings.
+    #[test]
+    fn profile_counts_days_not_readings() {
+        use chrono::{Duration, TimeZone};
+        let base = Local.with_ymd_and_hms(2026, 3, 1, 2, 0, 0).unwrap();
+        // Twelve readings, all inside one night.
+        let entries: Vec<Entry> = (0..12)
+            .map(|i| Entry {
+                sgv: 60.0,
+                date: (base + Duration::minutes(i * 5)).timestamp_millis(),
+                direction: None,
+            })
+            .collect();
+        let bands = profile(&entries);
+        assert!(!bands.is_empty());
+        assert!(
+            bands.iter().all(|b| b.days == 1),
+            "readings from one night are one day, however many there are: {:?}",
+            bands.iter().map(|b| b.days).collect::<Vec<_>>()
+        );
+
+        // The same clock time on three separate days is three days.
+        let mut spread = entries.clone();
+        for d in 1..3 {
+            spread.extend(entries.iter().map(|e| Entry {
+                date: e.date + d * 86_400_000,
+                ..e.clone()
+            }));
+        }
+        let bands = profile(&spread);
+        assert!(bands.iter().all(|b| b.days == 3));
     }
 
     #[test]
