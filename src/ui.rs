@@ -211,13 +211,8 @@ fn draw_minimap(f: &mut Frame, area: Rect, app: &App) {
     let start = now - app.minimap_span_ms;
 
     if app.minimap_entries.is_empty() {
-        // An empty bordered box reads as "nothing happened"; say which it is —
-        // still loading, or genuinely no readings in the window.
-        let msg = if app.last_ok_ms.is_none() {
-            "  loading overview…"
-        } else {
-            "  no readings in this window"
-        };
+        // An empty bordered box reads as "nothing happened"; say which it is.
+        let msg = format!("  {}", empty_reason(app));
         f.render_widget(
             Paragraph::new(Span::styled(msg, Style::default().fg(Color::DarkGray))),
             inner,
@@ -644,7 +639,7 @@ fn draw_followers(f: &mut Frame, app: &App) {
     f.render_widget(block, chunks[1]);
 
     let lines: Vec<Line> = if app.followers.is_empty() {
-        vec![Line::from("  loading…")]
+        vec![Line::from(format!("  {}", empty_reason(app)))]
     } else {
         app.followers
             .iter()
@@ -720,11 +715,41 @@ fn draw_banner(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn draw_header(f: &mut Frame, area: Rect, app: &App) {
-    let mode = if app.view.is_live() {
-        Span::styled(" ● live ", Style::default().fg(Color::Green))
+/// Why a panel has nothing to draw, phrased the same way everywhere.
+///
+/// Three panels used to answer one failure three different ways — "no data in
+/// this window…", "no readings in this window…" and "loading overview…" — and
+/// on a rejected token the last was simply untrue: nothing was loading and
+/// nothing ever would.
+fn empty_reason(app: &App) -> &'static str {
+    if app.fetch_paused {
+        "not loading — see the error below"
+    } else if !app.online {
+        "no readings — can't reach Nightscout"
+    } else if app.last_ok_ms.is_none() {
+        "loading…"
     } else {
-        Span::styled(" ◷ history ", Style::default().fg(Color::Yellow))
+        "no readings in this window"
+    }
+}
+
+fn draw_header(f: &mut Frame, area: Rect, app: &App) {
+    // The dot answers "is the data current?"; the word answers "which window
+    // am I looking at?". They used to be one span, so a green ● sat next to a
+    // red authentication error and read as "the connection is live" — the
+    // opposite of the truth. `live`/`history` is a view mode and says nothing
+    // about the network.
+    let (dot, dot_color) = if !app.online {
+        ("✖", app.theme.urgent)
+    } else if app.alert == crate::alert::Alert::Stale {
+        ("◌", app.theme.high)
+    } else {
+        ("●", app.theme.in_range)
+    };
+    let mode = if app.view.is_live() {
+        Span::styled("live ", Style::default().fg(Color::DarkGray))
+    } else {
+        Span::styled("history ", Style::default().fg(Color::Yellow))
     };
     let mut spans = vec![
         Span::styled(
@@ -738,6 +763,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             app.units.label(),
             app.view.span.label()
         )),
+        Span::styled(format!(" {dot} "), Style::default().fg(dot_color)),
         mode,
     ];
     if app.sites.len() > 1 {
@@ -851,7 +877,7 @@ fn draw_current(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, area);
 
     let Some(e) = app.latest() else {
-        f.render_widget(Paragraph::new("  no data in this window…"), inner);
+        f.render_widget(Paragraph::new(format!("  {}", empty_reason(app))), inner);
         return;
     };
 
@@ -1159,7 +1185,7 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
 
     if app.entries.is_empty() {
         f.render_widget(
-            Paragraph::new("  no readings in this window…")
+            Paragraph::new(format!("  {}", empty_reason(app)))
                 .block(block)
                 .alignment(Alignment::Left),
             area,
@@ -1926,6 +1952,84 @@ mod tests {
                 "the alert state is not in the buffer at {w}x{h}"
             );
         }
+    }
+    /// One failure, one explanation. A rejected token used to produce three
+    /// different messages across three panels, one of which ("loading
+    /// overview…") was a lie — nothing was loading and nothing ever would.
+    #[test]
+    fn every_empty_panel_gives_the_same_reason() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = demo_app();
+        app.entries.clear();
+        app.minimap_entries.clear();
+        app.demo = false;
+        app.mark_offline(
+            chrono::Utc::now().timestamp_millis(),
+            "authentication failed".into(),
+            true,
+        );
+
+        let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+
+        assert!(
+            !text.contains("loading"),
+            "a paused fetch must never claim to be loading"
+        );
+        let reason = empty_reason(&app);
+        // current, graph and the 24h overview — all three empty, all three
+        // saying the same thing.
+        assert_eq!(
+            text.matches(reason).count(),
+            3,
+            "every empty panel should carry the same reason: {reason:?}"
+        );
+    }
+
+    /// The connection dot is not the view mode. A green ● beside a red
+    /// authentication error read as "the connection is live".
+    #[test]
+    fn the_dot_follows_the_connection_not_the_view() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let render = |app: &App| -> String {
+            let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            term.draw(|f| draw(f, app)).unwrap();
+            term.backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect()
+        };
+
+        let app = demo_app();
+        assert!(render(&app).contains("● live"), "fresh data reads live");
+
+        let mut down = demo_app();
+        down.demo = false;
+        down.mark_offline(
+            chrono::Utc::now().timestamp_millis(),
+            "can't reach Nightscout".into(),
+            false,
+        );
+        let text = render(&down);
+        assert!(
+            !text.contains("● live"),
+            "the dot must not stay green during an outage"
+        );
+        assert!(
+            text.contains("✖ live"),
+            "an outage should show a broken dot"
+        );
     }
 
     /// An app on demo config with one fixed, in-range reading.

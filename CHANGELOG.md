@@ -8,6 +8,16 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **The live dot now reports the connection, not the view.** A green `●` sat
+  next to a red authentication error, because the dot belonged to the
+  `live`/`history` view mode and knew nothing about the network. The dot is now
+  green when the data is current, amber `◌` during a sensor gap, and red `✖`
+  when the site is unreachable; `live`/`history` stays as the view label.
+- **One failure, one explanation.** A rejected token produced three different
+  messages across three panels — "no data in this window…", "no readings in
+  this window…" and "loading overview…", the last of which was untrue: nothing
+  was loading and nothing would. Empty panels now give the same reason, and a
+  paused fetch never claims to be loading.
 - **The glucose reading no longer disappears on a short terminal.** Below
   roughly 22 rows the fixed-height panes were crushed while the graph kept its
   full size, so `current` collapsed to a border and the number itself was not
