@@ -61,6 +61,11 @@ accepted entry in Nightscout. Create the write token as a Nightscout Subject
 with the `careportal` role, keep the existing `readable` token separate, and
 remove the write token in Settings by entering `off` when it is no longer needed.
 
+`sugarrush treatments --days 30 [--site NAME] [--format text|json|csv]`
+reviews the owner-only local submission audit. It shows stable operation IDs
+for reconciliation but never note text, tokens, or endpoint URLs. It is an
+audit of what Sugarrush attempted—not a complete copy of Nightscout.
+
 Inspect or deliberately erase the opt-in private history cache without exposing
 its readings:
 
@@ -447,6 +452,18 @@ sugarrush watch --service-status
 # Later, if wanted: sugarrush watch --uninstall-service
 ```
 
+Install and status print the diagnostic location. Linux uses the systemd user
+journal; macOS and Windows write to an owner-created private `watch.log` in the
+platform user-data directory. Uninstall deliberately retains logs and state
+and says where they remain.
+
+These are user-session services: launchd and Windows Task Scheduler coverage
+depends on that user being logged in, and an in-process watcher cannot report
+its own death. For independent dead-man monitoring, run `sugarrush health
+--json --strict-delivery` from a separate machine or monitoring account and
+send only a generic failure signal through a separately managed channel. Do
+not include site names or glucose values in that signal.
+
 > It's still not a medical device, and it's still only as reliable as the
 > machine it runs on, your network, and your Nightscout site. Treat it as one
 > layer, not the only one.
@@ -485,6 +502,7 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush watch --install-service\|--service-status\|--uninstall-service` | manage the native always-on user service |
 | `sugarrush snooze [15m\|2h\|off] [--site NAME\|--all]` | silence the alarm daemon without stopping it |
 | `sugarrush treatment --site NAME [--carbs G] [--insulin U] [--note TEXT] [--at RFC3339]` | review and write a durable CarePortal treatment |
+| `sugarrush treatments [--days N] [--site NAME] [--format text\|json\|csv]` | review the local treatment submission audit |
 | `sugarrush cache status\|clear [--site NAME\|--all] [--confirm]` | inspect or deliberately erase private cached history |
 | `sugarrush alerts [--days N] [--site NAME] [--format text\|json\|csv]` | filter or export what the alarm has done |
 | `sugarrush health --json [--strict-delivery]` | machine-readable watcher, data and delivery health |

@@ -97,6 +97,11 @@ enum Mode {
         strict_delivery: bool,
     },
     Treatment(treatment::Request),
+    Treatments {
+        days: i64,
+        site: Option<String>,
+        format: treatment::Format,
+    },
     Cache {
         action: history_cache::Action,
         site: Option<String>,
@@ -183,7 +188,10 @@ fn parse_args() -> Mode {
             }
             "--format" => {
                 i += 1;
-                status_format = args.get(i).cloned();
+                status_format = Some(args.get(i).cloned().unwrap_or_else(|| {
+                    eprintln!("sugarrush: --format needs a value");
+                    std::process::exit(2)
+                }));
             }
             "about" => mode = Some(Mode::About),
             "export" => {
@@ -225,6 +233,13 @@ fn parse_args() -> Mode {
                     non_interactive: false,
                     operation_id: None,
                 }))
+            }
+            "treatments" => {
+                mode = Some(Mode::Treatments {
+                    days: 30,
+                    site: None,
+                    format: treatment::Format::Text,
+                })
             }
             "cache" => {
                 i += 1;
@@ -329,11 +344,21 @@ fn parse_args() -> Mode {
             "--version" | "-V" => mode = Some(Mode::Version),
             "--days" => {
                 i += 1;
-                export_days = args.get(i).and_then(|v| v.parse().ok());
+                export_days = Some(
+                    args.get(i)
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or_else(|| {
+                            eprintln!("sugarrush: --days needs a positive whole number");
+                            std::process::exit(2)
+                        }),
+                );
             }
             "--out" => {
                 i += 1;
-                export_dir = args.get(i).cloned();
+                export_dir = Some(args.get(i).cloned().unwrap_or_else(|| {
+                    eprintln!("sugarrush: --out needs a directory");
+                    std::process::exit(2)
+                }));
             }
             "--demo" => demo = true,
             "--screen" => {
@@ -365,6 +390,69 @@ fn parse_args() -> Mode {
             std::process::exit(2);
         }
     }
+    let reject_flag = |invalid: bool, flag: &str| {
+        if invalid {
+            eprintln!("sugarrush: {flag} does not apply to this command");
+            std::process::exit(2);
+        }
+    };
+    reject_flag(
+        export_days.is_some()
+            && !matches!(
+                mode,
+                Some(Mode::Export { .. } | Mode::Alerts { .. } | Mode::Treatments { .. })
+            ),
+        "--days",
+    );
+    reject_flag(
+        status_format.is_some()
+            && !matches!(
+                mode,
+                Some(Mode::Status { .. } | Mode::Alerts { .. } | Mode::Treatments { .. })
+            ),
+        "--format",
+    );
+    reject_flag(
+        export_dir.is_some() && !matches!(mode, Some(Mode::Export { .. })),
+        "--out",
+    );
+    reject_flag(
+        snooze_site.is_some()
+            && !matches!(
+                mode,
+                Some(
+                    Mode::Snooze { .. }
+                        | Mode::Alerts { .. }
+                        | Mode::Treatment(_)
+                        | Mode::Treatments { .. }
+                        | Mode::Cache { .. }
+                        | Mode::Export { .. }
+                )
+            ),
+        "--site",
+    );
+    reject_flag(
+        snooze_all
+            && !matches!(
+                mode,
+                Some(Mode::Snooze { .. } | Mode::Cache { .. } | Mode::Export { .. })
+            ),
+        "--all",
+    );
+    let treatment_only = treatment_carbs.is_some()
+        || treatment_insulin.is_some()
+        || treatment_note.is_some()
+        || treatment_at.is_some()
+        || treatment_non_interactive
+        || treatment_operation_id.is_some();
+    reject_flag(
+        treatment_only && !matches!(mode, Some(Mode::Treatment(_))),
+        "treatment write options",
+    );
+    reject_flag(
+        treatment_confirm && !matches!(mode, Some(Mode::Treatment(_) | Mode::Cache { .. })),
+        "--confirm",
+    );
 
     match mode {
         // `--days` / `--out` are only meaningful for export; fill them in here
@@ -426,6 +514,19 @@ fn parse_args() -> Mode {
             non_interactive: treatment_non_interactive,
             operation_id: treatment_operation_id,
         }),
+        Some(Mode::Treatments { .. }) => Mode::Treatments {
+            days: export_days.map(i64::from).unwrap_or(30),
+            site: snooze_site,
+            format: status_format
+                .as_deref()
+                .map(|name| {
+                    treatment::Format::parse(name).unwrap_or_else(|| {
+                        eprintln!("unknown treatments format '{name}'; use text, json, or csv");
+                        std::process::exit(2)
+                    })
+                })
+                .unwrap_or(treatment::Format::Text),
+        },
         Some(Mode::Cache { action, .. }) => Mode::Cache {
             action,
             site: snooze_site,
@@ -488,6 +589,10 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Mode::Treatment(request) => treatment::run(request).await,
+        Mode::Treatments { days, site, format } => {
+            print!("{}", treatment::render(days, site.as_deref(), format)?);
+            Ok(())
+        }
         Mode::Cache {
             action,
             site,
@@ -730,6 +835,10 @@ const COMMANDS: &[(&str, &str)] = &[
     (
         "sugarrush treatment --site NAME [--carbs G] [--insulin U] [--note TEXT] [--at RFC3339]",
         "review and write a durable CarePortal treatment",
+    ),
+    (
+        "sugarrush treatments [--days N] [--site NAME] [--format text|json|csv]",
+        "review the local treatment submission audit",
     ),
     (
         "sugarrush cache status|clear [--site NAME|--all] [--confirm]",

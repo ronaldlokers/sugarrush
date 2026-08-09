@@ -17,6 +17,33 @@ pub fn run(action: Action) -> Result<()> {
     platform(action, &exe)
 }
 
+#[cfg(any(target_os = "macos", windows))]
+fn log_path() -> Result<std::path::PathBuf> {
+    Ok(dirs::data_local_dir()
+        .context("could not resolve the user data directory")?
+        .join("sugarrush")
+        .join("watch.log"))
+}
+
+#[cfg(any(target_os = "macos", windows))]
+fn prepare_log() -> Result<std::path::PathBuf> {
+    let path = log_path()?;
+    std::fs::create_dir_all(path.parent().context("log path has no parent")?)?;
+    if !path.exists() {
+        crate::config::write_private(&path, "")?;
+    }
+    Ok(path)
+}
+
+fn print_diagnostics(log: Option<&Path>) {
+    if let Some(log) = log {
+        println!("watcher log: {}", log.display());
+    } else {
+        println!("watcher log: journalctl --user -u sugarrush-watch.service");
+    }
+    println!("alarm health: sugarrush health --json --strict-delivery");
+}
+
 #[cfg(target_os = "linux")]
 fn platform(action: Action, exe: &Path) -> Result<()> {
     let dir = dirs::config_dir()
@@ -33,12 +60,14 @@ fn platform(action: Action, exe: &Path) -> Result<()> {
                 &["--user", "enable", "--now", "sugarrush-watch.service"],
             )?;
             println!("watcher installed and started: {}", path.display());
+            print_diagnostics(None);
         }
         Action::Status => {
             command(
                 "systemctl",
                 &["--user", "status", "sugarrush-watch.service", "--no-pager"],
             )?;
+            print_diagnostics(None);
         }
         Action::Uninstall => {
             let _ = Command::new("systemctl")
@@ -63,10 +92,15 @@ fn platform(action: Action, exe: &Path) -> Result<()> {
     let uid = String::from_utf8(Command::new("id").arg("-u").output()?.stdout)?;
     let domain = format!("gui/{}", uid.trim());
     let target = format!("{domain}/com.sugarrush.watch");
+    let log = if matches!(action, Action::Install) {
+        prepare_log()?
+    } else {
+        log_path()?
+    };
     match action {
         Action::Install => {
             std::fs::create_dir_all(&dir)?;
-            crate::config::Config::write_atomic(&path, &launchd_plist(exe))?;
+            crate::config::Config::write_atomic(&path, &launchd_plist(exe, &log))?;
             let _ = Command::new("launchctl")
                 .args(["bootout", &target])
                 .status();
@@ -76,8 +110,12 @@ fn platform(action: Action, exe: &Path) -> Result<()> {
             )?;
             command("launchctl", &["kickstart", "-k", &target])?;
             println!("watcher installed and started: {}", path.display());
+            print_diagnostics(Some(&log));
         }
-        Action::Status => command("launchctl", &["print", &target])?,
+        Action::Status => {
+            command("launchctl", &["print", &target])?;
+            print_diagnostics(Some(&log));
+        }
         Action::Uninstall => {
             let _ = Command::new("launchctl")
                 .args(["bootout", &target])
@@ -86,6 +124,7 @@ fn platform(action: Action, exe: &Path) -> Result<()> {
                 std::fs::remove_file(path)?;
             }
             println!("watcher service removed");
+            println!("watcher log retained at {}", log.display());
         }
     }
     Ok(())
@@ -94,9 +133,14 @@ fn platform(action: Action, exe: &Path) -> Result<()> {
 #[cfg(windows)]
 fn platform(action: Action, exe: &Path) -> Result<()> {
     let task = "sugarrush-watch";
+    let log = if matches!(action, Action::Install) {
+        prepare_log()?
+    } else {
+        log_path()?
+    };
     match action {
         Action::Install => {
-            let command_line = windows_task_command(exe);
+            let command_line = windows_task_command(exe, &log);
             command(
                 "schtasks.exe",
                 &[
@@ -114,14 +158,19 @@ fn platform(action: Action, exe: &Path) -> Result<()> {
             )?;
             command("schtasks.exe", &["/Run", "/TN", task])?;
             println!("watcher task installed and started");
+            print_diagnostics(Some(&log));
         }
-        Action::Status => command(
-            "schtasks.exe",
-            &["/Query", "/TN", task, "/V", "/FO", "LIST"],
-        )?,
+        Action::Status => {
+            command(
+                "schtasks.exe",
+                &["/Query", "/TN", task, "/V", "/FO", "LIST"],
+            )?;
+            print_diagnostics(Some(&log));
+        }
         Action::Uninstall => {
             command("schtasks.exe", &["/Delete", "/F", "/TN", task])?;
             println!("watcher task removed");
+            println!("watcher log retained at {}", log.display());
         }
     }
     Ok(())
@@ -148,21 +197,26 @@ fn systemd_unit(exe: &Path) -> String {
 }
 
 #[cfg(any(target_os = "macos", test))]
-fn launchd_plist(exe: &Path) -> String {
+fn launchd_plist(exe: &Path, log: &Path) -> String {
     let escaped = exe
         .to_string_lossy()
         .replace('&', "&amp;")
         .replace('<', "&lt;");
+    let log = log
+        .to_string_lossy()
+        .replace('&', "&amp;")
+        .replace('<', "&lt;");
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>com.sugarrush.watch</string>\n<key>ProgramArguments</key><array><string>{escaped}</string><string>watch</string></array>\n<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>\n<key>ProcessType</key><string>Interactive</string>\n</dict></plist>\n"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>com.sugarrush.watch</string>\n<key>ProgramArguments</key><array><string>{escaped}</string><string>watch</string></array>\n<key>StandardOutPath</key><string>{log}</string>\n<key>StandardErrorPath</key><string>{log}</string>\n<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>\n<key>ProcessType</key><string>Interactive</string>\n</dict></plist>\n"
     )
 }
 
 #[cfg(any(windows, test))]
-fn windows_task_command(exe: &Path) -> String {
+fn windows_task_command(exe: &Path, log: &Path) -> String {
     let escaped = exe.to_string_lossy().replace('\'', "''");
+    let log = log.to_string_lossy().replace('\'', "''");
     format!(
-        "powershell.exe -NoProfile -WindowStyle Hidden -Command \"& {{ while ($true) {{ & '{escaped}' watch; Start-Sleep -Seconds 30 }} }}\""
+        "powershell.exe -NoProfile -WindowStyle Hidden -Command \"& {{ while ($true) {{ & '{escaped}' watch *>> '{log}'; Start-Sleep -Seconds 30 }} }}\""
     )
 }
 
@@ -176,11 +230,15 @@ mod tests {
         let unit = systemd_unit(exe);
         assert!(unit.contains("ExecStart=\"/opt/sugarrush bin/sugarrush\" watch"));
         assert!(unit.contains("Restart=always"));
-        let plist = launchd_plist(exe);
+        let log = Path::new("/private/log dir/watch.log");
+        let plist = launchd_plist(exe, log);
         assert!(plist.contains("<string>/opt/sugarrush bin/sugarrush</string>"));
         assert!(plist.contains("<key>KeepAlive</key><true/>"));
-        let task = windows_task_command(exe);
+        assert!(plist.contains("<key>StandardErrorPath</key>"));
+        assert!(plist.contains("/private/log dir/watch.log"));
+        let task = windows_task_command(exe, log);
         assert!(task.contains("while ($true)"));
         assert!(task.contains("Start-Sleep -Seconds 30"));
+        assert!(task.contains("*>> '/private/log dir/watch.log'"));
     }
 }
