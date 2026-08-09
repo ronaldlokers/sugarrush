@@ -501,6 +501,14 @@ fn handle_key(app: &mut App, fetch: &Fetcher, key: KeyEvent) {
         return;
     }
 
+    // The overlay is up: any key dismisses it, on whatever screen it was opened
+    // from. This used to sit inside the dashboard branch, so a `?` pressed on
+    // the followers screen could only be cleared by leaving that screen.
+    if app.show_help {
+        app.show_help = false;
+        return;
+    }
+
     if app.screen == Screen::Followers {
         match key.code {
             KeyCode::Char('q') => app.should_quit = true,
@@ -514,12 +522,6 @@ fn handle_key(app: &mut App, fetch: &Fetcher, key: KeyEvent) {
     }
     if app.screen == Screen::Settings {
         handle_settings_key(app, key.code);
-        return;
-    }
-
-    // While the help overlay is up, any key dismisses it.
-    if app.show_help {
-        app.show_help = false;
         return;
     }
 
@@ -653,6 +655,7 @@ fn handle_settings_key(app: &mut App, code: KeyCode) {
         KeyCode::Enter => {
             app.begin_field_edit();
         }
+        KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('w') => app.save_config(),
         _ => {}
     }

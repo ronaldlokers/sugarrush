@@ -27,12 +27,21 @@ fn fmt_disp(units: Units, v: f64) -> String {
 }
 
 pub fn draw(f: &mut Frame, app: &App) {
+    // The overlay composites over whatever screen is up. It used to be drawn
+    // only by the dashboard branch, so `?` on the followers screen set the flag
+    // and showed nothing — then ambushed the user on the next dashboard render.
     if app.screen == Screen::Followers {
         draw_followers(f, app);
+        if app.show_help {
+            draw_help(f, f.area(), app.screen);
+        }
         return;
     }
     if app.screen == Screen::Settings {
         draw_settings(f, app);
+        if app.show_help {
+            draw_help(f, f.area(), app.screen);
+        }
         return;
     }
     // A one-line alert banner appears above the header only while alerting.
@@ -120,15 +129,28 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_footer(f, chunks[i], app);
 
     if app.show_help {
-        draw_help(f, f.area());
+        draw_help(f, f.area(), app.screen);
     }
 }
 
 /// A centered keybinding cheatsheet, drawn over the dashboard. Dismissed by any
 /// key. Reachable with `?` — the discoverable home for every binding, so the
 /// footer can shrink on narrow terminals without hiding functionality.
-fn draw_help(f: &mut Frame, area: Rect) {
-    let rows = [
+fn draw_help(f: &mut Frame, area: Rect, screen: Screen) {
+    // Settings has its own vocabulary, and it is the screen with the most rows
+    // of unexplained options — so it needs the overlay more than the dashboard
+    // does, and a dashboard cheatsheet there would be wrong on every line.
+    let settings_rows = [
+        ("↑ / ↓ · j / k", "select a setting"),
+        ("← / →", "change the selected setting"),
+        ("Enter", "edit a text field (URL, token, push URL)"),
+        ("w", "save to config.toml"),
+        ("s / Esc", "back"),
+        ("?", "toggle this help"),
+        ("q", "quit"),
+        ("Ctrl+C", "quit from anywhere"),
+    ];
+    let dashboard_rows = [
         ("q", "quit"),
         ("?", "toggle this help"),
         ("r", "refresh now"),
@@ -146,7 +168,14 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("n", "switch site (multi-site)"),
         ("m", "follow all sites at once"),
         ("s", "open / close settings"),
+        ("Ctrl+C", "quit from anywhere"),
+        ("drag the overview", "scrub through history (mouse)"),
     ];
+    let rows: &[(&str, &str)] = if screen == Screen::Settings {
+        &settings_rows
+    } else {
+        &dashboard_rows
+    };
     // Two columns of key text now; keep the popup wide enough for the longest.
     let key_w = 17usize;
     // Sized from the content, not a guess: the old fixed 56 columns clipped
@@ -165,7 +194,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
     let popup = Rect::new(x, y, w, h);
 
     let mut lines = vec![Line::from("")];
-    for (k, d) in rows {
+    for (k, d) in rows.iter().copied() {
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {k:<key_w$}"),
@@ -594,7 +623,7 @@ fn draw_settings(f: &mut Frame, app: &App) {
             Style::default().fg(Color::Green),
         )),
         (None, None) => Line::from(Span::raw(
-            " ↑/↓ select · ←/→ change · enter edit · w save · s/esc back · q quit ",
+            " ↑/↓ select · ←/→ change · enter edit · w save · s/esc back · ? help · q quit ",
         )),
     };
     f.render_widget(Paragraph::new(footer), chunks[2]);
@@ -693,7 +722,7 @@ fn draw_followers(f: &mut Frame, app: &App) {
 
     let footer = match &app.status {
         Some(msg) => Span::styled(format!(" {msg} "), Style::default().fg(Color::Green)),
-        None => Span::raw(" m / esc dashboard · r refresh · s settings · q quit "),
+        None => Span::raw(" m / esc dashboard · r refresh · s settings · ? help · q quit "),
     };
     f.render_widget(Paragraph::new(Line::from(footer)), chunks[2]);
 }
@@ -2082,6 +2111,74 @@ mod tests {
                     .iter()
                     .any(|c| c.style().add_modifier.contains(Modifier::SLOW_BLINK)),
                 "nothing may blink"
+            );
+        }
+    }
+
+    /// `?` used to be a dead key on the followers screen — it set the flag, the
+    /// early return meant nothing drew, and the overlay then ambushed the next
+    /// dashboard render. Settings had no `?` handler at all, so the screen with
+    /// the most unexplained rows was the one screen with no key reference.
+    #[test]
+    fn help_opens_on_every_screen() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        for screen in [Screen::Dashboard, Screen::Settings, Screen::Followers] {
+            let mut app = demo_app();
+            app.screen = screen;
+            app.show_help = true;
+
+            let mut term = Terminal::new(TestBackend::new(100, 40)).unwrap();
+            term.draw(|f| draw(f, &app)).unwrap();
+            let text: String = term
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect();
+
+            assert!(
+                text.contains("press any key to close"),
+                "the help overlay should be visible on {screen:?}"
+            );
+            // Settings gets its own vocabulary — a dashboard cheatsheet there
+            // would be wrong on every line.
+            if screen == Screen::Settings {
+                assert!(
+                    text.contains("save to config.toml"),
+                    "settings help should document the settings keys"
+                );
+            } else {
+                assert!(
+                    text.contains("pan back / forward"),
+                    "dashboard help should document the graph keys"
+                );
+            }
+        }
+    }
+
+    /// Both footers must advertise the key, or the overlay is only reachable by
+    /// guessing.
+    #[test]
+    fn every_screen_advertises_help_in_its_footer() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        for screen in [Screen::Dashboard, Screen::Settings, Screen::Followers] {
+            let mut app = demo_app();
+            app.screen = screen;
+            let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            term.draw(|f| draw(f, &app)).unwrap();
+            let text: String = term
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect();
+            assert!(
+                text.contains("? help"),
+                "{screen:?} does not advertise the help key"
             );
         }
     }

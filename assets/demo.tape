@@ -63,6 +63,11 @@ Down
 Sleep 0.6s
 Right
 Sleep 1.1s
+# `?` works here too, and lists the settings keys rather than the graph ones
+Type "?"
+Sleep 2.2s
+Escape
+Sleep 0.8s
 # Close settings, quit
 Type "s"
 Sleep 1.5s

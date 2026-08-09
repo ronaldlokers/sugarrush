@@ -1046,6 +1046,11 @@ impl App {
         // added. A no-op row (an unset push URL) clears it again at the end.
         let was_dirty = self.settings_dirty;
         self.settings_dirty = true;
+        // Cleared here, not at the end: the tail used to run `self.status =
+        // None` unconditionally, which wiped the message the branch below had
+        // just set. Both hints — "press enter to edit" and the push-URL note —
+        // were dead code that could never reach the screen.
+        self.status = None;
         // Threshold step: 0.1 mmol/L or 1 mg/dL, expressed in mg/dL.
         let step_mgdl = self.units.to_mgdl(match self.units {
             Units::Mmol => 0.1,
@@ -1164,7 +1169,6 @@ impl App {
                 }
             }
         }
-        self.status = None;
     }
 
     /// Persist current settings back to config.toml. Sites and theme are
@@ -1387,6 +1391,36 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_700_000_000_000;
+
+    /// Two settings rows answer ←/→ with a hint instead of a change. The tail
+    /// of `settings_adjust` used to clear the status unconditionally, so both
+    /// hints were written and then erased before any frame drew them — dead
+    /// code that read as a dead key.
+    #[test]
+    fn a_row_that_cannot_be_adjusted_says_so() {
+        let mut a = app();
+        a.screen = Screen::Settings;
+
+        for (field, expect) in [
+            (Field::SiteUrl, "press enter to edit"),
+            (Field::PushAlerts, "set push_url"),
+        ] {
+            a.status = None;
+            a.settings_sel = Field::ALL.iter().position(|f| *f == field).unwrap();
+            a.settings_adjust(1);
+            let status = a.status.clone().unwrap_or_default();
+            assert!(
+                status.contains(expect),
+                "{field:?} should explain itself, got {status:?}"
+            );
+        }
+
+        // And a row that *does* change still clears the previous message.
+        a.status = Some("stale".into());
+        a.settings_sel = Field::ALL.iter().position(|f| *f == Field::Snooze).unwrap();
+        a.settings_adjust(1);
+        assert_eq!(a.status, None);
+    }
 
     fn app() -> App {
         let cfg = Config::demo();
