@@ -213,7 +213,7 @@ pub fn report(entries: &[Entry], alerts: &Alerts, units: Units, days: u32, now_m
             format!("≤ {} {u}", units.format(alerts.urgent_low)),
         ));
         out.push_str(&format!(
-            "\nTime below range {:.1}%  (consensus goal: < 4%, of which < 1% very low)\n",
+            "\nTime below range {:.1}%  (consensus goal: < 4%, of which < 1% very low) [1]\n",
             t.below()
         ));
     }
@@ -222,13 +222,13 @@ pub fn report(entries: &[Entry], alerts: &Alerts, units: Units, days: u32, now_m
     if let Some(mean) = stats::mean_mgdl(entries) {
         out.push_str(&format!("Mean        {} {u}\n", units.format(mean)));
         out.push_str(&format!(
-            "GMI         {:.1}%   (estimated A1c)\n",
+            "GMI         {:.1}%   (estimated A1c) [2]\n",
             stats::gmi(mean)
         ));
     }
     if let Some(cv) = stats::cv_pct(entries) {
         out.push_str(&format!(
-            "CV          {cv:.1}%   (variability; consensus goal: ≤ 36%)\n"
+            "CV          {cv:.1}%   (variability; consensus goal: ≤ 36%) [1]\n"
         ));
     }
 
@@ -281,6 +281,31 @@ pub fn report(entries: &[Entry], alerts: &Alerts, units: Units, days: u32, now_m
         );
     }
 
+    // Where the goals come from. A clinician reading "consensus goal: < 4%"
+    // is entitled to know whose consensus, and the reader should be able to
+    // tell that the percentages above are computed against *this user's*
+    // configured thresholds — which may not be the ones the goals assume.
+    out.push_str("\nReferences\n----------\n");
+    out.push_str(
+        "[1] Battelino T, et al. Clinical targets for continuous glucose\n\
+         \x20   monitoring data interpretation: recommendations from the\n\
+         \x20   international consensus on time in range. Diabetes Care\n\
+         \x20   2019;42(8):1593-1603.\n",
+    );
+    out.push_str(
+        "[2] Bergenstal RM, et al. Glucose Management Indicator (GMI): a new\n\
+         \x20   term for estimating A1C from continuous glucose monitoring.\n\
+         \x20   Diabetes Care 2018;41(11):2275-2280.\n",
+    );
+    // 70-180 mg/dL is the range the consensus targets are stated against.
+    out.push_str(&format!(
+        "\nThe consensus targets are stated for a {}–{} {u} range; the percentages\n",
+        units.format(70.0),
+        units.format(180.0)
+    ));
+    out.push_str("above are computed against the thresholds configured in sugarrush,\n");
+    out.push_str("shown under Target at the top. Compare like with like.\n");
+
     out.push_str("\nsugarrush is not a medical device. These figures come from CGM\n");
     out.push_str("data as published by Nightscout and are for discussion, not\n");
     out.push_str("treatment decisions.\n");
@@ -306,6 +331,46 @@ mod tests {
         (0..12)
             .map(|i| entry(100.0 + i as f64 * 5.0, NOW - i * 5 * 60_000))
             .collect()
+    }
+
+    /// A clinician reading "consensus goal: < 4%" is entitled to know whose
+    /// consensus, and to see that the percentages are computed against the
+    /// user's own thresholds rather than the ones the goals assume.
+    /// A clinician reading "consensus goal: < 4%" is entitled to know whose
+    /// consensus, and to see that the percentages are computed against the
+    /// user's own thresholds rather than the ones the goals assume.
+    #[test]
+    fn dump_refs() {
+        let alerts = Alerts::default();
+        let out = report(&window(), &alerts, Units::Mgdl, 14, NOW);
+        println!("{}", &out[out.len().saturating_sub(900)..]);
+    }
+
+    #[test]
+    fn the_summary_attributes_its_clinical_figures() {
+        let alerts = Alerts::default();
+        let out = report(&window(), &alerts, Units::Mgdl, 14, NOW);
+
+        assert!(
+            out.contains("Battelino"),
+            "the TIR/CV targets need a source"
+        );
+        // The journal name wraps onto the previous line; the locator does not.
+        assert!(out.contains("2019;42(8):1593-1603"));
+        assert!(out.contains("Bergenstal"), "GMI needs a source");
+        assert!(out.contains("2018;41(11):2275-2280"));
+
+        // Every cited figure carries its marker.
+        for (figure, marker) in [("Time below range", "[1]"), ("CV ", "[1]"), ("GMI ", "[2]")] {
+            let line = out
+                .lines()
+                .find(|l| l.contains(figure))
+                .unwrap_or_else(|| panic!("no {figure:?} line in the summary"));
+            assert!(line.contains(marker), "{figure:?} cites nothing: {line:?}");
+        }
+
+        // And the caveat that makes the comparison honest.
+        assert!(out.contains("Compare like with like."));
     }
 
     #[test]
