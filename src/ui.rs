@@ -37,23 +37,44 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     // A one-line alert banner appears above the header only while alerting.
     let banner = app.alert.is_alerting();
-    let minimap = app.minimap_enabled;
     // On wide terminals, current + stats share one row (side-by-side),
     // reclaiming ~5 rows for the graph. Otherwise they stack.
     let wide = f.area().width >= 90;
+    let height = f.area().height;
+
+    // Reflow ladder. The panes are fixed-height, so on a short terminal
+    // ratatui satisfies the graph's Min(8) and crushes the rest — which used
+    // to mean `current` collapsed to its border and the glucose number was not
+    // on screen at all, while the graph (a decoration, next to the number)
+    // survived intact. Drop panes deliberately instead, cheapest first, and
+    // never the reading.
+    let banner_h = u16::from(banner);
+    // banner + header(3) + current(8) + graph(8) + footer(1). On a wide
+    // terminal stats rides alongside `current` and costs nothing; otherwise it
+    // is the first pane to go, then the minimap, then `current`'s own borders.
+    let base = banner_h + 20;
+    let full = height >= base;
+    let stats = wide || height >= base + 5;
+    let minimap = app.minimap_enabled && height >= base + if wide { 0 } else { 5 } + 4;
+    // Below `full`, `current` gives up its borders and becomes a single line.
+    let compact = !full;
 
     let mut constraints = Vec::new();
     if banner {
         constraints.push(Constraint::Length(1)); // banner
     }
     constraints.push(Constraint::Length(3)); // header
-    if wide {
+    if compact {
+        constraints.push(Constraint::Length(2)); // reading + range bar
+    } else if wide {
         constraints.push(Constraint::Length(8)); // current + stats
     } else {
         constraints.push(Constraint::Length(8)); // current
-        constraints.push(Constraint::Length(5)); // stats
+        if stats {
+            constraints.push(Constraint::Length(5)); // stats
+        }
     }
-    constraints.push(Constraint::Min(8)); // graph
+    constraints.push(Constraint::Min(if compact { 0 } else { 8 })); // graph
     if minimap {
         constraints.push(Constraint::Length(4)); // minimap
     }
@@ -71,7 +92,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     draw_header(f, chunks[i], app);
     i += 1;
-    if wide {
+    if compact {
+        draw_current_compact(f, chunks[i], app);
+        i += 1;
+    } else if wide {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -81,8 +105,11 @@ pub fn draw(f: &mut Frame, app: &App) {
         i += 1;
     } else {
         draw_current(f, chunks[i], app);
-        draw_stats(f, chunks[i + 1], app);
-        i += 2;
+        i += 1;
+        if stats {
+            draw_stats(f, chunks[i], app);
+            i += 1;
+        }
     }
     draw_graph_pane(f, chunks[i], app);
     i += 1;
@@ -765,6 +792,57 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
     let title = Line::from(spans);
     let p = Paragraph::new(title).block(Block::default().borders(Borders::ALL));
     f.render_widget(p, area);
+}
+
+/// Borderless two-row readout for terminals too short to afford the `current`
+/// pane: the value, arrow, range label, delta and age on one line, the range
+/// bar under it.
+///
+/// A tiling window manager, a phone SSH client, or a terminal at 200% zoom all
+/// land here. The rule is that the number is the last thing to go.
+fn draw_current_compact(f: &mut Frame, area: Rect, app: &App) {
+    let Some(e) = app.latest() else {
+        f.render_widget(Paragraph::new(" no data in this window…"), area);
+        return;
+    };
+    let value = app.units.format(e.sgv);
+    let color = color_for(e.sgv, app);
+    let range = crate::alert::from_value(e.sgv, &app.alerts).label();
+    let delta = app
+        .delta_mgdl()
+        .map(|d| app.units.format_delta(d))
+        .unwrap_or_else(|| "--".into());
+
+    let mut spans = vec![
+        Span::styled(
+            format!(" {value} {} ", e.arrow()),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(range.to_string(), Style::default().fg(color)),
+    ];
+    // The unit and the age only earn their place if the line has room for
+    // them — the value, the arrow and the state never drop.
+    let rest = format!(
+        " · {} · Δ {delta} · {}",
+        app.units.label(),
+        fmt_time(e.date)
+    );
+    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    if used + rest.chars().count() <= area.width as usize {
+        spans.push(Span::styled(rest, Style::default().fg(Color::DarkGray)));
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+    f.render_widget(Paragraph::new(Line::from(spans)), rows[0]);
+    if rows[1].height > 0 {
+        f.render_widget(
+            Paragraph::new(range_bar(app, e.sgv, rows[1].width)),
+            rows[1],
+        );
+    }
 }
 
 fn draw_current(f: &mut Frame, area: Rect, app: &App) {
@@ -1780,7 +1858,17 @@ mod tests {
     fn the_reading_is_on_screen_at_usable_sizes() {
         use ratatui::{backend::TestBackend, Terminal};
 
-        for (w, h) in [(200u16, 60u16), (120, 40), (80, 30), (60, 26)] {
+        for (w, h) in [
+            (200u16, 60u16),
+            (120, 40),
+            (80, 30),
+            (60, 26),
+            (80, 22),
+            (63, 20),
+            (80, 16),
+            (60, 12),
+            (40, 8),
+        ] {
             let app = demo_app();
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| draw(f, &app)).unwrap();
@@ -1799,6 +1887,43 @@ mod tests {
             assert!(
                 text.contains("in range"),
                 "the range label is not in the buffer at {w}x{h}"
+            );
+        }
+    }
+
+    /// The same guarantee while alerting — which costs a banner row, and is
+    /// exactly when the number matters most.
+    #[test]
+    fn the_reading_survives_the_alert_banner_on_a_short_terminal() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        for (w, h) in [(80u16, 24u16), (63, 20), (80, 16), (60, 12), (40, 8)] {
+            let mut app = demo_app();
+            let now = chrono::Utc::now().timestamp_millis();
+            app.entries = vec![crate::nightscout::Entry {
+                sgv: 45.0,
+                date: now,
+                direction: Some("DoubleDown".into()),
+            }];
+            app.evaluate_alert(now);
+            assert!(app.alert.is_alerting(), "the fixture should be alerting");
+
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| draw(f, &app)).unwrap();
+            let text: String = term
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect();
+            assert!(
+                text.contains("2.5"),
+                "the urgent reading is not in the buffer at {w}x{h}"
+            );
+            assert!(
+                text.contains("URGENT LOW"),
+                "the alert state is not in the buffer at {w}x{h}"
             );
         }
     }
