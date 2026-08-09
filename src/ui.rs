@@ -565,6 +565,12 @@ fn draw_settings(f: &mut Frame, app: &App) {
         .collect();
     f.render_widget(Paragraph::new(lines), inner);
 
+    // Where the real terminal cursor goes, set after the footer is rendered.
+    // A screen reader's caret tracking and a braille display's cursor routing
+    // both follow the *terminal* cursor; nothing here ever set one, so someone
+    // editing the site URL — or a token, which renders as bullets — had no way
+    // to know where the insertion point was.
+    let mut cursor: Option<u16> = None;
     let footer = match (&app.field_edit, &app.status) {
         // An open editor replaces the hint line with the prompt. The token is
         // masked as it's typed — a typo is fixed by retyping, not by reading it
@@ -575,14 +581,12 @@ fn draw_settings(f: &mut Frame, app: &App) {
             } else {
                 edit.buffer.clone()
             };
+            let prompt = format!(" {}: ", edit.field.label().to_lowercase());
+            cursor = Some((prompt.chars().count() + shown.chars().count()) as u16);
             Line::from(vec![
-                Span::styled(
-                    format!(" {}: ", edit.field.label().to_lowercase()),
-                    Style::default().fg(Color::Cyan),
-                ),
+                Span::styled(prompt, Style::default().fg(Color::Cyan)),
                 Span::styled(shown, Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled("_", Style::default().add_modifier(Modifier::SLOW_BLINK)),
-                Span::raw("  · enter confirm · esc cancel"),
+                Span::raw(" · enter confirm · esc cancel"),
             ])
         }
         (None, Some(msg)) => Line::from(Span::styled(
@@ -594,6 +598,11 @@ fn draw_settings(f: &mut Frame, app: &App) {
         )),
     };
     f.render_widget(Paragraph::new(footer), chunks[2]);
+    if let Some(x) = cursor {
+        if x < chunks[2].width {
+            f.set_cursor_position((chunks[2].x + x, chunks[2].y));
+        }
+    }
 }
 
 /// Every followed site at once: one row each, worst first.
@@ -1641,16 +1650,18 @@ fn tint_agp_fan(
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     if let Some(buf) = &app.date_input {
+        const PROMPT: &str = " jump to date (YYYY-MM-DD): ";
         let line = Line::from(vec![
-            Span::styled(
-                " jump to date (YYYY-MM-DD): ",
-                Style::default().fg(Color::Cyan),
-            ),
+            Span::styled(PROMPT, Style::default().fg(Color::Cyan)),
             Span::styled(buf.clone(), Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled("_", Style::default().add_modifier(Modifier::SLOW_BLINK)),
-            Span::raw("  · enter confirm · esc cancel"),
+            Span::raw(" · enter confirm · esc cancel"),
         ]);
         f.render_widget(Paragraph::new(line), area);
+        // The real cursor, rather than a blinking `_`: see draw_settings.
+        let x = (PROMPT.chars().count() + buf.chars().count()) as u16;
+        if x < area.width {
+            f.set_cursor_position((area.x + x, area.y));
+        }
         return;
     }
 
@@ -2030,6 +2041,49 @@ mod tests {
             text.contains("✖ live"),
             "an outage should show a broken dot"
         );
+    }
+
+    /// A blinking fake `_` is invisible to a screen reader's caret tracking and
+    /// unstoppable on terminals that honour SGR 5 — a WCAG 2.2.2 failure and a
+    /// migraine trigger. Both text prompts must position the real terminal
+    /// cursor instead, and nothing may blink.
+    #[test]
+    fn text_prompts_position_the_real_cursor_and_never_blink() {
+        use ratatui::style::Modifier;
+        use ratatui::{backend::TestBackend, Terminal};
+
+        // The settings editor, on a masked field where the text is bullets and
+        // the caret is the only cue about where typing lands.
+        let mut app = demo_app();
+        app.screen = Screen::Settings;
+        assert!(app.begin_field_edit(), "the first field should be editable");
+        for c in "abc".chars() {
+            app.field_edit_push(c);
+        }
+
+        // …and the date-jump prompt on the dashboard.
+        let mut jumping = demo_app();
+        jumping.date_input = Some("2026-08".to_string());
+
+        for app in [&app, &jumping] {
+            let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            term.draw(|f| draw(f, app)).unwrap();
+
+            let pos = term.get_cursor_position().unwrap();
+            assert!(
+                pos.x > 0 && pos.y > 0,
+                "an open text prompt must place the terminal cursor, got {pos:?}"
+            );
+            assert!(
+                !term
+                    .backend()
+                    .buffer()
+                    .content()
+                    .iter()
+                    .any(|c| c.style().add_modifier.contains(Modifier::SLOW_BLINK)),
+                "nothing may blink"
+            );
+        }
     }
 
     /// An app on demo config with one fixed, in-range reading.
