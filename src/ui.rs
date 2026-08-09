@@ -1277,7 +1277,39 @@ fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
                 .labels(vec![Span::raw(lo_lab), Span::raw(hi_lab)]),
         );
     f.render_widget(chart, area);
+    tint_in_range_band(f, area, bounds_y, gutter, low_y, high_y, app.theme.in_range);
     tint_agp_fan(f, area, bounds_y, gutter, &bands, &conv, app.theme.graph);
+    label_agp_rails(f, area, bounds_y, gutter, low_y, high_y, app);
+}
+
+/// Name the two AGP reference rails directly on the plot. A gray line without
+/// a label asks the reader to remember which threshold it represents.
+fn label_agp_rails(
+    f: &mut Frame,
+    area: Rect,
+    bounds_y: [f64; 2],
+    gutter: u16,
+    low_y: f64,
+    high_y: f64,
+    app: &App,
+) {
+    let Some(plot) = Plot::new(area, bounds_y, gutter) else {
+        return;
+    };
+    for (value, row, color, name) in [
+        (low_y, plot.row_of(low_y), app.theme.low, "low"),
+        (high_y, plot.row_of(high_y), app.theme.high, "high"),
+    ] {
+        let label = format!(" {name} {} ", fmt_disp(app.units, value));
+        let width = label.chars().count() as u16;
+        let x = plot.x1.saturating_sub(width + 1).max(plot.x0);
+        for (offset, ch) in label.chars().enumerate() {
+            if let Some(cell) = f.buffer_mut().cell_mut((x + offset as u16, row)) {
+                cell.set_char(ch)
+                    .set_style(Style::default().fg(color).add_modifier(Modifier::BOLD));
+            }
+        }
+    }
 }
 
 /// A braille line dataset over `data`, styled. Free fn so the borrow of `data`
@@ -2610,6 +2642,8 @@ mod tests {
             text.contains("median + IQR + 5/95"),
             "the legend must survive the headline"
         );
+        assert!(text.contains("low 3.9"), "the low rail is not labelled");
+        assert!(text.contains("high 10.0"), "the high rail is not labelled");
     }
 
     /// The alarm self-test is reachable from the settings screen — a setting
