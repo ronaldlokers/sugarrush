@@ -128,6 +128,10 @@ pub struct Site {
     pub name: String,
     pub url: String,
     pub token: String,
+    /// Optional careportal token used only for explicitly confirmed treatment
+    /// writes. Reads always continue to use `token`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_token: Option<String>,
     /// IANA timezone for this person's AGP and clinical exports. Viewer-local
     /// time remains the backward-compatible default when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -666,6 +670,7 @@ impl Config {
                     name: default_site_name(),
                     url: url.clone(),
                     token: token.clone(),
+                    write_token: None,
                     timezone: None,
                     alerts: None,
                 }],
@@ -833,6 +838,7 @@ mod tests {
             name: "default".into(),
             url: url.into(),
             token: "t".into(),
+            write_token: None,
             timezone: None,
             alerts: None,
         };

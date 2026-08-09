@@ -540,6 +540,7 @@ fn field_controls(field: Field) -> &'static str {
         Field::SiteName
         | Field::SiteUrl
         | Field::SiteToken
+        | Field::SiteWriteToken
         | Field::SiteTimezone
         | Field::PushUrl => "Enter to edit",
         Field::AddSite | Field::RemoveSite | Field::TestAlarm => "Enter to run",
@@ -552,6 +553,7 @@ fn field_detail(field: Field) -> &'static str {
         Field::SiteName => "The name used in follower rows, notifications, logs, and persisted alarm episodes. It must be unique.",
         Field::SiteUrl => "The Nightscout base URL for the selected person. HTTPS keeps the read-only token and readings encrypted in transit.",
         Field::SiteToken => "A dedicated read-only Nightscout token. It is masked here and stored in the owner-only config file.",
+        Field::SiteWriteToken => "Optional separate CarePortal token. Setting it crosses a security boundary: confirmed treatment commands can modify this person's Nightscout data. It is verified before every write.",
         Field::SiteTimezone => "The followed person's IANA timezone (for example Europe/Amsterdam), used for AGP patterns and clinical exports. Empty means this computer's local time.",
         Field::TestSite => "Fetch this Nightscout site and require a reading from the last hour. New or edited credentials cannot be saved until this passes.",
         Field::AddSite => "Create another followed person without copying the current person's credential. Fill in its name, URL, and token next.",

@@ -17,6 +17,7 @@ mod sound;
 mod stats;
 mod status;
 mod theme;
+mod treatment;
 mod ui;
 mod units;
 mod view;
@@ -51,15 +52,23 @@ use nightscout::Client;
 enum Mode {
     /// Run the interactive TUI, starting on the given screen; `demo` uses
     /// synthetic data with no config/network.
-    Tui { screen: Screen, demo: bool },
+    Tui {
+        screen: Screen,
+        demo: bool,
+    },
     /// Print one Waybar JSON line and exit.
     Waybar,
     /// Print one status-bar line in the given format and exit.
-    Status { format: status::Format },
+    Status {
+        format: status::Format,
+    },
     /// Print version/about info (and a desktop notification) and exit.
     About,
     /// Write a CSV + summary of the last `days` days and exit.
-    Export { days: u32, dir: Option<String> },
+    Export {
+        days: u32,
+        dir: Option<String>,
+    },
     /// Run the headless alarm watcher until killed.
     Watch,
     /// Write a systemd user unit pointing at this binary, and explain how to
@@ -72,7 +81,9 @@ enum Mode {
         all: bool,
     },
     /// Walk every alarm channel and report which ones actually work.
-    AlarmTest { quiet: bool },
+    AlarmTest {
+        quiet: bool,
+    },
     /// Print what the alarm has actually done.
     Alerts {
         days: i64,
@@ -81,6 +92,7 @@ enum Mode {
     },
     /// Print per-site watcher/data/channel health as JSON.
     Health,
+    Treatment(treatment::Request),
     /// Print usage and exit.
     Help,
     /// Write the man page to stdout.
@@ -104,6 +116,15 @@ fn parse_snooze(arg: &str) -> Option<i64> {
     // A day is the ceiling: beyond that someone means "turn it off", and a
     // snooze that outlives the night it was set in is a trap.
     (1..=24 * 60).contains(&(n * mult)).then_some(n * mult)
+}
+
+fn parse_number_flag(args: &[String], i: usize, flag: &str) -> f64 {
+    args.get(i)
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or_else(|| {
+            eprintln!("sugarrush: {flag} needs a number");
+            std::process::exit(2)
+        })
 }
 
 /// The subcommand `--demo` cannot honour, if this is one.
@@ -133,6 +154,12 @@ fn parse_args() -> Mode {
     let mut export_dir: Option<String> = None;
     let mut snooze_site: Option<String> = None;
     let mut snooze_all = false;
+    let mut treatment_site = None;
+    let mut treatment_carbs = None;
+    let mut treatment_insulin = None;
+    let mut treatment_note = None;
+    let mut treatment_at = None;
+    let mut treatment_confirm = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -164,6 +191,16 @@ fn parse_args() -> Mode {
                 })
             }
             "health" => mode = Some(Mode::Health),
+            "treatment" => {
+                mode = Some(Mode::Treatment(treatment::Request {
+                    site: String::new(),
+                    carbs: None,
+                    insulin: None,
+                    note: None,
+                    at: None,
+                    confirm: false,
+                }))
+            }
             "snooze" => {
                 // An optional duration follows: `15m`, `2h`, a bare number of
                 // minutes, or `off` to cancel. No argument means the configured
@@ -196,7 +233,33 @@ fn parse_args() -> Mode {
                     eprintln!("sugarrush: --site needs a site name");
                     std::process::exit(2);
                 }
+                if matches!(mode, Some(Mode::Treatment(_))) {
+                    treatment_site = snooze_site.clone();
+                }
             }
+            "--carbs" => {
+                i += 1;
+                treatment_carbs = Some(parse_number_flag(&args, i, "--carbs"));
+            }
+            "--insulin" => {
+                i += 1;
+                treatment_insulin = Some(parse_number_flag(&args, i, "--insulin"));
+            }
+            "--note" => {
+                i += 1;
+                treatment_note = Some(args.get(i).cloned().unwrap_or_else(|| {
+                    eprintln!("sugarrush: --note needs text");
+                    std::process::exit(2)
+                }));
+            }
+            "--at" => {
+                i += 1;
+                treatment_at = Some(args.get(i).cloned().unwrap_or_else(|| {
+                    eprintln!("sugarrush: --at needs an RFC3339 timestamp");
+                    std::process::exit(2)
+                }));
+            }
+            "--confirm" => treatment_confirm = true,
             "--all" => snooze_all = true,
             "--json" if matches!(mode, Some(Mode::Health)) => {}
             "--install-unit" | "--install-service" => {
@@ -291,6 +354,17 @@ fn parse_args() -> Mode {
                 all: snooze_all,
             }
         }
+        Some(Mode::Treatment(_)) => Mode::Treatment(treatment::Request {
+            site: treatment_site.or(snooze_site).unwrap_or_else(|| {
+                eprintln!("sugarrush: treatment requires --site NAME");
+                std::process::exit(2)
+            }),
+            carbs: treatment_carbs,
+            insulin: treatment_insulin,
+            note: treatment_note,
+            at: treatment_at,
+            confirm: treatment_confirm,
+        }),
         Some(m) => m,
         None => Mode::Tui { screen, demo },
     }
@@ -341,6 +415,7 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        Mode::Treatment(request) => treatment::run(request).await,
         Mode::Service(action) => service::run(action),
         Mode::Help => {
             print_help();
@@ -529,6 +604,10 @@ const COMMANDS: &[(&str, &str)] = &[
     (
         "sugarrush health --json",
         "machine-readable watcher, data and delivery health",
+    ),
+    (
+        "sugarrush treatment --site NAME [--carbs G] [--insulin U] [--note TEXT] [--at RFC3339] --confirm",
+        "write a validated, audited CarePortal treatment",
     ),
     (
         "sugarrush export [--days N] [--out DIR]",

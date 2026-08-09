@@ -73,6 +73,66 @@ impl Client {
         })
     }
 
+    /// Verify a separate token can create treatments without modifying data.
+    pub async fn verify_treatment_write(site: &Site) -> anyhow::Result<()> {
+        let token = site
+            .write_token
+            .as_deref()
+            .filter(|token| !token.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("no treatment write token configured"))?;
+        let http = reqwest::Client::builder()
+            .user_agent(concat!("sugarrush/", env!("CARGO_PKG_VERSION")))
+            .timeout(std::time::Duration::from_secs(12))
+            .connect_timeout(std::time::Duration::from_secs(6))
+            .build()
+            .map_err(NsError::Client)?;
+        let mut url = reqwest::Url::parse(&format!(
+            "{}/api/v2/authorization/request/",
+            site.base_url()
+        ))?;
+        url.path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("Nightscout URL cannot hold an authorization path"))?
+            .push(token);
+        let response = http
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| NsError::Request("write-capability check failed", redact(e)))?;
+        let value: Value =
+            bounded_json(check_status(response)?, "invalid authorization response").await?;
+        if !has_treatment_create_permission(&value) {
+            anyhow::bail!("token is valid but lacks Nightscout treatment-create permission");
+        }
+        Ok(())
+    }
+
+    pub async fn create_treatment(site: &Site, body: &Value) -> anyhow::Result<()> {
+        Self::verify_treatment_write(site).await?;
+        let token = site.write_token.as_deref().unwrap_or_default();
+        let url = format!("{}/api/v1/treatments.json", site.base_url());
+        let response = reqwest::Client::builder()
+            .user_agent(concat!("sugarrush/", env!("CARGO_PKG_VERSION")))
+            .timeout(std::time::Duration::from_secs(12))
+            .connect_timeout(std::time::Duration::from_secs(6))
+            .build()
+            .map_err(NsError::Client)?
+            .post(url)
+            .query(&[("token", token)])
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| NsError::Request("treatment write failed", redact(e)))?;
+        let result: Value =
+            bounded_json(check_status(response)?, "invalid treatment response").await?;
+        if result
+            .as_array()
+            .is_some_and(|rejected| !rejected.is_empty())
+        {
+            anyhow::bail!("Nightscout rejected the treatment payload");
+        }
+        Ok(())
+    }
+
     /// Fetch SGV entries whose `date` falls within `[start_ms, end_ms]`, newest
     /// first. `want` bounds the request; Nightscout returns at most what exists
     /// in the range.
@@ -177,6 +237,17 @@ impl Client {
             bounded_json(check_status(resp)?, "failed to parse treatments response").await?;
         Ok(parse_treatments(&value, start_ms, end_ms))
     }
+}
+
+fn has_treatment_create_permission(value: &Value) -> bool {
+    value
+        .get("permissionGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|group| group.as_array().into_iter().flatten())
+        .filter_map(Value::as_str)
+        .any(|permission| permission == "*" || permission == "api:treatments:create")
 }
 
 /// The most recent sensor start/change from a `/treatments` payload. Nightscout
@@ -549,6 +620,7 @@ pub mod fake {
             name: "fake".into(),
             url: format!("http://127.0.0.1:{port}"),
             token: "test-token".into(),
+            write_token: None,
             timezone: None,
             alerts: None,
         }
@@ -584,6 +656,7 @@ pub mod fake {
             name: "slow".into(),
             url: format!("http://127.0.0.1:{port}"),
             token: String::new(),
+            write_token: None,
             timezone: None,
             alerts: None,
         }
@@ -608,6 +681,7 @@ pub mod fake {
             name: "stalled".into(),
             url: format!("http://127.0.0.1:{port}"),
             token: String::new(),
+            write_token: None,
             timezone: None,
             alerts: None,
         }
@@ -624,6 +698,19 @@ mod tests {
             date,
             direction: None,
         }
+    }
+
+    #[test]
+    fn only_treatment_create_or_admin_crosses_the_write_boundary() {
+        assert!(has_treatment_create_permission(&serde_json::json!({
+            "permissionGroups": [["api:treatments:create"]]
+        })));
+        assert!(has_treatment_create_permission(&serde_json::json!({
+            "permissionGroups": [["*"]]
+        })));
+        assert!(!has_treatment_create_permission(&serde_json::json!({
+            "permissionGroups": [["*:*:read"]]
+        })));
     }
 
     #[test]
@@ -653,6 +740,7 @@ mod tests {
             name: "default".into(),
             url: "http://127.0.0.1:1".into(),
             token: "SEKRIT-TOKEN-9Q7X".into(),
+            write_token: None,
             timezone: None,
             alerts: None,
         };

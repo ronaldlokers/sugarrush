@@ -8,6 +8,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Treatment writes are available behind an explicit security boundary.** A
+  separate per-site CarePortal token is masked in Settings and capability-
+  checked before every confirmed `treatment` command; amounts, timestamps, and
+  notes are validated and each accepted/rejected attempt is recorded in an
+  owner-only audit without credentials or note text.
+
 - **Offline history is available as an explicit privacy choice.** An opt-in,
   owner-only per-site cache gives instant startup and outage context without
   ever presenting cached data as a live fetch; retention is bounded to 1–90
