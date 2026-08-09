@@ -8,6 +8,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Chart time labels no longer collide into a date that never existed.** On a
+  narrow terminal the three `MM-DD HH:MM` stamps under the graph overlapped and
+  rendered as text like `8-09 01:-09` — a wrong reading of when, on a chart
+  people read clinically. Labels now shrink to the clock alone (the pane title
+  already carries the dated range) and drop middles before they can overlap;
+  the AGP hour labels thin the same way.
 - **`?` now works on every screen.** Pressing it in the caregiver view did
   nothing, then the overlay appeared unbidden on the next dashboard render; the
   settings screen — the one with thirty rows of unexplained options — had no

@@ -1172,15 +1172,22 @@ fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
     let hi_lab = fmt_disp(app.units, bounds_y[1]);
     let gutter = chart_gutter(&[&lo_lab, &hi_lab], "00:00");
 
+    let plot_w = area.width.saturating_sub(gutter + 3) as usize;
+    let x_labels = fit_labels(
+        plot_w,
+        ["00:00", "06:00", "12:00", "18:00", "24:00"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+    );
+
     let chart = Chart::new(datasets)
         .block(block)
-        .x_axis(Axis::default().bounds(bounds_x).labels(vec![
-            Span::raw("00:00"),
-            Span::raw("06:00"),
-            Span::raw("12:00"),
-            Span::raw("18:00"),
-            Span::raw("24:00"),
-        ]))
+        .x_axis(
+            Axis::default()
+                .bounds(bounds_x)
+                .labels(x_labels.into_iter().map(Span::raw).collect::<Vec<_>>()),
+        )
         .y_axis(
             Axis::default()
                 .bounds(bounds_y)
@@ -1430,13 +1437,28 @@ fn draw_graph(f: &mut Frame, area: Rect, app: &App) {
     let first_x = fmt_time(app.view_start);
     let gutter = chart_gutter(&[&lo_lab, &hi_lab], &first_x);
 
+    // Prefer full `MM-DD HH:MM` stamps, but fall back to the clock alone before
+    // dropping labels — the pane's own title already carries the dated range,
+    // so the time is what the axis is really for.
+    let plot_w = area
+        .width
+        .saturating_sub(gutter + 3) // borders + y-axis line
+        as usize;
+    let stamps = [app.view_start, mid_x, right];
+    let full: Vec<String> = stamps.iter().map(|t| fmt_time(*t)).collect();
+    let x_labels = if fit_labels(plot_w, full.clone()).len() == full.len() {
+        full
+    } else {
+        fit_labels(plot_w, stamps.iter().map(|t| fmt_clock(*t)).collect())
+    };
+
     let chart = Chart::new(datasets)
         .block(block)
-        .x_axis(Axis::default().bounds(bounds_x).labels(vec![
-            Span::raw(first_x.clone()),
-            Span::raw(fmt_time(mid_x)),
-            Span::raw(fmt_time(right)),
-        ]))
+        .x_axis(
+            Axis::default()
+                .bounds(bounds_x)
+                .labels(x_labels.into_iter().map(Span::raw).collect::<Vec<_>>()),
+        )
         .y_axis(
             Axis::default()
                 .bounds(bounds_y)
@@ -1494,6 +1516,45 @@ fn tint_bg(c: Color, scale: f32) -> Color {
 /// The widest left-gutter reservation a `Chart` makes for its y-axis, matching
 /// ratatui: the max y-label width, but at least the first (left-aligned) x-label
 /// overhanging left of the y-axis by all but its last character.
+/// Thin a set of x-axis labels until they fit the plot without colliding.
+///
+/// ratatui places the first label flush left, the last flush right and the rest
+/// centred, and does nothing to keep them apart. Three 11-character stamps need
+/// 35 columns; on a 60-column terminal the plot is narrower than that, so they
+/// overlapped — and two overlapping dates read as a single date that never
+/// existed. That is worse than no label at all on a chart people read clinically.
+///
+/// Drops middle labels first (the ends carry the window bounds), then falls
+/// back to one, then to none.
+fn fit_labels(plot_w: usize, mut labels: Vec<String>) -> Vec<String> {
+    // One blank column between neighbours is the minimum that still reads as
+    // two labels rather than one word.
+    let needed = |ls: &[String]| -> usize {
+        ls.iter().map(|l| l.chars().count()).sum::<usize>() + ls.len().saturating_sub(1)
+    };
+    while labels.len() > 2 && needed(&labels) > plot_w {
+        // Drop every other middle label, keeping both ends.
+        let keep: Vec<String> = labels
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i == 0 || *i == labels.len() - 1 || i % 2 == 0)
+            .map(|(_, l)| l.clone())
+            .collect();
+        if keep.len() == labels.len() {
+            labels.remove(labels.len() / 2);
+        } else {
+            labels = keep;
+        }
+    }
+    if labels.len() == 2 && needed(&labels) > plot_w {
+        labels.truncate(1);
+    }
+    if labels.len() == 1 && needed(&labels) > plot_w {
+        labels.clear();
+    }
+    labels
+}
+
 fn chart_gutter(y_labels: &[&str], first_x_label: &str) -> u16 {
     let ymax = y_labels
         .iter()
@@ -1807,6 +1868,14 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
 }
 
 /// Format an epoch-ms timestamp as local `MM-DD HH:MM`.
+/// Just the clock, for axis labels too narrow to carry a date.
+fn fmt_clock(ms: i64) -> String {
+    match Local.timestamp_millis_opt(ms).single() {
+        Some(dt) => dt.format("%H:%M").to_string(),
+        None => "--".into(),
+    }
+}
+
 fn fmt_time(ms: i64) -> String {
     match Local.timestamp_millis_opt(ms).single() {
         Some(dt) => dt.format("%m-%d %H:%M").to_string(),
@@ -2181,6 +2250,83 @@ mod tests {
                 "{screen:?} does not advertise the help key"
             );
         }
+    }
+
+    /// Three `MM-DD HH:MM` stamps need 35 columns. On a narrow terminal
+    /// ratatui laid them out anyway — first flush left, last flush right,
+    /// middle centred — and they ran together into text that reads as a date
+    /// that never existed. On a chart people read clinically, a wrong date is
+    /// worse than a missing one.
+    #[test]
+    fn x_axis_labels_never_collide() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        for w in [40u16, 50, 60, 70, 80, 100, 140, 200] {
+            for view in [
+                crate::app::GraphView::H3,
+                crate::app::GraphView::H24,
+                crate::app::GraphView::Agp,
+            ] {
+                let mut app = demo_app();
+                app.graph_view = view;
+                let mut term = Terminal::new(TestBackend::new(w, 40)).unwrap();
+                term.draw(|f| draw(f, &app)).unwrap();
+                let b = term.backend().buffer();
+
+                // Every row of the buffer: any date stamp that appears must be
+                // a whole one. A collision shows up as digits butting straight
+                // onto the end of a previous label.
+                // Any token carrying a clock must be a whole `HH:MM`. A
+                // collision splices two labels and produces things like
+                // `01:-09`, which a reader parses as a time that never was.
+                for y in 0..40u16 {
+                    let row: String = (0..w).map(|x| b[(x, y)].symbol()).collect();
+                    // Box-drawing sits flush against the first and last label;
+                    // it is chrome, not part of the text under test.
+                    let stripped: String = row
+                        .chars()
+                        .map(|c| if c.is_ascii_graphic() { c } else { ' ' })
+                        .collect();
+                    for token in stripped.split_whitespace() {
+                        if !token.contains(':') {
+                            continue;
+                        }
+                        let clock = token.len() == 5
+                            && token.chars().enumerate().all(|(i, c)| {
+                                if i == 2 {
+                                    c == ':'
+                                } else {
+                                    c.is_ascii_digit()
+                                }
+                            });
+                        assert!(
+                            clock,
+                            "labels collided at width {w} ({view:?}): {token:?} in {row:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The thinning itself: ends are kept, middles go first, and nothing is
+    /// ever returned that cannot fit.
+    #[test]
+    fn fit_labels_keeps_the_ends() {
+        let three = || {
+            vec![
+                "08-08 23:08".to_string(),
+                "08-09 00:51".to_string(),
+                "08-09 02:35".to_string(),
+            ]
+        };
+        assert_eq!(fit_labels(40, three()).len(), 3, "all three fit at 40");
+        let thinned = fit_labels(25, three());
+        assert_eq!(thinned.len(), 2, "the middle goes first");
+        assert_eq!(thinned[0], "08-08 23:08");
+        assert_eq!(thinned[1], "08-09 02:35");
+        assert_eq!(fit_labels(15, three()).len(), 1);
+        assert!(fit_labels(4, three()).is_empty());
     }
 
     /// An app on demo config with one fixed, in-range reading.
