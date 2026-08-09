@@ -88,7 +88,9 @@ can understand and revisit the arrangement as their independence changes.
   or below the viewport
 - Configurable colours (incl. a colorblind-safe preset), graph style, and
   **multiple sites** — `n` to switch between them, `m` for a **follower view**
-  that lists everyone you watch at once, worst first
+  that lists everyone you watch at once, worst first. Each site can carry the
+  person's IANA timezone so AGP patterns and clinical exports describe their
+  day rather than the viewer's clock
 - **Status-bar output** for Waybar, tmux, polybar, i3blocks, or anything that
   takes plain text (see [Status bars](#status-bars))
 
@@ -434,7 +436,7 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush watch --test [--quiet]` | check that every alarm channel actually works |
 | `sugarrush watch --install-service\|--service-status\|--uninstall-service` | manage the native always-on user service |
 | `sugarrush snooze [15m\|2h\|off] [--site NAME\|--all]` | silence the alarm daemon without stopping it |
-| `sugarrush alerts [--days N]` | what the alarm has actually done |
+| `sugarrush alerts [--days N] [--site NAME] [--format text\|json\|csv]` | filter or export what the alarm has done |
 | `sugarrush health --json` | machine-readable watcher, data and delivery health |
 | `sugarrush export [--days N] [--out DIR]` | CSV + a clinical summary |
 | `sugarrush status [--format FORMAT]` | one line for a status bar |

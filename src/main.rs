@@ -73,7 +73,11 @@ enum Mode {
     /// Walk every alarm channel and report which ones actually work.
     AlarmTest { quiet: bool },
     /// Print what the alarm has actually done.
-    Alerts { days: i64 },
+    Alerts {
+        days: i64,
+        site: Option<String>,
+        format: alertlog::Format,
+    },
     /// Print per-site watcher/data/channel health as JSON.
     Health,
     /// Print usage and exit.
@@ -151,7 +155,13 @@ fn parse_args() -> Mode {
                     *quiet = true;
                 }
             }
-            "alerts" => mode = Some(Mode::Alerts { days: 7 }),
+            "alerts" => {
+                mode = Some(Mode::Alerts {
+                    days: 7,
+                    site: None,
+                    format: alertlog::Format::Text,
+                })
+            }
             "health" => mode = Some(Mode::Health),
             "snooze" => {
                 // An optional duration follows: `15m`, `2h`, a bare number of
@@ -244,6 +254,16 @@ fn parse_args() -> Mode {
         },
         Some(Mode::Alerts { .. }) => Mode::Alerts {
             days: export_days.map(i64::from).unwrap_or(7),
+            site: snooze_site,
+            format: status_format
+                .as_deref()
+                .map(|name| {
+                    alertlog::Format::parse(name).unwrap_or_else(|| {
+                        eprintln!("unknown alerts format '{name}'; use text, json, or csv");
+                        std::process::exit(2)
+                    })
+                })
+                .unwrap_or(alertlog::Format::Text),
         },
         Some(Mode::Status { .. }) => Mode::Status {
             format: status_format
@@ -302,9 +322,12 @@ async fn main() -> Result<()> {
         Mode::Watch => watch::run().await,
         Mode::Snooze { minutes, site, all } => run_snooze(minutes, site.as_deref(), all),
         Mode::AlarmTest { quiet } => selftest::run(quiet).await,
-        Mode::Alerts { days } => {
+        Mode::Alerts { days, site, format } => {
             let cfg = Config::load()?;
-            print!("{}", alertlog::report(days, cfg.units));
+            print!(
+                "{}",
+                alertlog::render(days, cfg.units, site.as_deref(), format)?
+            );
             Ok(())
         }
         Mode::Health => {
@@ -356,7 +379,15 @@ async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
     } else {
         dir
     };
-    for path in export::write_pair(&dir, &entries, &alerts, cfg.units, days, now)? {
+    for path in export::write_pair(
+        &dir,
+        &entries,
+        &alerts,
+        cfg.units,
+        days,
+        now,
+        sites[0].timezone.as_deref(),
+    )? {
         println!("{}", path.display());
     }
     Ok(())
@@ -469,8 +500,8 @@ const COMMANDS: &[(&str, &str)] = &[
         "silence the alarm daemon without stopping it",
     ),
     (
-        "sugarrush alerts [--days N]",
-        "what the alarm has actually done",
+        "sugarrush alerts [--days N] [--site NAME] [--format text|json|csv]",
+        "filter or export what the alarm has done",
     ),
     (
         "sugarrush health --json",
@@ -506,7 +537,7 @@ const OPTIONS: &[(&str, &str)] = &[
     ("--format FORMAT", "status-bar syntax"),
     ("--test", "run the alarm self-test"),
     ("--quiet", "with --test: check without making a noise"),
-    ("--site NAME", "with snooze: target one configured site"),
+    ("--site NAME", "target one site for snooze or alert history"),
     (
         "--all",
         "with snooze: explicitly target every configured site",

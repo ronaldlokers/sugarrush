@@ -20,6 +20,24 @@ use serde::{Deserialize, Serialize};
 use crate::alert::Alert;
 use crate::units::Units;
 
+#[derive(Debug, Clone, Copy)]
+pub enum Format {
+    Text,
+    Json,
+    Csv,
+}
+
+impl Format {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "text" | "plain" => Some(Self::Text),
+            "json" => Some(Self::Json),
+            "csv" => Some(Self::Csv),
+            _ => None,
+        }
+    }
+}
+
 /// Entries older than this are dropped when the file is next compacted. Three
 /// months covers a quarterly clinic appointment, which is what someone would
 /// actually bring this to.
@@ -268,11 +286,48 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
 }
 
 /// `sugarrush alerts --days N` — what the alarm did, and for how long.
+#[cfg(test)]
 pub fn report(days: i64, units: Units) -> String {
+    report_site(days, units, None)
+}
+
+pub fn render(days: i64, units: Units, site: Option<&str>, format: Format) -> Result<String> {
     let since = crate::now_ms() - days.max(1) * 86_400_000;
-    let records = read(since);
+    let records = filtered_records(since, site)?;
+    Ok(match format {
+        Format::Text => report_records(days, units, site, records),
+        Format::Json => format!("{}\n", serde_json::to_string_pretty(&records)?),
+        Format::Csv => records_csv(&records),
+    })
+}
+
+#[cfg(test)]
+pub fn report_site(days: i64, units: Units, site: Option<&str>) -> String {
+    let since = crate::now_ms() - days.max(1) * 86_400_000;
+    let records = filtered_records(since, site).unwrap_or_default();
+    report_records(days, units, site, records)
+}
+
+fn filtered_records(since: i64, site: Option<&str>) -> Result<Vec<Record>> {
+    let all = read(since);
+    if let Some(name) = site {
+        anyhow::ensure!(
+            all.iter().any(|record| record.site == name),
+            "no alert history for site '{name}' in this window"
+        );
+        Ok(all
+            .into_iter()
+            .filter(|record| record.site == name)
+            .collect())
+    } else {
+        Ok(all)
+    }
+}
+
+fn report_records(days: i64, units: Units, site: Option<&str>, records: Vec<Record>) -> String {
     let episodes = episodes(&records);
-    let mut out = format!("sugarrush alerts · last {days} day(s)\n\n");
+    let suffix = site.map(|name| format!(" · {name}")).unwrap_or_default();
+    let mut out = format!("sugarrush alerts · last {days} day(s){suffix}\n\n");
 
     if records.is_empty() {
         out.push_str("Nothing recorded in this window.\n\n");
@@ -340,6 +395,27 @@ pub fn report(days: i64, units: Units) -> String {
                 record.outcome.as_deref().unwrap_or("unknown")
             ));
         }
+    }
+    out
+}
+
+fn records_csv(records: &[Record]) -> String {
+    let mut out = String::from("timestamp_ms,site,event,state,sgv_mgdl,channel,outcome\n");
+    for record in records {
+        let safe = |value: &str| format!("\"{}\"", value.replace('"', "\"\""));
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{}\n",
+            record.ts,
+            safe(&record.site),
+            safe(&record.event),
+            safe(&record.state),
+            record
+                .sgv
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            safe(record.channel.as_deref().unwrap_or("")),
+            safe(record.outcome.as_deref().unwrap_or(""))
+        ));
     }
     out
 }

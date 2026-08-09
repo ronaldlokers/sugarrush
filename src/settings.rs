@@ -14,6 +14,7 @@ pub enum Field {
     SiteName,
     SiteUrl,
     SiteToken,
+    SiteTimezone,
     TestSite,
     AddSite,
     RemoveSite,
@@ -53,10 +54,11 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 38] = [
+    pub const ALL: [Field; 39] = [
         Field::SiteName,
         Field::SiteUrl,
         Field::SiteToken,
+        Field::SiteTimezone,
         Field::TestSite,
         Field::AddSite,
         Field::RemoveSite,
@@ -99,6 +101,7 @@ impl Field {
             Field::SiteName => "Site name",
             Field::SiteUrl => "Site URL",
             Field::SiteToken => "Read-only token",
+            Field::SiteTimezone => "Person's timezone",
             Field::TestSite => "Test this site",
             Field::AddSite => "Add site",
             Field::RemoveSite => "Remove site",
@@ -144,6 +147,7 @@ impl Field {
             Field::SiteName
             | Field::SiteUrl
             | Field::SiteToken
+            | Field::SiteTimezone
             | Field::TestSite
             | Field::AddSite
             | Field::RemoveSite
@@ -240,6 +244,11 @@ impl App {
                 buffer: String::new(),
                 masked: true,
             },
+            Field::SiteTimezone => FieldEdit {
+                field,
+                buffer: self.active_site().timezone.clone().unwrap_or_default(),
+                masked: false,
+            },
             // Webhook paths commonly contain a private topic or token. Replace
             // wholesale without ever rendering the existing destination.
             Field::PushUrl => FieldEdit {
@@ -324,6 +333,21 @@ impl App {
                     self.status = Some("token updated · press w to save".to_string());
                 }
             }
+            Field::SiteTimezone => {
+                let value = edit.buffer.trim();
+                if value.is_empty() || value.eq_ignore_ascii_case("local") {
+                    self.sites[idx].timezone = None;
+                    self.settings_dirty = true;
+                    self.status = Some("timezone uses this computer's local time".into());
+                } else if value.parse::<chrono_tz::Tz>().is_err() {
+                    self.status = Some("use an IANA timezone such as Europe/Amsterdam".into());
+                    self.field_edit = Some(edit);
+                } else {
+                    self.sites[idx].timezone = Some(value.to_string());
+                    self.settings_dirty = true;
+                    self.status = Some(format!("timezone set to {value} · press w to save"));
+                }
+            }
             Field::PushUrl => {
                 let value = edit.buffer.trim();
                 if value.is_empty() {
@@ -365,6 +389,7 @@ impl App {
             name,
             url,
             token: String::new(),
+            timezone: None,
             alerts: None,
         });
         self.site_alerts.push(None);
@@ -526,7 +551,11 @@ impl App {
                 self.alerts.urgent_high =
                     clamp_bg(self.alerts.urgent_high + d * step_mgdl).max(self.alerts.high)
             }
-            Field::SiteName | Field::SiteUrl | Field::SiteToken | Field::PushUrl => {
+            Field::SiteName
+            | Field::SiteUrl
+            | Field::SiteToken
+            | Field::SiteTimezone
+            | Field::PushUrl => {
                 self.status = Some("press enter to edit".to_string());
                 self.settings_dirty = was_dirty;
             }
@@ -666,6 +695,7 @@ impl App {
         }
         let single_default = persisted_sites.len() == 1
             && persisted_sites[0].name == "default"
+            && persisted_sites[0].timezone.is_none()
             && persisted_sites[0].alerts.is_none();
         let (url, token, sites) = if single_default {
             (
@@ -780,6 +810,11 @@ impl App {
                 "set · ••••••"
             }
             .to_string(),
+            Field::SiteTimezone => self
+                .active_site()
+                .timezone
+                .clone()
+                .unwrap_or_else(|| "local (viewer)".into()),
             Field::PushUrl => if self.alerts.push_url.is_some() {
                 "set · hidden"
             } else {

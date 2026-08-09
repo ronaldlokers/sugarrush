@@ -51,6 +51,7 @@ pub async fn run() -> Result<()> {
             name: "default".to_string(),
             url: url.clone(),
             token: token.clone(),
+            timezone: None,
             alerts: None,
         };
         // Plain http sends the token — and the glucose data — in the clear.

@@ -787,6 +787,7 @@ impl App {
             self.units,
             self.agp_days,
             now_ms,
+            self.active_site().timezone.as_deref(),
         ) {
             Ok(paths) => {
                 let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
@@ -1934,12 +1935,14 @@ mod tests {
                 name: "alice".into(),
                 url: "https://alice.example".into(),
                 token: "a".into(),
+                timezone: None,
                 alerts: None,
             },
             Site {
                 name: "bob".into(),
                 url: "https://bob.example".into(),
                 token: "b".into(),
+                timezone: None,
                 alerts: Some(AlertsConfig {
                     low: Some(4.5),
                     ..AlertsConfig::default()
@@ -2019,6 +2022,7 @@ mod tests {
             name: "bob".into(),
             url: "https://ns.example.com".into(),
             token: "t".into(),
+            timezone: None,
             alerts: None,
         });
         a.entries = vec![entry(40.0, NOW)];
@@ -2065,7 +2069,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let a = app();
         let entries = vec![entry(100.0, NOW), entry(105.0, NOW - 300_000)];
-        let paths = crate::export::write_pair(&dir, &entries, &a.alerts, a.units, 14, NOW).unwrap();
+        let paths =
+            crate::export::write_pair(&dir, &entries, &a.alerts, a.units, 14, NOW, None).unwrap();
 
         assert_eq!(paths.len(), 2);
         for p in &paths {

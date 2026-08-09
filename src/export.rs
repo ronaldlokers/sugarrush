@@ -6,7 +6,7 @@
 //! `AGP days` setting — so the numbers in the summary describe exactly the rows
 //! in the CSV.
 
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{Local, TimeZone};
 
 use crate::agp;
 use crate::config::Alerts;
@@ -44,12 +44,16 @@ pub fn write_pair(
     units: Units,
     days: u32,
     now_ms: i64,
+    timezone: Option<&str>,
 ) -> anyhow::Result<Vec<std::path::PathBuf>> {
     use anyhow::Context;
     let mut written = Vec::new();
     for (format, body) in [
-        (Format::Csv, csv(entries, units)),
-        (Format::Report, report(entries, alerts, units, days, now_ms)),
+        (Format::Csv, csv_in(entries, units, timezone)),
+        (
+            Format::Report,
+            report_in(entries, alerts, units, days, now_ms, timezone),
+        ),
     ] {
         let path = dir.join(filename(format, now_ms));
         crate::config::write_private(&path, &body)
@@ -92,7 +96,27 @@ fn field(value: &str) -> String {
     }
 }
 
+fn timestamp(ms: i64, timezone: Option<&str>, format: &str) -> String {
+    if let Some(tz) = timezone.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
+        return tz
+            .timestamp_millis_opt(ms)
+            .single()
+            .map(|dt| dt.format(format).to_string())
+            .unwrap_or_else(|| "—".into());
+    }
+    Local
+        .timestamp_millis_opt(ms)
+        .single()
+        .map(|dt| dt.format(format).to_string())
+        .unwrap_or_else(|| "—".into())
+}
+
+#[cfg(test)]
 pub fn csv(entries: &[Entry], units: Units) -> String {
+    csv_in(entries, units, None)
+}
+
+pub fn csv_in(entries: &[Entry], units: Units, timezone: Option<&str>) -> String {
     let mut out = String::from("timestamp,epoch_ms,mgdl,");
     out.push_str(match units {
         Units::Mmol => "mmol_l",
@@ -100,11 +124,7 @@ pub fn csv(entries: &[Entry], units: Units) -> String {
     });
     out.push_str(",direction\n");
     for e in entries.iter().rev() {
-        let ts = Local
-            .timestamp_millis_opt(e.date)
-            .single()
-            .map(|dt: DateTime<Local>| dt.to_rfc3339())
-            .unwrap_or_default();
+        let ts = timestamp(e.date, timezone, "%+");
         out.push_str(&format!(
             "{},{},{:.0},{},{}\n",
             ts,
@@ -120,16 +140,22 @@ pub fn csv(entries: &[Entry], units: Units) -> String {
 /// A plain-text clinical summary: the standard metrics over the window, then
 /// the time-of-day profile that shows *when* things go wrong. Deliberately
 /// fixed-width text — it survives email, a chat message, and a printer.
+#[cfg(test)]
 pub fn report(entries: &[Entry], alerts: &Alerts, units: Units, days: u32, now_ms: i64) -> String {
+    report_in(entries, alerts, units, days, now_ms, None)
+}
+
+pub fn report_in(
+    entries: &[Entry],
+    alerts: &Alerts,
+    units: Units,
+    days: u32,
+    now_ms: i64,
+    timezone: Option<&str>,
+) -> String {
     let mut out = String::new();
     let u = units.label();
-    let stamp = |ms: i64| {
-        Local
-            .timestamp_millis_opt(ms)
-            .single()
-            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_else(|| "—".into())
-    };
+    let stamp = |ms: i64| timestamp(ms, timezone, "%Y-%m-%d %H:%M");
 
     out.push_str("sugarrush glucose summary\n");
     out.push_str("=========================\n\n");
@@ -142,6 +168,10 @@ pub fn report(entries: &[Entry], alerts: &Alerts, units: Units, days: u32, now_m
         "Target      {}–{} {u}\n",
         units.format(alerts.low),
         units.format(alerts.high)
+    ));
+    out.push_str(&format!(
+        "Timezone    {}\n",
+        timezone.unwrap_or("local (viewer)")
     ));
 
     if entries.is_empty() {
@@ -237,7 +267,8 @@ pub fn report(entries: &[Entry], alerts: &Alerts, units: Units, days: u32, now_m
     // averaged away.
     out.push_str("\nTime of day (median and 5–95% spread)\n");
     out.push_str("-------------------------------------\n");
-    let bands = agp::profile(entries);
+    let tz = timezone.and_then(|name| name.parse::<chrono_tz::Tz>().ok());
+    let bands = agp::profile_in(entries, tz);
     for hour in 0..24 {
         let in_hour: Vec<&agp::Band> = bands
             .iter()
@@ -386,6 +417,22 @@ mod tests {
         assert_eq!(last_epoch, NOW);
         // mg/dL is always written, alongside the display unit.
         assert!(lines[12].contains(",100,5.6,Flat") || lines[12].contains(",100,5.5,Flat"));
+    }
+
+    #[test]
+    fn configured_timezone_is_declared_and_written_with_an_offset() {
+        let csv = csv_in(&window(), Units::Mgdl, Some("America/New_York"));
+        let timestamp = csv.lines().nth(1).unwrap().split(',').next().unwrap();
+        assert!(timestamp.ends_with("-05:00") || timestamp.ends_with("-04:00"));
+        let report = report_in(
+            &window(),
+            &Alerts::default(),
+            Units::Mgdl,
+            14,
+            NOW,
+            Some("America/New_York"),
+        );
+        assert!(report.contains("Timezone    America/New_York"));
     }
 
     #[test]

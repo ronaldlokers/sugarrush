@@ -8,6 +8,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Caregiver review now follows the person's context.** Each site can set an
+  IANA timezone used by AGP bucketing, pattern names, CSV offsets, and clinical
+  summaries; alert history can be filtered with `--site` or emitted as
+  structured JSON/CSV for private audit workflows.
+
 - **The always-on watcher now has native service management on every shipped
   desktop platform.** One command installs, starts, inspects, or removes a
   systemd user service on Linux, a launchd agent on macOS, or a Task Scheduler

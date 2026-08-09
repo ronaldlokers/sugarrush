@@ -104,6 +104,10 @@ pub struct Site {
     pub name: String,
     pub url: String,
     pub token: String,
+    /// IANA timezone for this person's AGP and clinical exports. Viewer-local
+    /// time remains the backward-compatible default when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     /// Optional complete alert settings for this person. When absent, the
     /// top-level `[alerts]` settings apply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -637,6 +641,7 @@ impl Config {
                     name: default_site_name(),
                     url: url.clone(),
                     token: token.clone(),
+                    timezone: None,
                     alerts: None,
                 }],
                 _ => bail!("config needs either url + token, or at least one [[sites]] entry"),
@@ -660,6 +665,11 @@ impl Config {
         // a missing scheme or a pasted `/api/v1/…` path shouldn't be a silent
         // 404. An unparseable URL is left alone so the fetch error names it.
         for site in &mut sites {
+            if let Some(timezone) = site.timezone.as_deref() {
+                timezone.parse::<chrono_tz::Tz>().with_context(|| {
+                    format!("site '{}': invalid IANA timezone '{timezone}'", site.name)
+                })?;
+            }
             if let Ok(url) = normalize_site_url(&site.url) {
                 site.url = url;
             }
@@ -798,6 +808,7 @@ mod tests {
             name: "default".into(),
             url: url.into(),
             token: "t".into(),
+            timezone: None,
             alerts: None,
         };
         assert!(site("http://ns.example.com").is_insecure());
