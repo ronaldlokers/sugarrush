@@ -1034,13 +1034,14 @@ fn handle_settings_key(app: &mut App, code: KeyCode) {
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('+') | KeyCode::Char('=') => {
             app.settings_adjust(1)
         }
-        KeyCode::Enter => {
-            if app.selected_field() == app::Field::TestAlarm {
-                app.run_alarm_test();
-            } else {
+        KeyCode::Enter => match app.selected_field() {
+            app::Field::TestAlarm => app.run_alarm_test(),
+            app::Field::AddSite => app.add_site(),
+            app::Field::RemoveSite => app.remove_site(),
+            _ => {
                 app.begin_field_edit();
             }
-        }
+        },
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('w') => app.save_config(),
         _ => {}
