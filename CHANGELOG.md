@@ -95,6 +95,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Local files and Nightscout responses now have explicit safety bounds.**
+  Alarm WAVs live in an owner-only runtime directory instead of predictable
+  shared-temp paths, alert-log append and compaction are serialized across the
+  TUI and watcher, oversized API bodies are rejected at 8 MiB, and unreadable
+  or corrupt watcher state is reported instead of silently looking empty.
 - **Opening a multi-site dashboard no longer silences every followed person's
   watcher for 30 seconds.** The TUI wrote an alarm-claim heartbeat at startup
   before checking how many sites it covered. Startup and later site changes now

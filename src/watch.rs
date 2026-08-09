@@ -224,10 +224,27 @@ pub struct State {
 
 impl State {
     pub fn load() -> Self {
-        std::fs::read_to_string(state_path())
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default()
+        let path = state_path();
+        match std::fs::read_to_string(&path) {
+            Ok(raw) => match serde_json::from_str(&raw) {
+                Ok(state) => state,
+                Err(e) => {
+                    eprintln!(
+                        "sugarrush: ignored corrupt watcher state at {}: {e}",
+                        path.display()
+                    );
+                    Self::default()
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(e) => {
+                eprintln!(
+                    "sugarrush: could not read watcher state at {}: {e}",
+                    path.display()
+                );
+                Self::default()
+            }
+        }
     }
 
     fn save_unlocked(&self) -> Result<()> {
@@ -799,6 +816,11 @@ mod tests {
         assert_eq!(back, state);
         assert_eq!(back.sites["alice"], episode);
         assert_eq!(back.sites["bob"], Episode::default());
+    }
+
+    #[test]
+    fn corrupt_state_is_not_mistaken_for_valid_state() {
+        assert!(serde_json::from_str::<State>("not json").is_err());
     }
 
     #[test]

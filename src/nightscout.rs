@@ -4,12 +4,14 @@
 //! with a read-only token passed as a query parameter.
 
 use chrono::DateTime;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::config::Site;
 
 const PRED_STEP_MS: i64 = 5 * 60_000;
+const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Lowest SGV treated as a real glucose reading (mg/dL). Nightscout encodes
 /// sensor errors as small codes (0–12); anything below a physiological floor is
@@ -98,10 +100,8 @@ impl Client {
                     redact(e),
                 )
             })?;
-        let entries: Vec<Entry> = check_status(resp)?
-            .json()
-            .await
-            .map_err(|e| NsError::Parse("failed to parse Nightscout response", redact(e)))?;
+        let entries: Vec<Entry> =
+            bounded_json(check_status(resp)?, "failed to parse Nightscout response").await?;
         Ok(clean_newest_first(entries))
     }
 
@@ -122,10 +122,8 @@ impl Client {
             .send()
             .await
             .map_err(|e| NsError::Request("devicestatus request failed", redact(e)))?;
-        let value: Value = check_status(resp)?
-            .json()
-            .await
-            .map_err(|e| NsError::Parse("failed to parse devicestatus response", redact(e)))?;
+        let value: Value =
+            bounded_json(check_status(resp)?, "failed to parse devicestatus response").await?;
         let latest = value.as_array().and_then(|items| items.first());
         Ok((
             latest.map(parse_device_status).unwrap_or_default(),
@@ -151,10 +149,8 @@ impl Client {
             .send()
             .await
             .map_err(|e| NsError::Request("treatments request failed", redact(e)))?;
-        let value: Value = check_status(resp)?
-            .json()
-            .await
-            .map_err(|e| NsError::Parse("failed to parse treatments response", redact(e)))?;
+        let value: Value =
+            bounded_json(check_status(resp)?, "failed to parse treatments response").await?;
         Ok(parse_sensor_start(&value))
     }
 
@@ -176,10 +172,8 @@ impl Client {
             .send()
             .await
             .map_err(|e| NsError::Request("treatments request failed", redact(e)))?;
-        let value: Value = check_status(resp)?
-            .json()
-            .await
-            .map_err(|e| NsError::Parse("failed to parse treatments response", redact(e)))?;
+        let value: Value =
+            bounded_json(check_status(resp)?, "failed to parse treatments response").await?;
         Ok(parse_treatments(&value, start_ms, end_ms))
     }
 }
@@ -389,6 +383,26 @@ fn check_status(resp: reqwest::Response) -> Result<reqwest::Response> {
     }
 }
 
+async fn bounded_json<T: DeserializeOwned>(
+    resp: reqwest::Response,
+    context: &'static str,
+) -> Result<T> {
+    if resp
+        .content_length()
+        .is_some_and(|n| n > MAX_RESPONSE_BYTES)
+    {
+        return Err(NsError::TooLarge);
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| NsError::Parse(context, redact(e)))?;
+    if bytes.len() as u64 > MAX_RESPONSE_BYTES {
+        return Err(NsError::TooLarge);
+    }
+    serde_json::from_slice(&bytes).map_err(|e| NsError::InvalidJson(context, e))
+}
+
 /// A typed Nightscout failure. Callers can make retry decisions directly;
 /// errors no longer cross the client boundary as `anyhow::Error` and require
 /// a runtime downcast to recover information the client already knew.
@@ -400,6 +414,8 @@ pub enum NsError {
     Request(&'static str, reqwest::Error),
     /// Nightscout returned malformed or unexpected JSON.
     Parse(&'static str, reqwest::Error),
+    InvalidJson(&'static str, serde_json::Error),
+    TooLarge,
     /// 401/403 — the token is missing, wrong, or lacks the `readable` role.
     Auth,
     /// 404 — the base URL doesn't point at a Nightscout API.
@@ -419,7 +435,10 @@ impl std::fmt::Display for NsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NsError::Client(_) => write!(f, "failed to build HTTP client"),
-            NsError::Request(context, _) | NsError::Parse(context, _) => f.write_str(context),
+            NsError::Request(context, _)
+            | NsError::Parse(context, _)
+            | NsError::InvalidJson(context, _) => f.write_str(context),
+            NsError::TooLarge => write!(f, "Nightscout response exceeded the 8 MiB safety limit"),
             NsError::Auth => write!(
                 f,
                 "authentication failed — check your read-only token (a Nightscout \
@@ -438,7 +457,8 @@ impl std::error::Error for NsError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Client(e) | Self::Request(_, e) | Self::Parse(_, e) => Some(e),
-            Self::Auth | Self::NotFound | Self::Http(_) => None,
+            Self::InvalidJson(_, e) => Some(e),
+            Self::Auth | Self::NotFound | Self::Http(_) | Self::TooLarge => None,
         }
     }
 }
@@ -701,6 +721,19 @@ mod tests {
         let site = fake::serve(200, "[]").await;
         let client = Client::for_site(&site).unwrap();
         assert!(client.entries_range(0, 1, 1).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn oversized_responses_are_rejected_before_json_decode() {
+        let body: &'static str =
+            Box::leak("x".repeat(MAX_RESPONSE_BYTES as usize + 1).into_boxed_str());
+        let site = fake::serve(200, body).await;
+        let err = Client::for_site(&site)
+            .unwrap()
+            .entries_range(0, 1, 1)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, NsError::TooLarge));
     }
 
     #[test]
