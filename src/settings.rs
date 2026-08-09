@@ -2,12 +2,19 @@
 
 use super::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsExit {
+    Back,
+    Quit,
+}
+
 /// Editable rows on the settings screen, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     SiteName,
     SiteUrl,
     SiteToken,
+    TestSite,
     AddSite,
     RemoveSite,
     SiteAlerts,
@@ -25,6 +32,7 @@ pub enum Field {
     QuietUrgentLow,
     Escalate,
     PushAlerts,
+    PushUrl,
     PredictHorizon,
     UrgentLow,
     Low,
@@ -45,10 +53,11 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 36] = [
+    pub const ALL: [Field; 38] = [
         Field::SiteName,
         Field::SiteUrl,
         Field::SiteToken,
+        Field::TestSite,
         Field::AddSite,
         Field::RemoveSite,
         Field::SiteAlerts,
@@ -65,6 +74,7 @@ impl Field {
         Field::QuietUrgentLow,
         Field::Escalate,
         Field::PushAlerts,
+        Field::PushUrl,
         Field::PredictHorizon,
         Field::UrgentLow,
         Field::Low,
@@ -89,6 +99,7 @@ impl Field {
             Field::SiteName => "Site name",
             Field::SiteUrl => "Site URL",
             Field::SiteToken => "Read-only token",
+            Field::TestSite => "Test this site",
             Field::AddSite => "Add site",
             Field::RemoveSite => "Remove site",
             Field::SiteAlerts => "Alert settings",
@@ -105,6 +116,7 @@ impl Field {
             Field::QuietUrgentLow => "Quiet: urgent-low sounds",
             Field::Escalate => "Escalate after",
             Field::PushAlerts => "Push alerts",
+            Field::PushUrl => "Push URL",
             Field::PredictHorizon => "Predict horizon",
             Field::UrgentLow => "Urgent low",
             Field::Low => "Low",
@@ -132,6 +144,7 @@ impl Field {
             Field::SiteName
             | Field::SiteUrl
             | Field::SiteToken
+            | Field::TestSite
             | Field::AddSite
             | Field::RemoveSite
             | Field::SiteAlerts => "Site",
@@ -146,7 +159,8 @@ impl Field {
             | Field::QuietEnd
             | Field::QuietUrgentLow
             | Field::Escalate
-            | Field::PushAlerts => "Alarm",
+            | Field::PushAlerts
+            | Field::PushUrl => "Alarm",
             Field::PredictHorizon => "Predictions",
             Field::UrgentLow | Field::Low | Field::High | Field::UrgentHigh | Field::Stale => {
                 "Thresholds"
@@ -226,6 +240,13 @@ impl App {
                 buffer: String::new(),
                 masked: true,
             },
+            // Webhook paths commonly contain a private topic or token. Replace
+            // wholesale without ever rendering the existing destination.
+            Field::PushUrl => FieldEdit {
+                field,
+                buffer: String::new(),
+                masked: true,
+            },
             _ => return false,
         };
         self.field_edit = Some(edit);
@@ -278,6 +299,7 @@ impl App {
             Field::SiteUrl => match crate::config::normalize_site_url(&edit.buffer) {
                 Ok(url) => {
                     self.sites[idx].url = url;
+                    self.site_validated[idx] = false;
                     self.site_dirty = true;
                     self.settings_dirty = true;
                     self.status = Some(if self.sites[idx].is_insecure() {
@@ -296,9 +318,33 @@ impl App {
                     self.status = Some("token unchanged".to_string());
                 } else {
                     self.sites[idx].token = edit.buffer.trim().to_string();
+                    self.site_validated[idx] = false;
                     self.site_dirty = true;
                     self.settings_dirty = true;
                     self.status = Some("token updated · press w to save".to_string());
+                }
+            }
+            Field::PushUrl => {
+                let value = edit.buffer.trim();
+                if value.is_empty() {
+                    self.status = Some("push URL unchanged · type 'off' to clear".to_string());
+                } else if value.eq_ignore_ascii_case("off") {
+                    self.alerts.push_url = None;
+                    self.alerts.push_enabled = false;
+                    self.settings_dirty = true;
+                    self.status = Some("push URL cleared · press w to save".to_string());
+                } else if reqwest::Url::parse(value)
+                    .ok()
+                    .is_none_or(|url| !matches!(url.scheme(), "http" | "https"))
+                {
+                    self.status =
+                        Some("push URL must be a complete http:// or https:// URL".into());
+                    self.field_edit = Some(edit);
+                } else {
+                    self.alerts.push_url = Some(value.to_string());
+                    self.alerts.push_enabled = true;
+                    self.settings_dirty = true;
+                    self.status = Some("push URL updated and enabled · press w to save".into());
                 }
             }
             _ => {}
@@ -322,6 +368,7 @@ impl App {
             alerts: None,
         });
         self.site_alerts.push(None);
+        self.site_validated.push(false);
         self.site_idx = self.sites.len() - 1;
         self.load_active_alerts();
         self.site_dirty = true;
@@ -337,6 +384,7 @@ impl App {
         let idx = self.site_idx.min(self.sites.len() - 1);
         let removed = self.sites.remove(idx).name;
         self.site_alerts.remove(idx);
+        self.site_validated.remove(idx);
         self.site_idx = idx.min(self.sites.len() - 1);
         self.load_active_alerts();
         self.site_dirty = true;
@@ -478,8 +526,12 @@ impl App {
                 self.alerts.urgent_high =
                     clamp_bg(self.alerts.urgent_high + d * step_mgdl).max(self.alerts.high)
             }
-            Field::SiteName | Field::SiteUrl | Field::SiteToken => {
+            Field::SiteName | Field::SiteUrl | Field::SiteToken | Field::PushUrl => {
                 self.status = Some("press enter to edit".to_string());
+                self.settings_dirty = was_dirty;
+            }
+            Field::TestSite => {
+                self.status = Some("press enter to test this site".into());
                 self.settings_dirty = was_dirty;
             }
             Field::NotifyContent => self.alerts.notify_content = !self.alerts.notify_content,
@@ -528,10 +580,14 @@ impl App {
 
     /// Persist current settings back to config.toml. Sites and theme are
     /// preserved; thresholds are written in the active display unit.
-    pub fn save_config(&mut self) {
+    pub fn save_config(&mut self) -> bool {
+        if self.site_validated.iter().any(|valid| !valid) {
+            self.status = Some("test every new or edited site before saving".into());
+            return false;
+        }
+        let persisted = self.build_config();
         let result = Config::path().and_then(|p| {
-            let body = toml::to_string_pretty(&self.build_config())
-                .context("failed to serialize config")?;
+            let body = toml::to_string_pretty(&persisted).context("failed to serialize config")?;
             // Atomic + owner-only: this file holds the only copy of the token.
             Config::write_atomic(&p, &body)?;
             Ok(p)
@@ -539,10 +595,59 @@ impl App {
         self.status = Some(match result {
             Ok(p) => {
                 self.settings_dirty = false;
+                self.settings_baseline = persisted;
                 format!("saved to {}", p.display())
             }
             Err(e) => format!("save failed: {e}"),
         });
+        !self.settings_dirty
+    }
+
+    pub fn request_settings_exit(&mut self, action: SettingsExit) {
+        if self.settings_dirty {
+            self.settings_exit = Some(action);
+            self.status = Some("unsaved changes · w save · d discard · esc cancel".into());
+        } else {
+            self.finish_settings_exit(action);
+        }
+    }
+
+    pub fn cancel_settings_exit(&mut self) {
+        self.settings_exit = None;
+        self.status = Some("kept editing".into());
+    }
+
+    pub fn discard_settings(&mut self) {
+        let cfg = self.settings_baseline.clone();
+        let sites = cfg.resolve_sites().unwrap_or_else(|_| self.sites.clone());
+        let alerts = cfg.alerts.resolve_checked(cfg.units).0;
+        let fresh = App::new(&cfg, alerts, sites);
+        self.units = fresh.units;
+        self.sites = fresh.sites;
+        self.site_validated = vec![true; self.sites.len()];
+        self.site_idx = 0;
+        self.alerts = fresh.alerts;
+        self.global_alerts = fresh.global_alerts;
+        self.site_alerts = fresh.site_alerts;
+        self.refresh_secs = fresh.refresh_secs;
+        self.graph_style = fresh.graph_style;
+        self.agp_days = fresh.agp_days;
+        self.minimap_enabled = fresh.minimap_enabled;
+        self.minimap_span_ms = fresh.minimap_span_ms;
+        self.theme = fresh.theme;
+        self.theme_names = fresh.theme_names;
+        self.settings_dirty = false;
+        self.site_dirty = true;
+        self.refresh_dirty = true;
+        self.status = Some("changes discarded".into());
+    }
+
+    pub fn finish_settings_exit(&mut self, action: SettingsExit) {
+        self.settings_exit = None;
+        match action {
+            SettingsExit::Back => self.toggle_settings(),
+            SettingsExit::Quit => self.should_quit = true,
+        }
     }
 
     /// Reconstruct a `Config` from current settings for persistence. A lone
@@ -613,6 +718,12 @@ impl App {
                 "use global defaults"
             }
             .to_string(),
+            Field::TestSite => if self.site_validated[self.site_idx] {
+                "passed"
+            } else {
+                "required before save"
+            }
+            .to_string(),
             Field::Units => self.units.label().to_string(),
             Field::Refresh => format!("{}s", self.refresh_secs),
             Field::Desktop => if self.alerts.desktop { "on" } else { "off" }.to_string(),
@@ -667,6 +778,12 @@ impl App {
                 "not set"
             } else {
                 "set · ••••••"
+            }
+            .to_string(),
+            Field::PushUrl => if self.alerts.push_url.is_some() {
+                "set · hidden"
+            } else {
+                "not configured"
             }
             .to_string(),
             Field::AddSite => "press enter".to_string(),

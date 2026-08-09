@@ -84,8 +84,10 @@ Type "?"
 Sleep 2.2s
 Escape
 Sleep 0.8s
-# Close settings, quit
+# Try to close with unsaved changes, explicitly discard, then quit
 Type "s"
 Sleep 1.5s
+Type "d"
+Sleep 1s
 Type "q"
 Sleep 0.6s

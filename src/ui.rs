@@ -535,7 +535,7 @@ fn fmt_age(ms: i64) -> String {
 
 fn field_controls(field: Field) -> &'static str {
     match field {
-        Field::SiteName | Field::SiteUrl | Field::SiteToken => "Enter to edit",
+        Field::SiteName | Field::SiteUrl | Field::SiteToken | Field::PushUrl => "Enter to edit",
         Field::AddSite | Field::RemoveSite | Field::TestAlarm => "Enter to run",
         _ => "← / → to change",
     }
@@ -546,6 +546,7 @@ fn field_detail(field: Field) -> &'static str {
         Field::SiteName => "The name used in follower rows, notifications, logs, and persisted alarm episodes. It must be unique.",
         Field::SiteUrl => "The Nightscout base URL for the selected person. HTTPS keeps the read-only token and readings encrypted in transit.",
         Field::SiteToken => "A dedicated read-only Nightscout token. It is masked here and stored in the owner-only config file.",
+        Field::TestSite => "Fetch this Nightscout site and require a reading from the last hour. New or edited credentials cannot be saved until this passes.",
         Field::AddSite => "Create another followed person without copying the current person's credential. Fill in its name, URL, and token next.",
         Field::RemoveSite => "Remove the selected site from the saved list. At least one site is always retained.",
         Field::SiteAlerts => "Use the global alert profile, or make a complete threshold and delivery profile for only this person.",
@@ -561,6 +562,7 @@ fn field_detail(field: Field) -> &'static str {
         Field::QuietUrgentLow => "Keep urgent-low audio active during quiet hours as a safety override.",
         Field::Escalate => "Send the configured push webhook when an urgent episode remains unacknowledged for this long.",
         Field::PushAlerts => "Enable or disable the configured phone/webhook destination without discarding its URL.",
+        Field::PushUrl => "A phone/webhook destination. It is hidden because private topics and tokens are often embedded in the URL; enter a replacement, or `off` to clear it.",
         Field::PredictHorizon => "Warn when a forecast crosses low or high within this many minutes. Zero disables predictive alerts.",
         Field::UrgentLow => "At or below this value, classify the reading as urgent low and use the urgent alarm path.",
         Field::Low => "Below this value, classify the reading as low after applying hysteresis on recovery.",

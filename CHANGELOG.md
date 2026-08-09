@@ -8,6 +8,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Settings now protect changes and credentials as a complete workflow.** Push
+  destinations can be replaced without revealing embedded topics or tokens,
+  new and edited Nightscout sites must return a fresh reading before saving,
+  and leaving with dirty settings requires an explicit Save, Discard, or Cancel
+  decision; Discard restores the last loaded or saved configuration.
 - **The follower screen now scales past one terminalful of people.** It has
   worst-first scrolling and paging with explicit above/below affordances, a
   screen-specific help overlay, bounded names and concise failure text so long
