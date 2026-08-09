@@ -97,6 +97,8 @@ pub struct App {
     pub field_edit: Option<FieldEdit>,
     /// Latest status per configured site, for the followers screen.
     pub followers: Vec<crate::follow::SiteStatus>,
+    /// First visible person in the worst-first follower list.
+    pub follower_scroll: usize,
     /// Settings have been changed but not written back to `config.toml`.
     /// Every edit applies live, so without this there's nothing to distinguish
     /// "changed and saved" from "changed and lost on quit".
@@ -298,6 +300,7 @@ impl App {
             date_input: None,
             field_edit: None,
             followers: Vec::new(),
+            follower_scroll: 0,
             settings_dirty: false,
             predictions: Vec::new(),
             device: DeviceStatus::default(),
@@ -534,6 +537,12 @@ impl App {
             Screen::Followers => Screen::Dashboard,
             _ => Screen::Followers,
         };
+        self.follower_scroll = 0;
+    }
+
+    pub fn scroll_followers(&mut self, delta: isize) {
+        let last = self.followers.len().saturating_sub(1);
+        self.follower_scroll = self.follower_scroll.saturating_add_signed(delta).min(last);
     }
 
     /// Open the date-jump prompt.

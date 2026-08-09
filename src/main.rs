@@ -931,6 +931,12 @@ fn handle_key(app: &mut App, fetch: &Fetcher, key: KeyEvent) {
             KeyCode::Char('s') => app.toggle_settings(),
             KeyCode::Char('r') => fetch.request(app),
             KeyCode::Char('?') => app.show_help = true,
+            KeyCode::Down | KeyCode::Char('j') => app.scroll_followers(1),
+            KeyCode::Up | KeyCode::Char('k') => app.scroll_followers(-1),
+            KeyCode::PageDown => app.scroll_followers(5),
+            KeyCode::PageUp => app.scroll_followers(-5),
+            KeyCode::Home => app.follower_scroll = 0,
+            KeyCode::End => app.follower_scroll = app.followers.len().saturating_sub(1),
             _ => {}
         }
         return;
@@ -1396,6 +1402,9 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
 
     if let Some(f) = g.followers {
         app.followers = f;
+        app.follower_scroll = app
+            .follower_scroll
+            .min(app.followers.len().saturating_sub(1));
     }
 
     // Alert evaluation and notifications run every refresh, online or not, so a

@@ -8,6 +8,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The follower screen now scales past one terminalful of people.** It has
+  worst-first scrolling and paging with explicit above/below affordances, a
+  screen-specific help overlay, bounded names and concise failure text so long
+  input cannot break the safety columns, and a header that keeps the worst
+  state visible while the list is scrolled.
 - **First-run setup now gets users all the way to a working dashboard.** The
   wizard has an explicit exit hatch and Nightscout token-help link, verifies
   that the site returns a reading from the last hour instead of treating an
