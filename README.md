@@ -150,7 +150,7 @@ design: file-only, documented.
 | `End` | Jump to the start of the overview strip |
 | `f` / `Home` / `Esc` | Return to live |
 | `e` | Export the clinical window (CSV + summary) |
-| `a` | Snooze the audible alarm |
+| `a` | Snooze the audible alarm (also silences a running `watch`) |
 | `n` | Switch site (multi-site) |
 | `m` | Follow all sites at once (caregiver view) |
 | `s` | Open / close settings |
@@ -163,6 +163,26 @@ Caregiver view: `m`/`Esc` back to the dashboard, `r` refresh, `s` settings,
 `?` help, `q` quit.
 When the minimap is on, click or drag it to move the window — or use `H`/`L`
 and `End` for the same navigation from the keyboard.
+
+## Snoozing the alarm
+
+`sugarrush snooze` silences a running `sugarrush watch` — the alarm daemon —
+without stopping it, so the *next* alarm still fires:
+
+```bash
+sugarrush snooze          # the configured snooze length
+sugarrush snooze 15m
+sugarrush snooze 2h
+sugarrush snooze off      # cancel; the alarm is armed again
+```
+
+It works whether or not a watcher is running: with none up, it arms the next one
+to start. A running watcher picks it up on its next poll. The snooze survives a
+service restart, so restarting is not a way to un-silence an alarm someone
+deliberately silenced.
+
+Pressing `a` in the dashboard does the same thing, so a snooze set there isn't
+lost when you close the dashboard.
 
 ## Status bars
 

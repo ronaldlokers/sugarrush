@@ -1045,6 +1045,12 @@ impl App {
         self.snooze_until
     }
 
+    /// Adopt a snooze set from outside this process — `sugarrush snooze`
+    /// writing the daemon's state file, or the dashboard handing one over.
+    pub fn set_snooze(&mut self, until: Option<i64>) {
+        self.snooze_until = until;
+    }
+
     /// Resume a previously-running alert episode.
     #[allow(clippy::too_many_arguments)]
     pub fn restore_episode(
@@ -1458,6 +1464,27 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_700_000_000_000;
+
+    /// A snooze set from outside the process — `sugarrush snooze` writing the
+    /// daemon's state file — has to actually silence the alarm, not just be
+    /// recorded.
+    #[test]
+    fn an_externally_set_snooze_silences_the_alarm() {
+        let mut a = app();
+        a.alerts.sound = true;
+        a.entries = vec![entry(40.0, NOW)];
+        a.react(NOW);
+        assert!(a.alarm_active(NOW), "an urgent low should sound");
+
+        a.set_snooze(Some(NOW + 15 * 60_000));
+        assert!(!a.alarm_active(NOW), "…and be silenced by a snooze");
+
+        // …and come back when the snooze runs out, not stay silent.
+        assert!(
+            a.alarm_active(NOW + 16 * 60_000),
+            "the alarm must re-arm when the snooze expires"
+        );
+    }
 
     /// The audible alarm and the notification channels used to run on separate
     /// clocks. The dashboard's 3-second ticker classified and sounded but never
