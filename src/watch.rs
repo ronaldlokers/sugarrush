@@ -378,7 +378,7 @@ pub async fn run() -> Result<()> {
                     // The retry policy already exists on App and the TUI obeys
                     // it; the daemon was hammering a failing site at full rate
                     // and ignoring a paused-after-auth-failure state entirely.
-                    if !w.app.online && !w.app.should_retry(now) {
+                    if !w.app.online() && !w.app.should_retry(now) {
                         continue;
                     }
                     if let Err(e) = poll(&mut w.app, &w.client, now).await {
@@ -540,7 +540,7 @@ async fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reactio
             eprintln!("sugarrush watch: push failed — check push_url");
         }
     }
-    if r.state == Alert::Stale && !w.app.online {
+    if r.state == Alert::Stale && !w.app.online() {
         println!("{} · {who}offline", stamp(now_ms));
     }
     r
@@ -565,7 +565,7 @@ fn liveness(watched: &[Watched], now_ms: i64) -> String {
                     w.app.alert.label(),
                     ((now_ms - e.date) / 60_000).max(0)
                 ),
-                None if w.app.online => format!("{who}no readings"),
+                None if w.app.online() => format!("{who}no readings"),
                 None => format!("{who}offline"),
             }
         })

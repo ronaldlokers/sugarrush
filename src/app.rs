@@ -17,11 +17,6 @@ use crate::view::{Span, View};
 const MS_PER_HOUR: i64 = 3_600_000;
 const MS_PER_DAY: i64 = 24 * MS_PER_HOUR;
 
-/// Consecutive config-level failures (bad token / URL) before automatic
-/// fetching pauses. More than one, so a server that briefly answers 401 during
-/// a restart doesn't strand a working setup.
-const CONFIG_FAIL_LIMIT: u32 = 3;
-
 /// Which screen is currently shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -72,6 +67,12 @@ pub use settings::{Field, FieldEdit};
 #[path = "alert_engine.rs"]
 mod alert_engine;
 use alert_engine::{AlertEngine, PushDue};
+
+#[path = "fetch_state.rs"]
+mod fetch_state;
+use fetch_state::FetchState;
+#[cfg(test)]
+use fetch_state::CONFIG_FAIL_LIMIT;
 
 pub struct App {
     pub units: Units,
@@ -181,28 +182,11 @@ pub struct App {
     /// *died* must be told — those two are indistinguishable from one flag.
     pub watcher_alive: bool,
     pub watcher_seen: bool,
-    /// Whether the last fetch reached Nightscout.
-    pub online: bool,
+    /// Connection health, errors, and retry/backoff state.
+    fetch: FetchState,
     /// Set when a desktop notification could not be delivered — no
     /// notification daemon, or D-Bus refused it.
     pub notify_failed: bool,
-    /// Epoch ms of the last successful fetch.
-    pub last_ok_ms: Option<i64>,
-    /// Consecutive fetch failures, for backoff.
-    fetch_fails: u32,
-    /// Consecutive failures that retrying can't fix (bad token / URL).
-    config_fails: u32,
-    /// Set once `config_fails` hits the limit: automatic fetching is paused
-    /// until the user fixes the site or asks for a retry.
-    pub fetch_paused: bool,
-    /// Earliest epoch-ms to retry after a failure.
-    next_retry_at: Option<i64>,
-
-    pub last_error: Option<String>,
-    /// Set when the reading fetch succeeded but a supplementary one didn't, so
-    /// the dashboard can say which panels are stale instead of quietly showing
-    /// old IOB/COB, markers, or device status as current.
-    pub partial: Option<String>,
     pub should_quit: bool,
     /// Whether the keybinding help overlay is showing.
     pub show_help: bool,
@@ -337,15 +321,8 @@ impl App {
             config_warnings: Vec::new(),
             watcher_alive: false,
             watcher_seen: false,
-            online: true,
+            fetch: FetchState::default(),
             notify_failed: false,
-            last_ok_ms: None,
-            fetch_fails: 0,
-            config_fails: 0,
-            fetch_paused: false,
-            next_retry_at: None,
-            last_error: None,
-            partial: None,
             should_quit: false,
             show_help: false,
         }
@@ -353,18 +330,12 @@ impl App {
 
     /// Note which supplementary fetches failed on this refresh (empty clears).
     pub fn set_partial(&mut self, missing: &[&str]) {
-        self.partial = (!missing.is_empty()).then(|| missing.join(", "));
+        self.fetch.set_partial(missing);
     }
 
     /// Record a successful fetch.
     pub fn mark_online(&mut self, now_ms: i64) {
-        self.online = true;
-        self.last_ok_ms = Some(now_ms);
-        self.fetch_fails = 0;
-        self.config_fails = 0;
-        self.fetch_paused = false;
-        self.next_retry_at = None;
-        self.last_error = None;
+        self.fetch.mark_online(now_ms);
     }
 
     /// Record a failed fetch and schedule a backoff retry (5s → 60s).
@@ -374,35 +345,13 @@ impl App {
     /// fetching pauses: retrying a rejected token every few seconds only risks
     /// tripping server-side rate limits, and the fix is in the user's hands.
     pub fn mark_offline(&mut self, now_ms: i64, err: String, permanent: bool) {
-        self.online = false;
-        // The outage message supersedes any per-panel notice.
-        self.partial = None;
-        self.fetch_fails = self.fetch_fails.saturating_add(1);
-        if permanent {
-            self.config_fails = self.config_fails.saturating_add(1);
-        } else {
-            self.config_fails = 0;
-        }
-        if self.config_fails >= CONFIG_FAIL_LIMIT {
-            self.fetch_paused = true;
-            self.next_retry_at = None;
-            self.last_error = Some(format!("{err} · retries paused, press r to retry"));
-            return;
-        }
-        // 5 · 10 · 20 · 40 · 60 · 60 … — the shift needs a fifth step to reach
-        // the documented ceiling; capping it at four stopped at 40s.
-        let secs = (5u64 << (self.fetch_fails.min(5) - 1)).min(60);
-        self.next_retry_at = Some(now_ms + secs as i64 * 1000);
-        self.last_error = Some(err);
+        self.fetch.mark_offline(now_ms, err, permanent);
     }
 
     /// Resume fetching after a pause — on an explicit refresh, or when the site
     /// config changes (a new site, or an edited URL/token).
     pub fn resume_fetching(&mut self) {
-        self.fetch_paused = false;
-        self.config_fails = 0;
-        self.fetch_fails = 0;
-        self.next_retry_at = None;
+        self.fetch.resume();
     }
 
     /// True when an offline connection is due for a backoff retry.
@@ -412,12 +361,36 @@ impl App {
     /// returning to live meant an offline dashboard until the next manual
     /// refresh. A retry re-fetches whatever window is shown.
     pub fn should_retry(&self, now_ms: i64) -> bool {
-        !self.online && !self.fetch_paused && self.next_retry_at.is_some_and(|t| now_ms >= t)
+        self.fetch.should_retry(now_ms)
     }
 
     /// True when the periodic refresh should run (paused after a config error).
     pub fn should_auto_refresh(&self) -> bool {
-        self.view.is_live() && !self.fetch_paused
+        self.view.is_live() && !self.fetch.fetch_paused()
+    }
+
+    pub fn online(&self) -> bool {
+        self.fetch.online()
+    }
+
+    pub fn last_ok_ms(&self) -> Option<i64> {
+        self.fetch.last_ok_ms()
+    }
+
+    pub fn fetch_paused(&self) -> bool {
+        self.fetch.fetch_paused()
+    }
+
+    pub fn last_error(&self) -> Option<&str> {
+        self.fetch.last_error()
+    }
+
+    pub fn set_last_error(&mut self, error: String) {
+        self.fetch.set_last_error(error);
+    }
+
+    pub fn partial(&self) -> Option<&str> {
+        self.fetch.partial()
     }
 
     /// True when the graph pane shows the AGP profile rather than the timeline.
@@ -560,7 +533,7 @@ impl App {
                 // No reading at all in the live window is itself a sensor gap —
                 // but only once we've seen data (don't alarm during first-run
                 // setup before any successful fetch).
-                None if self.last_ok_ms.is_some() => Alert::Stale,
+                None if self.last_ok_ms().is_some() => Alert::Stale,
                 // Never connected. Staying quiet is right for the seconds
                 // before the first fetch and wrong forever after: a watcher
                 // started with a bad token would otherwise report "in range"
@@ -1200,7 +1173,7 @@ mod tests {
     fn dropout_after_data_is_stale() {
         // Once we've seen data, a live window with zero readings is a sensor gap.
         let mut a = app();
-        a.last_ok_ms = Some(NOW);
+        a.mark_online(NOW);
         a.entries.clear();
         assert_eq!(a.evaluate_alert(NOW), Alert::Stale);
     }
@@ -1254,7 +1227,7 @@ mod tests {
     #[test]
     fn snoozing_a_sensor_gap_does_not_silence_the_low_that_follows() {
         let mut a = app();
-        a.last_ok_ms = Some(NOW);
+        a.mark_online(NOW);
         a.entries.clear(); // a total dropout is a sensor gap
         assert_eq!(a.evaluate_alert(NOW), Alert::Stale);
         a.update_urgent(NOW);
@@ -1401,7 +1374,7 @@ mod tests {
         for _ in 0..CONFIG_FAIL_LIMIT {
             a.mark_offline(NOW, "authentication failed".into(), true);
         }
-        assert!(a.fetch_paused);
+        assert!(a.fetch_paused());
         assert!(!a.should_retry(NOW + 60_000));
         assert!(!a.should_auto_refresh());
         // An explicit retry (r) resumes, and a success clears the state.
@@ -1409,7 +1382,7 @@ mod tests {
         assert!(a.should_auto_refresh());
         a.mark_offline(NOW, "authentication failed".into(), true);
         a.mark_online(NOW);
-        assert!(!a.fetch_paused);
+        assert!(!a.fetch_paused());
     }
 
     #[test]
@@ -1729,7 +1702,7 @@ mod tests {
             let permanent = err.is_permanent();
             a.mark_offline(NOW, err.to_string(), permanent);
         }
-        assert!(a.fetch_paused, "a rejected token should stop the retries");
+        assert!(a.fetch_paused(), "a rejected token should stop the retries");
         assert!(!a.should_auto_refresh());
 
         let flaky = fake::serve(500, "boom").await;
@@ -1741,7 +1714,7 @@ mod tests {
             b.mark_offline(NOW, err.to_string(), permanent);
         }
         assert!(
-            !b.fetch_paused,
+            !b.fetch_paused(),
             "a restarting site should keep being retried"
         );
         assert!(b.should_retry(NOW + 120_000));
@@ -1821,7 +1794,7 @@ mod tests {
         for _ in 0..10 {
             a.mark_offline(NOW, "connection refused".into(), false);
         }
-        assert!(!a.fetch_paused);
+        assert!(!a.fetch_paused());
         assert!(a.should_retry(NOW + 120_000));
     }
 }

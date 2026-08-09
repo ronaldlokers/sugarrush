@@ -794,7 +794,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                 fetch.deliver(app, p, g);
             }
             Some(e) = err_rx.recv() => {
-                app.last_error = Some(e);
+                app.set_last_error(e);
             }
             _ = alarm_ticker.tick() => {
                 let now = now_ms();
@@ -843,7 +843,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                     app.resume_fetching();
                     fetch.request(app);
                 }
-                Err(e) => app.last_error = Some(e.to_string()),
+                Err(e) => app.set_last_error(e.to_string()),
             }
             app.site_dirty = false;
         }
@@ -1068,7 +1068,7 @@ fn handle_date_input(app: &mut App, fetch: &Fetcher, code: KeyCode) {
                     app.view.jump_to(date, now_ms());
                     fetch.request(app);
                 }
-                None => app.last_error = Some(format!("invalid date '{buf}', use YYYY-MM-DD")),
+                None => app.set_last_error(format!("invalid date '{buf}', use YYYY-MM-DD")),
             }
         }
         _ => {}
@@ -1279,7 +1279,7 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
         None => {}
     }
 
-    if app.online {
+    if app.online() {
         // Which supplementary reads failed. They're best-effort — the glucose
         // trace is what matters — but silently showing a stale IOB or a missing
         // carb marker as if it were current is its own kind of wrong, so the
@@ -1485,7 +1485,7 @@ async fn refresh(app: &mut App, client: &Client) {
         // The push webhook is a safety channel (unacknowledged-urgent
         // escalation); a dead URL must not fail silently.
         if !push(&url, &msg).await {
-            app.last_error = Some("push notification failed — check push_url".to_string());
+            app.set_last_error("push notification failed — check push_url".to_string());
         }
     }
     // The rest of the reaction still has to be delivered; only the push is
