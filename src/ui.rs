@@ -1141,20 +1141,21 @@ fn draw_agp(f: &mut Frame, area: Rect, app: &App) {
     // exported report, where there's room for all of them.
     let headline = agp::insights(&bands, app.alerts.low, app.alerts.high)
         .first()
-        .map(|i| format!("⚠ {} ", i.text(app.units)))
+        .map(|i| format!("⚠ {} · ", i.text(app.units)))
         .unwrap_or_default();
-    let block = Block::default().borders(Borders::ALL).title(format!(
-        " AGP · last {}d · target {}–{} {} · {}",
+    // The legend used to be *replaced* by the headline, so the key to reading
+    // the chart disappeared exactly when the chart had something to say. Both
+    // now, headline first — it drops off a narrow title before the legend does,
+    // and it is the legend that makes the fan interpretable at all.
+    let title = format!(
+        " AGP · last {}d · target {}–{} {} · {}median + IQR + 5/95 ",
         app.agp_days,
         fmt_disp(app.units, app.units.from_mgdl(app.alerts.low)),
         fmt_disp(app.units, app.units.from_mgdl(app.alerts.high)),
         app.units.label(),
-        if headline.is_empty() {
-            "median + IQR + 5/95 ".to_string()
-        } else {
-            headline
-        },
-    ));
+        headline,
+    );
+    let block = Block::default().borders(Borders::ALL).title(title);
 
     if bands.is_empty() {
         f.render_widget(
@@ -1530,6 +1531,16 @@ fn rgb_of(c: Color) -> (u8, u8, u8) {
 
 /// A dark background tint derived from a foreground colour (scaled toward
 /// black), so a shaded zone tracks the active palette.
+/// Whether the terminal advertises 24-bit colour.
+///
+/// The `Color::Rgb` tints degrade to nothing useful without it, so the code
+/// that uses them needs a fallback rather than a hope.
+fn truecolor() -> bool {
+    std::env::var("COLORTERM")
+        .map(|v| v.eq_ignore_ascii_case("truecolor") || v.eq_ignore_ascii_case("24bit"))
+        .unwrap_or(false)
+}
+
 fn tint_bg(c: Color, scale: f32) -> Color {
     let (r, g, b) = rgb_of(c);
     Color::Rgb(
@@ -1724,8 +1735,14 @@ fn tint_agp_fan(
     if bands.len() < 2 {
         return;
     }
-    let outer = tint_bg(base, 0.16);
-    let inner = tint_bg(base, 0.34);
+    // theme.rs deliberately uses named ANSI colours "so the palette renders
+    // identically on 16-color consoles, tmux, and SSH sessions that lack
+    // COLORTERM=truecolor" — and then the fan painted itself in Color::Rgb
+    // backgrounds, which is exactly what collapses on those sessions, leaving
+    // an unlabelled median line. Where 24-bit isn't available, draw the fan as
+    // shaded glyphs in the theme colour instead: it survives 16 colours, and
+    // the texture difference reads without colour at all.
+    let shaded = !truecolor();
     // Linear-interpolate a percentile curve at `minute` from the sparse buckets.
     let at = |minute: f64, pick: &dyn Fn(&agp::Band) -> f64| -> f64 {
         match bands.iter().position(|b| b.minute as f64 >= minute) {
@@ -1752,13 +1769,19 @@ fn tint_agp_fan(
             plot.row_of(at(minute, &|b| b.p25)),
         );
         for yy in o_lo..=o_hi {
-            let c = if yy >= i_lo && yy <= i_hi {
-                inner
-            } else {
-                outer
+            let is_inner = yy >= i_lo && yy <= i_hi;
+            let Some(cell) = buf.cell_mut((xx, yy)) else {
+                continue;
             };
-            if let Some(cell) = buf.cell_mut((xx, yy)) {
-                cell.set_bg(c);
+            // Never overwrite the median line or a rail that has already been
+            // drawn into this cell.
+            if shaded {
+                if cell.symbol() == " " {
+                    cell.set_symbol(if is_inner { "▒" } else { "░" });
+                    cell.set_fg(base);
+                }
+            } else {
+                cell.set_bg(tint_bg(base, if is_inner { 0.34 } else { 0.16 }));
             }
         }
     }
@@ -2435,6 +2458,110 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// theme.rs picks named ANSI colours on purpose, "so the palette renders
+    /// identically on 16-color consoles, tmux, and SSH sessions that lack
+    /// COLORTERM=truecolor". The AGP fan then painted itself in `Color::Rgb`
+    /// backgrounds, which is precisely what collapses there — leaving an
+    /// unlabelled median line where the percentile fan should be.
+    #[test]
+    fn the_agp_fan_survives_without_truecolor() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let render = |truecolor: bool| -> (usize, usize) {
+            // SAFETY-free: this is a process-wide env var, and the tests that
+            // read it are in this one function.
+            if truecolor {
+                std::env::set_var("COLORTERM", "truecolor");
+            } else {
+                std::env::remove_var("COLORTERM");
+            }
+            let mut app = demo_app();
+            app.graph_view = crate::app::GraphView::Agp;
+            let now = chrono::Utc::now().timestamp_millis();
+            // Ten days of readings so the profile has buckets to fan out.
+            app.agp_entries = (0..10 * 24 * 4)
+                .map(|i| crate::nightscout::Entry {
+                    sgv: 100.0 + ((i % 40) as f64 - 20.0) * 3.0,
+                    date: now - i as i64 * 15 * 60_000,
+                    direction: None,
+                })
+                .collect();
+
+            let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            term.draw(|f| draw(f, &app)).unwrap();
+            let buf = term.backend().buffer();
+            let shaded = buf
+                .content()
+                .iter()
+                .filter(|c| c.symbol() == "░" || c.symbol() == "▒")
+                .count();
+            let tinted = buf
+                .content()
+                .iter()
+                .filter(|c| matches!(c.style().bg, Some(ratatui::style::Color::Rgb(..))))
+                .count();
+            (shaded, tinted)
+        };
+
+        let (shaded_16, _) = render(false);
+        assert!(
+            shaded_16 > 50,
+            "without truecolor the fan must be drawn with glyphs, got {shaded_16} cells"
+        );
+
+        let (_, tinted_24) = render(true);
+        assert!(
+            tinted_24 > 50,
+            "with truecolor the fan should still be a background tint, got {tinted_24} cells"
+        );
+        std::env::remove_var("COLORTERM");
+    }
+
+    /// The legend is what makes a percentile fan readable. It used to be
+    /// *replaced* by the insight headline, so it vanished exactly when the
+    /// chart had something to say.
+    #[test]
+    fn the_agp_legend_survives_an_insight() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = demo_app();
+        app.graph_view = crate::app::GraphView::Agp;
+        let now = chrono::Utc::now().timestamp_millis();
+        // Ten days that are low every night between 02:00 and 05:00 — enough
+        // separate days for an insight to fire.
+        app.agp_entries = (0..10 * 24 * 4)
+            .map(|i| {
+                let date = now - i as i64 * 15 * 60_000;
+                let hour = chrono::Local
+                    .timestamp_millis_opt(date)
+                    .single()
+                    .map(|d| chrono::Timelike::hour(&d))
+                    .unwrap_or(12);
+                crate::nightscout::Entry {
+                    sgv: if (2..5).contains(&hour) { 55.0 } else { 120.0 },
+                    date,
+                    direction: None,
+                }
+            })
+            .collect();
+
+        let mut term = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+
+        assert!(text.contains("⚠"), "the fixture should produce an insight");
+        assert!(
+            text.contains("median + IQR + 5/95"),
+            "the legend must survive the headline"
+        );
     }
 
     /// An app on demo config with one fixed, in-range reading.

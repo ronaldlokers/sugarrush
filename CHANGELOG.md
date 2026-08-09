@@ -23,6 +23,16 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **The AGP fan renders on terminals without 24-bit colour.** It was painted
+  as RGB cell backgrounds, which collapse on 16-colour consoles, tmux and SSH
+  sessions with no `COLORTERM` — leaving an unlabelled median line where the
+  percentile fan should be. Those terminals now get the fan as shaded blocks in
+  the theme colour, which also distinguishes the two bands by texture rather
+  than colour alone.
+- **The AGP legend no longer disappears when there's something to report.** The
+  "median + IQR + 5/95" key was replaced by the pattern headline, so the reader
+  lost the key to the chart exactly when the chart had a finding. Both are
+  shown.
 - **`--demo` is no longer silently ignored by the subcommands.** `sugarrush
   watch --demo` looked like a safe way to try the alarm out and instead started
   the daemon against the real site and the real config; `export`, `status` and
