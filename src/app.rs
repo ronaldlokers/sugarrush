@@ -791,7 +791,10 @@ impl App {
             self.units,
             self.agp_days,
             now_ms,
-            self.active_site().timezone.as_deref(),
+            crate::export::Context {
+                timezone: self.active_site().timezone.as_deref(),
+                subject: Some(&self.active_site().name),
+            },
         ) {
             Ok(paths) => {
                 let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
@@ -2109,8 +2112,19 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let a = app();
         let entries = vec![entry(100.0, NOW), entry(105.0, NOW - 300_000)];
-        let paths =
-            crate::export::write_pair(&dir, &entries, &a.alerts, a.units, 14, NOW, None).unwrap();
+        let paths = crate::export::write_pair(
+            &dir,
+            &entries,
+            &a.alerts,
+            a.units,
+            14,
+            NOW,
+            crate::export::Context {
+                timezone: None,
+                subject: Some("demo"),
+            },
+        )
+        .unwrap();
 
         assert_eq!(paths.len(), 2);
         for p in &paths {

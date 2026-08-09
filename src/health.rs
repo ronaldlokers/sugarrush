@@ -10,6 +10,12 @@ pub struct Report {
     pub generated_at_ms: i64,
     pub watcher_alive: bool,
     pub healthy: bool,
+    pub process_healthy: bool,
+    pub data_healthy: bool,
+    pub alarm_configured: bool,
+    pub currently_suppressed: bool,
+    pub delivery_degraded: bool,
+    pub degraded: bool,
     pub sites: Vec<SiteHealth>,
 }
 
@@ -82,11 +88,35 @@ pub async fn inspect(cfg: &Config) -> anyhow::Result<Report> {
         });
     }
     let watcher_alive = watch::is_alive(watch::Role::Watch, now);
-    let healthy = watcher_alive && health.iter().all(|site| site.data_fresh);
+    let process_healthy = watcher_alive;
+    let data_healthy = health.iter().all(|site| site.data_fresh);
+    let alarm_configured = sites.iter().any(|site| {
+        let alerts = site.resolve_alerts(&cfg.alerts, cfg.units).0;
+        alerts.sound || alerts.desktop || (alerts.push_enabled && alerts.push_url.is_some())
+    });
+    let currently_suppressed = health
+        .iter()
+        .any(|site| site.snoozed_until_ms.is_some_and(|until| until > now));
+    let delivery_degraded = health.iter().any(|site| {
+        site.last_delivery.as_ref().is_some_and(|delivery| {
+            matches!(
+                delivery.outcome.as_str(),
+                "rejected" | "retrying" | "unknown"
+            )
+        })
+    });
+    let healthy = process_healthy && data_healthy;
+    let degraded = !healthy || !alarm_configured || currently_suppressed || delivery_degraded;
     Ok(Report {
         generated_at_ms: now,
         watcher_alive,
         healthy,
+        process_healthy,
+        data_healthy,
+        alarm_configured,
+        currently_suppressed,
+        delivery_degraded,
+        degraded,
         sites: health,
     })
 }
@@ -101,6 +131,12 @@ mod tests {
             generated_at_ms: 1,
             watcher_alive: true,
             healthy: false,
+            process_healthy: true,
+            data_healthy: false,
+            alarm_configured: true,
+            currently_suppressed: false,
+            delivery_degraded: false,
+            degraded: true,
             sites: vec![SiteHealth {
                 site: "alice".into(),
                 endpoint_reachable: true,

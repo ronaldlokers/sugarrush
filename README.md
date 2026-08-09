@@ -324,9 +324,12 @@ accepted the request; it cannot prove anyone saw, read, or heard it.
 
 For external monitoring, `sugarrush health --json` reports watcher liveness,
 per-site endpoint/data freshness, active snoozes, alarm state, and the last
-delivery attempt. It exits non-zero when the watcher is down or any site's data
-is stale, and deliberately keeps process health, data health, and delivery
-outcomes as separate fields rather than claiming one overall “safe” state.
+delivery attempt. It exposes separate `process_healthy`, `data_healthy`,
+`alarm_configured`, `currently_suppressed`, and `delivery_degraded` fields: no
+single result claims a person can or did receive an alarm. By default the exit
+status preserves the original process-and-data contract. Use
+`--strict-delivery` when a monitor should also fail for no configured channel,
+an active snooze, or a known rejected/retrying delivery.
 
 ## Snoozing the alarm
 
@@ -454,11 +457,14 @@ Press `e` in the app, or run it headless — handy from cron, or the morning of
 an appointment:
 
 ```bash
-sugarrush export                     # the AGP-days window, into the current dir
-sugarrush export --days 30 --out ~/  # a month, somewhere else
+sugarrush export                            # convenient for one configured person
+sugarrush export --site Alex --days 30     # explicitly choose in follower mode
+sugarrush export --all --out ~/             # one attributed pair per person
 ```
 
-Both write two files with a shared timestamped name: `…​.csv` (every reading,
+In a multi-person configuration, export refuses to guess: use `--site NAME` or
+`--all`. Both write two files whose name includes the person and a shared
+timestamp: `…​.csv` (every reading,
 oldest first, in mg/dL *and* your display unit) and `….txt` (a summary: sensor
 coverage, five-band time in range, time below range, mean, GMI, CV, and an
 hour-by-hour median/spread profile). The text file is fixed-width on purpose —
@@ -481,8 +487,8 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush treatment --site NAME [--carbs G] [--insulin U] [--note TEXT] [--at RFC3339]` | review and write a durable CarePortal treatment |
 | `sugarrush cache status\|clear [--site NAME\|--all] [--confirm]` | inspect or deliberately erase private cached history |
 | `sugarrush alerts [--days N] [--site NAME] [--format text\|json\|csv]` | filter or export what the alarm has done |
-| `sugarrush health --json` | machine-readable watcher, data and delivery health |
-| `sugarrush export [--days N] [--out DIR]` | CSV + a clinical summary |
+| `sugarrush health --json [--strict-delivery]` | machine-readable watcher, data and delivery health |
+| `sugarrush export [--days N] [--out DIR] [--site NAME\|--all]` | CSV + a clinical summary |
 | `sugarrush status [--format FORMAT]` | one line for a status bar |
 | `sugarrush waybar` | alias for --format waybar |
 | `sugarrush about` | version, config and a health check |
