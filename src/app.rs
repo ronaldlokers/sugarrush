@@ -262,6 +262,10 @@ pub struct App {
     pub treatments: Vec<Treatment>,
     /// Epoch ms of the latest sensor start/change, if known.
     pub sensor_start_ms: Option<i64>,
+    /// When the sensor-start lookup last ran. A sensor lasts ten to fourteen
+    /// days, so asking every refresh cost a second `/treatments` request per
+    /// cycle for a number that changes twice a month.
+    pub sensor_fetched_ms: i64,
     /// Configured alert thresholds and behaviour (mg/dL internally).
     pub alerts: Alerts,
     /// Current alert state (only meaningful in live mode).
@@ -384,6 +388,7 @@ impl App {
             device: DeviceStatus::default(),
             treatments: Vec::new(),
             sensor_start_ms: None,
+            sensor_fetched_ms: 0,
             alerts,
             alert: Alert::InRange,
             last_notified: None,
