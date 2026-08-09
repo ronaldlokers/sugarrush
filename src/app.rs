@@ -99,6 +99,9 @@ pub struct App {
     pub followers: Vec<crate::follow::SiteStatus>,
     /// First visible person in the worst-first follower list.
     pub follower_scroll: usize,
+    /// Selected follower identity. The list is severity-sorted and can reorder
+    /// after every refresh, so an index could act on the wrong person.
+    pub follower_selected: Option<String>,
     /// Settings have been changed but not written back to `config.toml`.
     /// Every edit applies live, so without this there's nothing to distinguish
     /// "changed and saved" from "changed and lost on quit".
@@ -307,6 +310,7 @@ impl App {
             field_edit: None,
             followers: Vec::new(),
             follower_scroll: 0,
+            follower_selected: None,
             settings_dirty: false,
             settings_baseline: cfg.clone(),
             settings_exit: None,
@@ -535,6 +539,19 @@ impl App {
         }
     }
 
+    /// Activate a site by stable configured identity.
+    pub fn activate_site(&mut self, name: &str) -> bool {
+        let Some(index) = self.sites.iter().position(|site| site.name == name) else {
+            return false;
+        };
+        self.sync_active_alerts();
+        self.site_idx = index;
+        self.load_active_alerts();
+        self.site_dirty = true;
+        self.view.follow();
+        true
+    }
+
     /// Toggle the followers list. Only meaningful with more than one site —
     /// with one, it would just be the dashboard with less on it.
     pub fn toggle_followers(&mut self) {
@@ -547,11 +564,44 @@ impl App {
             _ => Screen::Followers,
         };
         self.follower_scroll = 0;
+        self.follower_selected = self.followers.first().map(|site| site.name.clone());
     }
 
     pub fn scroll_followers(&mut self, delta: isize) {
-        let last = self.followers.len().saturating_sub(1);
-        self.follower_scroll = self.follower_scroll.saturating_add_signed(delta).min(last);
+        if self.followers.is_empty() {
+            self.follower_selected = None;
+            return;
+        }
+        let current = self
+            .follower_selected
+            .as_ref()
+            .and_then(|name| self.followers.iter().position(|site| &site.name == name))
+            .unwrap_or(0);
+        let next = current
+            .saturating_add_signed(delta)
+            .min(self.followers.len().saturating_sub(1));
+        self.follower_selected = Some(self.followers[next].name.clone());
+        self.follower_scroll = next;
+    }
+
+    pub fn selected_follower(&self) -> Option<&str> {
+        self.follower_selected
+            .as_deref()
+            .or_else(|| self.followers.first().map(|site| site.name.as_str()))
+    }
+
+    pub fn select_follower_edge(&mut self, last: bool) {
+        let selected = if last {
+            self.followers.last()
+        } else {
+            self.followers.first()
+        };
+        self.follower_selected = selected.map(|site| site.name.clone());
+        self.follower_scroll = if last {
+            self.followers.len().saturating_sub(1)
+        } else {
+            0
+        };
     }
 
     /// Open the date-jump prompt.
@@ -1857,6 +1907,21 @@ mod tests {
         assert_eq!(a.sites.len(), 1);
         a.remove_site();
         assert_eq!(a.sites.len(), 1, "the final site was removed");
+    }
+
+    #[test]
+    fn follower_activation_uses_stable_site_identity() {
+        let mut a = app();
+        let mut second = a.sites[0].clone();
+        second.name = "bob".into();
+        a.sites.push(second);
+        a.site_alerts.push(None);
+        a.site_validated.push(true);
+
+        assert!(a.activate_site("bob"));
+        assert_eq!(a.active_site().name, "bob");
+        assert!(!a.activate_site("missing"));
+        assert_eq!(a.active_site().name, "bob");
     }
 
     #[test]

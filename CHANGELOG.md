@@ -8,6 +8,17 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Caregiver actions now target the right person.** The follower list has a
+  stable selected row that opens that person's dashboard with Enter and
+  snoozes only that person with `a`; the CLI accepts `--site NAME` and requires
+  explicit `--all` when several sites are configured.
+
+### Fixed
+
+- Webhook delivery no longer blocks the watcher's three-second alarm loop, so
+  a slow destination cannot delay sound or stale-data detection for other
+  followed people.
+
 - **Settings now protect changes and credentials as a complete workflow.** Push
   destinations can be replaced without revealing embedded topics or tokens,
   new and edited Nightscout sites must return a fresh reading before saving,

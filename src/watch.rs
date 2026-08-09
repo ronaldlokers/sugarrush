@@ -294,8 +294,15 @@ fn adopt_external_snooze(app: &mut App, on_disk: Option<&Episode>) {
     }
 }
 
-/// Set (or clear) the snooze on every watched site, by writing the state file
-/// the daemon already reads.
+/// Which watched sites an external snooze command targets.
+#[derive(Debug, Clone, Copy)]
+pub enum SnoozeTarget<'a> {
+    Site(&'a str),
+    All,
+}
+
+/// Set (or clear) the snooze on selected watched sites, by writing the state
+/// file the daemon already reads.
 ///
 /// This is how `sugarrush snooze` reaches a running `watch`. There is no IPC:
 /// the daemon re-reads this file every poll, so the snooze lands within one
@@ -304,7 +311,7 @@ fn adopt_external_snooze(app: &mut App, on_disk: Option<&Episode>) {
 /// service happens to be up is not a snooze.
 ///
 /// Returns how many sites it applied to.
-pub fn set_snooze(until: Option<i64>) -> Result<usize> {
+pub fn set_snooze(until: Option<i64>, target: SnoozeTarget<'_>) -> Result<usize> {
     let _lock = acquire_state_lock()?;
     let mut state = State::load();
     if state.sites.is_empty() {
@@ -316,11 +323,28 @@ pub fn set_snooze(until: Option<i64>) -> Result<usize> {
             state.sites.entry(site.name).or_default();
         }
     }
-    for episode in state.sites.values_mut() {
-        episode.snooze_until = until;
-    }
-    let n = state.sites.len();
+    let n = apply_snooze(&mut state, until, target)?;
     state.save_unlocked()?;
+    Ok(n)
+}
+
+fn apply_snooze(state: &mut State, until: Option<i64>, target: SnoozeTarget<'_>) -> Result<usize> {
+    let n = match target {
+        SnoozeTarget::All => {
+            for episode in state.sites.values_mut() {
+                episode.snooze_until = until;
+            }
+            state.sites.len()
+        }
+        SnoozeTarget::Site(name) => {
+            let episode = state
+                .sites
+                .get_mut(name)
+                .with_context(|| format!("unknown site '{name}'"))?;
+            episode.snooze_until = until;
+            1
+        }
+    };
     Ok(n)
 }
 
@@ -511,7 +535,7 @@ pub async fn run() -> Result<()> {
                     // matters, and it can only fire if we stay alive.
                     eprintln!("sugarrush watch [{}]: {error}", w.name);
                 }
-                react(w, now, multi).await;
+                react(w, now, multi);
                 let mut state = snapshot(&watched);
                 if let Err(e) = state.save_daemon_snapshot() {
                     eprintln!("sugarrush watch: {e}");
@@ -530,7 +554,7 @@ pub async fn run() -> Result<()> {
                 // somewhere else.
                 let mut worst: Option<(Alert, sound::Tone)> = None;
                 for w in watched.iter_mut() {
-                    let r = react(w, now, multi).await;
+                    let r = react(w, now, multi);
                     let alert = w.app.alert;
                     if r.sound && worst.is_none_or(|(a, _)| alert.severity() < a.severity()) {
                         worst = Some((alert, w.app.alarm_tone()));
@@ -640,7 +664,7 @@ fn apply_poll(app: &mut App, result: PollResult, now_ms: i64) -> Option<String> 
 /// The sequence itself lives in `App::react` — this used to reimplement it,
 /// and had already drifted from the dashboard's copy over where
 /// `update_urgent` sat relative to the announcements.
-async fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reaction {
+fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reaction {
     // Whose reading this is only matters when there's more than one person
     // being watched; prefixing every line with "default" otherwise is noise.
     let who = if multi {
@@ -701,9 +725,15 @@ async fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reactio
     w.last_logged = Some(r.state);
 
     if let Some((url, msg)) = r.push.clone() {
-        if !crate::push(&url, &msg).await {
-            eprintln!("sugarrush watch: push failed — check push_url");
-        }
+        // Delivery has its own ten-second network timeout. Never await it in
+        // the reaction loop: simultaneous caregiver escalations must not turn
+        // the three-second alarm cadence into N × 10 seconds.
+        let site = w.name.clone();
+        tokio::spawn(async move {
+            if !crate::push(&url, &msg).await {
+                eprintln!("sugarrush watch [{site}]: push failed — check push_url");
+            }
+        });
     }
     if r.state == Alert::Stale && !w.app.online() {
         println!("{} · {who}offline", stamp(now_ms));
@@ -841,6 +871,22 @@ mod tests {
         assert_eq!(back, state);
         assert_eq!(back.sites["alice"], episode);
         assert_eq!(back.sites["bob"], Episode::default());
+    }
+
+    #[test]
+    fn a_targeted_snooze_never_silences_another_site() {
+        let mut state = State::default();
+        state.sites.insert("alice".into(), Episode::default());
+        state.sites.insert("bob".into(), Episode::default());
+        let until = NOW + 900_000;
+
+        assert_eq!(
+            apply_snooze(&mut state, Some(until), SnoozeTarget::Site("alice")).unwrap(),
+            1
+        );
+        assert_eq!(state.sites["alice"].snooze_until, Some(until));
+        assert_eq!(state.sites["bob"].snooze_until, None);
+        assert!(apply_snooze(&mut state, Some(until), SnoozeTarget::Site("nobody")).is_err());
     }
 
     #[test]

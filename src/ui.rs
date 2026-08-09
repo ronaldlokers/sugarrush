@@ -172,9 +172,11 @@ fn draw_help(f: &mut Frame, area: Rect, screen: Screen) {
         ("drag the overview", "scrub through history (mouse)"),
     ];
     let follower_rows = [
-        ("↑ / ↓ · j / k", "scroll through followed people"),
-        ("PgUp / PgDn", "scroll five people"),
+        ("↑ / ↓ · j / k", "select a followed person"),
+        ("PgUp / PgDn", "move five people"),
         ("Home / End", "first / last person"),
+        ("Enter", "open selected person's dashboard"),
+        ("a", "snooze selected person's alarm"),
         ("r", "refresh everyone"),
         ("m / Esc", "back to dashboard"),
         ("s", "open settings"),
@@ -905,7 +907,12 @@ fn draw_followers(f: &mut Frame, app: &App) {
                 ));
             }
             spans.push(Span::styled(spark, Style::default().fg(app.theme.graph)));
-            Line::from(spans)
+            let selected = app.selected_follower() == Some(s.name.as_str());
+            Line::from(spans).style(if selected {
+                Style::default().bg(Color::DarkGray)
+            } else {
+                Style::default()
+            })
         }));
         rows
     };
@@ -913,9 +920,9 @@ fn draw_followers(f: &mut Frame, app: &App) {
 
     let footer = match &app.status {
         Some(msg) => Span::styled(format!(" {msg} "), Style::default().fg(Color::Green)),
-        None => Span::raw(
-            " ↑/↓ scroll · pgup/pgdn page · m/esc dashboard · r refresh · ? help · q quit ",
-        ),
+        None => {
+            Span::raw(" ↑/↓ select · enter open · a snooze person · m/esc back · ? help · q quit ")
+        }
     };
     f.render_widget(Paragraph::new(Line::from(footer)), chunks[2]);
 }
@@ -2480,7 +2487,7 @@ mod tests {
                     "settings help should document the settings keys"
                 ),
                 Screen::Followers => {
-                    assert!(text.contains("scroll through followed people"));
+                    assert!(text.contains("select a followed person"));
                     assert!(!text.contains("pan back / forward"));
                 }
                 Screen::Dashboard => assert!(

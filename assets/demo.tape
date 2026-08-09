@@ -47,6 +47,13 @@ Sleep 1.2s
 # return to the dashboard
 Type "m"
 Sleep 1.8s
+# Select the next person and open their dashboard, then return to the list.
+Down
+Sleep 1s
+Enter
+Sleep 1.5s
+Type "m"
+Sleep 1s
 Type "?"
 Sleep 2.2s
 Type "?"
