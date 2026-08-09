@@ -551,6 +551,10 @@ a `?` keybinding overlay. It also adds a first-run units prompt and an in-app
 
 ### Changed
 
+- **The followers screen is now a real at-a-glance table.** It labels the
+  display unit and columns, gives every person a coloured severity rail, and
+  shows a one-hour sparkline alongside value, delta, state and reading age.
+
 - The **forecast cone** on the timeline is now a filled low–high band (matching
   the AGP fan) with the centre line drawn on top, instead of two dim edge lines,
   and it emanates from the last reading (the AR2 fallback's initial jump no

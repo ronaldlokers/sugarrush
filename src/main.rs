@@ -349,6 +349,18 @@ async fn run_tui(screen: Screen, demo: bool) -> Result<()> {
     app.config_warnings = warnings;
     app.screen = screen;
     app.demo = demo;
+    if demo {
+        for name in ["Sam", "River"] {
+            app.add_site();
+            app.sites.last_mut().unwrap().name = name.into();
+            app.sites.last_mut().unwrap().token = "demo".into();
+        }
+        app.sites[0].name = "Alex".into();
+        app.site_idx = 0;
+        app.settings_dirty = false;
+        app.site_dirty = false;
+        app.status = None;
+    }
     app.perm_warning = !demo && Config::perms_too_open();
 
     install_panic_hook();
@@ -1281,6 +1293,12 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
         // Always synthesized: the stats panel reads this clinical-window
         // buffer even outside the AGP view.
         app.agp_entries = demo::entries(now - app.agp_span_ms(), now);
+        if app.screen == Screen::Followers {
+            let profiles: Vec<_> = (0..app.sites.len())
+                .map(|idx| app.alerts_for_site(idx))
+                .collect();
+            app.followers = follow::demo(now, &profiles);
+        }
         return app.react(now);
     }
 

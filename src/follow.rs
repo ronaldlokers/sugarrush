@@ -26,6 +26,8 @@ pub struct SiteStatus {
     pub latest: Option<Entry>,
     /// Change from the previous reading, mg/dL.
     pub delta: Option<f64>,
+    /// Recent readings, oldest first, for the per-row trend sparkline.
+    pub history: Vec<f64>,
     pub alert: Alert,
     /// Why there's no reading, when there isn't one.
     pub error: Option<String>,
@@ -110,6 +112,7 @@ async fn poll_one(site: &Site, alerts: &Alerts, now_ms: i64) -> SiteStatus {
                 name,
                 latest,
                 delta,
+                history: entries.iter().rev().map(|entry| entry.sgv).collect(),
                 alert,
                 error: None,
             }
@@ -123,6 +126,7 @@ fn unreadable(name: String, error: String) -> SiteStatus {
         name,
         latest: None,
         delta: None,
+        history: Vec::new(),
         alert: Alert::Stale,
         error: Some(error),
     }
@@ -137,6 +141,44 @@ fn sort_worst_first(sites: &mut [SiteStatus]) {
 /// The state to alarm on across every followed site: the worst one.
 pub fn worst(sites: &[SiteStatus]) -> Option<&SiteStatus> {
     sites.iter().min_by_key(|s| s.severity())
+}
+
+/// A deterministic three-person fixture for `--demo`, so the follower screen
+/// can be tried and recorded without real Nightscout sites or health data.
+pub fn demo(now_ms: i64, alerts: &[Alerts]) -> Vec<SiteStatus> {
+    let specs = [
+        ("Alex", 58.0, "FortyFiveDown", 2),
+        ("Sam", 112.0, "Flat", 1),
+        ("River", 196.0, "SingleUp", 4),
+    ];
+    let mut out: Vec<_> = specs
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (name, value, direction, age))| {
+            let history: Vec<f64> = (0..12)
+                .map(|step| value + (step as f64 - 11.0) * (idx as f64 - 1.0) * 3.0)
+                .collect();
+            let latest = Entry {
+                sgv: value,
+                date: now_ms - age * 60_000,
+                direction: Some(direction.into()),
+            };
+            let profile = alerts.get(idx).unwrap_or(&alerts[0]);
+            SiteStatus {
+                name: name.into(),
+                latest: Some(latest),
+                delta: history
+                    .last()
+                    .zip(history.iter().rev().nth(1))
+                    .map(|(a, b)| a - b),
+                history,
+                alert: alert::evaluate(value, age * 60_000, profile),
+                error: None,
+            }
+        })
+        .collect();
+    sort_worst_first(&mut out);
+    out
 }
 
 #[cfg(test)]
@@ -156,6 +198,7 @@ mod tests {
             name: name.into(),
             latest: Some(entry(100.0)),
             delta: Some(2.0),
+            history: vec![90.0, 94.0, 100.0],
             alert,
             error: None,
         }

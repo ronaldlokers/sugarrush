@@ -43,6 +43,11 @@ Type "u"
 Sleep 1.6s
 Type "u"
 Sleep 1.2s
+# Open the multi-person follower table, then return to the dashboard
+Type "m"
+Sleep 2.4s
+Type "m"
+Sleep 1s
 # Open settings; the Site section is at the top — show the name editor, then
 # cancel out of it
 Type "s"
