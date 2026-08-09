@@ -511,6 +511,39 @@ pub mod fake {
         }
     }
 
+    /// Answer every request after `delay_ms`, so a test can tell a chain of
+    /// sequential awaits from a concurrent one by wall clock.
+    pub async fn serve_slow(delay_ms: u64) -> Site {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = "[]";
+        let response = Arc::new(format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ));
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let response = Arc::clone(&response);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let _ = sock.read(&mut buf).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    let _ = sock.write_all(response.as_bytes()).await;
+                    let _ = sock.flush().await;
+                });
+            }
+        });
+        Site {
+            name: "slow".into(),
+            url: format!("http://127.0.0.1:{port}"),
+            token: String::new(),
+        }
+    }
+
     /// Accept connections and never answer them. Models the failure mode the
     /// run loop has to survive: a Nightscout that is reachable but wedged, so
     /// every request runs to the client's own timeout.

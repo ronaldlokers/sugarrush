@@ -23,6 +23,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Refreshes are faster and ask for less.** The five supplementary reads
+  (treatments, device status, sensor age, history, overview) were awaited one
+  after another, costing the sum of five round trips to your Nightscout; they
+  now go out together and cost the slowest one. The sensor-age lookup — a
+  second `/treatments` request every cycle for a number that changes twice a
+  month — is now cached for 30 minutes.
 - **The AGP fan renders on terminals without 24-bit colour.** It was painted
   as RGB cell backgrounds, which collapse on 16-colour consoles, tmux and SSH
   sessions with no `COLORTERM` — leaving an unlabelled median line where the

@@ -736,6 +736,8 @@ struct Plan {
     count: usize,
     live: bool,
     demo: bool,
+    /// Whether the sensor-start lookup is due this cycle.
+    sensor: bool,
     minimap_span_ms: i64,
     minimap: bool,
     /// `Some((start, end, count))` when the heavy history buffer is due.
@@ -778,6 +780,11 @@ fn plan(app: &mut App, now: i64) -> Plan {
         count: app.view.span.fetch_count(),
         live: app.view.is_live(),
         demo: app.demo,
+        // A sensor session lasts ten to fourteen days; refreshing this every
+        // cycle spent a second `/treatments` request on a number that changes
+        // twice a month.
+        sensor: app.view.is_live()
+            && (app.sensor_start_ms.is_none() || now - app.sensor_fetched_ms > 30 * 60 * 1000),
         minimap_span_ms: app.minimap_span_ms,
         minimap: app.minimap_enabled && (app.view.is_live() || app.minimap_entries.is_empty()),
         agp,
@@ -798,35 +805,70 @@ async fn gather(client: &Client, p: &Plan) -> Gathered {
 
     // Supplementary reads only happen when the primary one succeeded — on an
     // outage we skip them, so a stalled network can't pile up doomed requests.
+    //
+    // They are independent of each other, so they go out together. Awaited in
+    // sequence they cost the sum of five round trips against a distant
+    // Nightscout; concurrently they cost the slowest one. Nothing here shares
+    // state — each writes its own field of `Gathered`.
     if online {
-        g.treatments = Some(client.treatments(p.start, p.end).await);
-        if p.live {
-            g.device = Some(client.device_status().await);
-            g.sensor_start = Some(client.sensor_start().await);
-        }
-        if let Some((s, e, n)) = p.agp {
-            g.agp = Some(client.entries_range(s, e, n).await);
-        }
-        if p.minimap {
-            g.minimap = Some(
-                client
-                    .entries_range(
-                        p.now - p.minimap_span_ms,
-                        p.now,
-                        2 * p.minimap_span_ms as usize / 60_000,
-                    )
-                    .await,
-            );
-        }
+        let treatments = client.treatments(p.start, p.end);
+        let device = async {
+            if p.live {
+                Some(client.device_status().await)
+            } else {
+                None
+            }
+        };
+        let sensor = async {
+            if p.sensor {
+                Some(client.sensor_start().await)
+            } else {
+                None
+            }
+        };
+        let agp = async {
+            match p.agp {
+                Some((s, e, n)) => Some(client.entries_range(s, e, n).await),
+                None => None,
+            }
+        };
+        let minimap = async {
+            if p.minimap {
+                Some(
+                    client
+                        .entries_range(
+                            p.now - p.minimap_span_ms,
+                            p.now,
+                            2 * p.minimap_span_ms as usize / 60_000,
+                        )
+                        .await,
+                )
+            } else {
+                None
+            }
+        };
         // While browsing history the primary fetch is a historical window, so
         // the live edge has to be fetched separately — the alarm must not go
         // quiet just because someone is looking at last night.
-        if !p.live {
-            g.live_edge = client
-                .entries_range(p.now - 3_600_000, p.now, 24)
-                .await
-                .ok();
-        }
+        let live_edge = async {
+            if p.live {
+                None
+            } else {
+                client
+                    .entries_range(p.now - 3_600_000, p.now, 24)
+                    .await
+                    .ok()
+            }
+        };
+
+        let (treatments, device, sensor, agp, minimap, live_edge) =
+            tokio::join!(treatments, device, sensor, agp, minimap, live_edge);
+        g.treatments = Some(treatments);
+        g.device = device;
+        g.sensor_start = sensor;
+        g.agp = agp;
+        g.minimap = minimap;
+        g.live_edge = live_edge;
     }
     if let Some((sites, alerts)) = &p.followers {
         g.followers = Some(follow::poll(sites, alerts, p.now).await);
@@ -910,8 +952,13 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> Option<(String, String)> {
             };
             app.predictions = published.unwrap_or_else(|| predict::ar2(&app.entries));
             match g.sensor_start {
-                Some(Ok(started)) => app.sensor_start_ms = started,
-                _ => missing.push("sensor age"),
+                Some(Ok(started)) => {
+                    app.sensor_start_ms = started;
+                    app.sensor_fetched_ms = now;
+                }
+                Some(Err(_)) => missing.push("sensor age"),
+                // Not due this cycle — the cached value stands.
+                None => {}
             }
         } else {
             app.predictions.clear();
@@ -1218,6 +1265,51 @@ mod tests {
         ] {
             assert_eq!(subcommand_without_demo(&mode), expected, "for {mode:?}");
         }
+    }
+
+    /// The supplementary reads are independent, so they must go out together.
+    /// Awaited in sequence they cost the sum of five round trips against a
+    /// distant Nightscout — the whole point of moving the fetch off the run
+    /// loop was that those seconds add up.
+    #[tokio::test]
+    async fn the_supplementary_reads_run_concurrently() {
+        let site = nightscout::fake::serve_slow(120).await;
+        let client = Client::for_site(&site).unwrap();
+        let mut app = app();
+        app.minimap_enabled = true;
+        let p = plan(&mut app, now_ms());
+
+        let started = std::time::Instant::now();
+        let g = gather(&client, &p).await;
+        let elapsed = started.elapsed();
+
+        assert!(g.entries.is_some());
+        // The primary read plus one concurrent round of the rest: about two
+        // delays, not the six a sequential chain would cost.
+        assert!(
+            elapsed < Duration::from_millis(120 * 4),
+            "the supplementary reads look sequential: {elapsed:?}"
+        );
+    }
+
+    /// A sensor session lasts ten to fourteen days. Asking every cycle spent a
+    /// second `/treatments` request on a number that changes twice a month.
+    #[test]
+    fn the_sensor_lookup_is_not_repeated_every_cycle() {
+        let mut app = app();
+        let now = now_ms();
+
+        // Nothing cached yet: it has to be asked for.
+        assert!(plan(&mut app, now).sensor);
+
+        // Once answered, it stands for a while.
+        app.sensor_start_ms = Some(now - 3 * 86_400_000);
+        app.sensor_fetched_ms = now;
+        assert!(!plan(&mut app, now + 60_000).sensor);
+        assert!(!plan(&mut app, now + 29 * 60_000).sensor);
+
+        // …but not forever, or a sensor change would never show up.
+        assert!(plan(&mut app, now + 31 * 60_000).sensor);
     }
 
     fn fetcher(site: &config::Site) -> (Fetcher, mpsc::UnboundedReceiver<(Plan, Gathered)>) {
