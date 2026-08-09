@@ -395,11 +395,9 @@ To run it as a user service — this writes a unit pointing at wherever your
 binary actually is, so it works whichever way you installed:
 
 ```bash
-sugarrush watch --install-unit
-systemctl --user daemon-reload
-systemctl --user enable --now sugarrush-watch.service
-loginctl enable-linger $USER             # keep it running when logged out
-journalctl --user -fu sugarrush-watch    # what it's seeing
+sugarrush watch --install-service
+sugarrush watch --service-status
+# Later, if wanted: sugarrush watch --uninstall-service
 ```
 
 > It's still not a medical device, and it's still only as reliable as the
@@ -434,6 +432,7 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush [--demo] [--screen settings]` | the dashboard |
 | `sugarrush watch` | headless alarm watcher (no terminal needed) |
 | `sugarrush watch --test [--quiet]` | check that every alarm channel actually works |
+| `sugarrush watch --install-service\|--service-status\|--uninstall-service` | manage the native always-on user service |
 | `sugarrush snooze [15m\|2h\|off] [--site NAME\|--all]` | silence the alarm daemon without stopping it |
 | `sugarrush alerts [--days N]` | what the alarm has actually done |
 | `sugarrush health --json` | machine-readable watcher, data and delivery health |

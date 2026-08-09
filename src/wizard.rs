@@ -87,7 +87,7 @@ fn is_exit(input: &str) -> bool {
 fn print_orientation() {
     println!("  You're ready. In the dashboard:");
     println!("    ? help · s settings · Tab graph views · m followers");
-    println!("  For an always-on alarm, run: sugarrush watch --install-unit");
+    println!("  For an always-on alarm, run: sugarrush watch --install-service");
     println!("  Before relying on alarms, run: sugarrush watch --test");
 }
 

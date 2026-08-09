@@ -11,6 +11,7 @@ mod health;
 mod nightscout;
 mod predict;
 mod selftest;
+mod service;
 mod sound;
 mod stats;
 mod status;
@@ -62,7 +63,7 @@ enum Mode {
     Watch,
     /// Write a systemd user unit pointing at this binary, and explain how to
     /// enable it.
-    InstallUnit,
+    Service(service::Action),
     /// Silence a running (or next-starting) alarm daemon.
     Snooze {
         minutes: Option<i64>,
@@ -187,7 +188,11 @@ fn parse_args() -> Mode {
             }
             "--all" => snooze_all = true,
             "--json" if matches!(mode, Some(Mode::Health)) => {}
-            "--install-unit" => mode = Some(Mode::InstallUnit),
+            "--install-unit" | "--install-service" => {
+                mode = Some(Mode::Service(service::Action::Install))
+            }
+            "--service-status" => mode = Some(Mode::Service(service::Action::Status)),
+            "--uninstall-service" => mode = Some(Mode::Service(service::Action::Uninstall)),
             "--man" => mode = Some(Mode::Man),
             "help" | "--help" | "-h" => mode = Some(Mode::Help),
             "--version" | "-V" => mode = Some(Mode::Version),
@@ -312,7 +317,7 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
-        Mode::InstallUnit => install_unit(),
+        Mode::Service(action) => service::run(action),
         Mode::Help => {
             print_help();
             Ok(())
@@ -456,6 +461,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "check that every alarm channel actually works",
     ),
     (
+        "sugarrush watch --install-service|--service-status|--uninstall-service",
+        "manage the native always-on user service",
+    ),
+    (
         "sugarrush snooze [15m|2h|off] [--site NAME|--all]",
         "silence the alarm daemon without stopping it",
     ),
@@ -504,8 +513,17 @@ const OPTIONS: &[(&str, &str)] = &[
     ),
     ("--json", "with health: emit the stable JSON report"),
     (
+        "--install-service",
+        "install and start the native watcher service",
+    ),
+    ("--service-status", "show native watcher service status"),
+    (
+        "--uninstall-service",
+        "stop and remove the native watcher service",
+    ),
+    (
         "--install-unit",
-        "write a systemd user unit for `watch` and explain how to enable it",
+        "compatibility alias for --install-service",
     ),
     ("--man", "write the man page to stdout"),
     ("-h, --help", "this"),
@@ -630,65 +648,6 @@ fn run_snooze(minutes: Option<i64>, site: Option<&str>, all: bool) -> Result<()>
     } else {
         println!("no watcher running — this arms the next one");
     }
-    Ok(())
-}
-
-/// Write a systemd user unit that points at *this* binary.
-///
-/// The shipped unit hardcoded `~/.cargo/bin`, which is where only one of the
-/// five install methods puts it, and the README told people to copy a file out
-/// of a git checkout they never made. Both produced a service that enables
-/// cleanly and then fails at start.
-fn install_unit() -> Result<()> {
-    let exe = std::env::current_exe().context("could not find this binary's path")?;
-    let dir = dirs::config_dir()
-        .context("could not resolve the user config dir")?
-        .join("systemd/user");
-    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
-    let path = dir.join("sugarrush-watch.service");
-
-    let unit = format!(
-        "\
-[Unit]
-Description=sugarrush CGM alarm watcher
-Documentation=https://github.com/ronaldlokers/sugarrush
-
-[Service]
-Type=simple
-ExecStart={exe} watch
-Restart=always
-RestartSec=30
-KillSignal=SIGTERM
-TimeoutStopSec=10
-# Hardening: this reads a credential and talks to one host.
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%S/sugarrush %t/sugarrush
-PrivateDevices=yes
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-
-[Install]
-# default.target, not graphical-session.target: the alarm should survive
-# logging out, and on sway/Hyprland/i3 without uwsm that target never
-# activates at all — the unit would enable cleanly and never start.
-WantedBy=default.target
-",
-        exe = exe.display()
-    );
-    std::fs::write(&path, unit).with_context(|| format!("failed to write {}", path.display()))?;
-
-    println!("Wrote {}", path.display());
-    println!();
-    println!("Enable it with:");
-    println!("    systemctl --user daemon-reload");
-    println!("    systemctl --user enable --now sugarrush-watch.service");
-    println!();
-    println!("To keep it running when you're not logged in:");
-    println!("    loginctl enable-linger $USER");
-    println!();
-    println!("Watch what it's doing:");
-    println!("    journalctl --user -fu sugarrush-watch");
     Ok(())
 }
 
