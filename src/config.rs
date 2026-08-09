@@ -104,6 +104,10 @@ pub struct Site {
     pub name: String,
     pub url: String,
     pub token: String,
+    /// Optional complete alert settings for this person. When absent, the
+    /// top-level `[alerts]` settings apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alerts: Option<AlertsConfig>,
 }
 
 impl Site {
@@ -117,6 +121,13 @@ impl Site {
     /// path can read it (and the glucose data with it).
     pub fn is_insecure(&self) -> bool {
         is_insecure_url(self.base_url())
+    }
+
+    pub fn resolve_alerts(&self, global: &AlertsConfig, units: Units) -> (Alerts, Vec<String>) {
+        self.alerts
+            .as_ref()
+            .map(|local| local.resolve_checked(units))
+            .unwrap_or_else(|| global.resolve_checked(units))
     }
 }
 
@@ -234,8 +245,30 @@ pub struct AlertsConfig {
 }
 
 impl AlertsConfig {
+    pub fn from_resolved(alerts: &Alerts, units: Units) -> Self {
+        Self {
+            urgent_low: Some(units.from_mgdl(alerts.urgent_low)),
+            low: Some(units.from_mgdl(alerts.low)),
+            high: Some(units.from_mgdl(alerts.high)),
+            urgent_high: Some(units.from_mgdl(alerts.urgent_high)),
+            stale_minutes: Some(alerts.stale_minutes),
+            desktop: Some(alerts.desktop),
+            sound: Some(alerts.sound),
+            snooze_minutes: Some(alerts.snooze_minutes),
+            quiet_start: alerts.quiet_start.map(fmt_hhmm),
+            quiet_end: alerts.quiet_end.map(fmt_hhmm),
+            quiet_urgent_low: Some(alerts.quiet_urgent_low),
+            escalate_minutes: Some(alerts.escalate_minutes),
+            push_url: alerts.push_url.clone(),
+            push_enabled: Some(alerts.push_enabled),
+            notify_content: Some(alerts.notify_content),
+            predict_horizon_minutes: Some(alerts.predict_horizon_minutes),
+        }
+    }
+
     /// Resolve to concrete mg/dL thresholds, converting any user-supplied
     /// values from `units` and filling gaps with defaults.
+    #[cfg(test)]
     pub fn resolve(&self, units: Units) -> Alerts {
         self.resolve_checked(units).0
     }
@@ -604,6 +637,7 @@ impl Config {
                     name: default_site_name(),
                     url: url.clone(),
                     token: token.clone(),
+                    alerts: None,
                 }],
                 _ => bail!("config needs either url + token, or at least one [[sites]] entry"),
             }
@@ -764,6 +798,7 @@ mod tests {
             name: "default".into(),
             url: url.into(),
             token: "t".into(),
+            alerts: None,
         };
         assert!(site("http://ns.example.com").is_insecure());
         assert!(site("http://192.168.1.5:1337").is_insecure());
@@ -914,6 +949,33 @@ token = "b"
         // one person's announced low mark the other's as announced.
         let err = cfg.resolve_sites().unwrap_err().to_string();
         assert!(err.contains("both named 'kid'"), "{err}");
+    }
+
+    #[test]
+    fn site_alerts_are_a_complete_override() {
+        let cfg: Config = toml::from_str(
+            r#"
+units = "mmol"
+[alerts]
+low = 3.9
+high = 11.0
+desktop = true
+
+[[sites]]
+name = "alice"
+url = "https://alice.example"
+token = "read"
+[sites.alerts]
+low = 4.4
+desktop = false
+"#,
+        )
+        .unwrap();
+        let site = &cfg.resolve_sites().unwrap()[0];
+        let alerts = site.resolve_alerts(&cfg.alerts, cfg.units).0;
+        assert!((alerts.low - Units::Mmol.to_mgdl(4.4)).abs() < 0.1);
+        assert_eq!(alerts.high, Alerts::default().high);
+        assert!(!alerts.desktop);
     }
 
     /// Every key the app can write must be documented in the example config.

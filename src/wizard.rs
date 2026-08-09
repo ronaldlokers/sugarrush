@@ -46,6 +46,7 @@ pub async fn run() -> Result<()> {
             name: "default".to_string(),
             url: url.clone(),
             token: token.clone(),
+            alerts: None,
         };
         // Plain http sends the token — and the glucose data — in the clear.
         // Refuse by default, but a self-hosted site on a trusted LAN is a real

@@ -69,6 +69,14 @@ Two properties that are easy to break:
   is never delayed. The alarm is quick to fire and slow to clear, never the
   other way round.
 
+Thresholds and delivery channels are resolved per site. A site without an
+override inherits the top-level `[alerts]` values; `[sites.alerts]` is a
+complete profile (its omitted keys take normal defaults). The dashboard and status output use the
+active/first site's effective settings, the followers list classifies every row
+with that row's settings, and the watcher constructs an independent alert
+machine with each site's effective settings. A global threshold must never be
+silently substituted after a per-site override has been resolved.
+
 ## Episodes
 
 An *episode* is one continuous run in a single urgent state. It carries:

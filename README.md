@@ -347,6 +347,9 @@ and log line.
 Sites can be added, renamed, edited, and removed in the in-app settings screen;
 press `w` to persist the list. A newly added site deliberately starts without a
 token, so credentials are never copied from the person currently selected.
+Each site can either inherit the global alert settings or have its own complete
+set of thresholds and alarm channels; select **Alert settings** on that site's
+settings screen to switch between the two.
 
 Before following another person, agree what “watching” means: whether the
 watcher is expected to respond, which hours are covered, how to contact each

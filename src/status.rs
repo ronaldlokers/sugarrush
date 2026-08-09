@@ -149,7 +149,7 @@ async fn build(cfg: &Config) -> Result<Status> {
     let entries = client.entries_range(now - HOUR_MS, now, 100).await?;
     let theme = cfg.theme.resolve();
     let units = cfg.units;
-    let alerts = cfg.alerts.resolve(units);
+    let alerts = site.resolve_alerts(&cfg.alerts, units).0;
 
     let Some(latest) = entries.first() else {
         return Ok(Status {

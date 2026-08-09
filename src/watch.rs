@@ -304,9 +304,11 @@ fn alert_from_class(class: &str) -> Option<Alert> {
 /// Run the watcher until killed.
 pub async fn run() -> Result<()> {
     let cfg = Config::load()?;
-    let (alerts, warnings) = cfg.alerts.resolve_checked(cfg.units);
-    crate::warn_about_config(&warnings);
     let sites = cfg.resolve_sites()?;
+    for site in &sites {
+        let (_, warnings) = site.resolve_alerts(&cfg.alerts, cfg.units);
+        crate::warn_about_config(&warnings);
+    }
 
     // One pipeline per site. A caregiver watching three people needs three
     // independent episodes — hysteresis, escalation, snooze and all — so the
@@ -316,7 +318,8 @@ pub async fn run() -> Result<()> {
     let mut watched: Vec<Watched> = sites
         .iter()
         .map(|site| {
-            let mut app = App::new(&cfg, alerts.clone(), vec![site.clone()]);
+            let alerts = site.resolve_alerts(&cfg.alerts, cfg.units).0;
+            let mut app = App::new(&cfg, alerts, vec![site.clone()]);
             if let Some(episode) = state.sites.get(&site.name) {
                 episode.restore(&mut app);
             }

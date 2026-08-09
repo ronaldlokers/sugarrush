@@ -10,6 +10,7 @@ pub enum Field {
     SiteToken,
     AddSite,
     RemoveSite,
+    SiteAlerts,
     Units,
     Refresh,
     Desktop,
@@ -44,12 +45,13 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 35] = [
+    pub const ALL: [Field; 36] = [
         Field::SiteName,
         Field::SiteUrl,
         Field::SiteToken,
         Field::AddSite,
         Field::RemoveSite,
+        Field::SiteAlerts,
         Field::Units,
         Field::Refresh,
         Field::Desktop,
@@ -89,6 +91,7 @@ impl Field {
             Field::SiteToken => "Read-only token",
             Field::AddSite => "Add site",
             Field::RemoveSite => "Remove site",
+            Field::SiteAlerts => "Alert settings",
             Field::Units => "Units",
             Field::Refresh => "Refresh interval",
             Field::Desktop => "Desktop notifications",
@@ -130,7 +133,8 @@ impl Field {
             | Field::SiteUrl
             | Field::SiteToken
             | Field::AddSite
-            | Field::RemoveSite => "Site",
+            | Field::RemoveSite
+            | Field::SiteAlerts => "Site",
             Field::Units | Field::Refresh => "General",
             Field::Desktop
             | Field::NotifyContent
@@ -315,8 +319,11 @@ impl App {
             name,
             url,
             token: String::new(),
+            alerts: None,
         });
+        self.site_alerts.push(None);
         self.site_idx = self.sites.len() - 1;
+        self.load_active_alerts();
         self.site_dirty = true;
         self.settings_dirty = true;
         self.status = Some("site added · edit its name, URL and token, then press w".to_string());
@@ -329,7 +336,9 @@ impl App {
         }
         let idx = self.site_idx.min(self.sites.len() - 1);
         let removed = self.sites.remove(idx).name;
+        self.site_alerts.remove(idx);
         self.site_idx = idx.min(self.sites.len() - 1);
+        self.load_active_alerts();
         self.site_dirty = true;
         self.settings_dirty = true;
         self.status = Some(format!("removed {removed} · press w to save"));
@@ -394,6 +403,7 @@ impl App {
         });
         let d = dir as f64;
         match self.selected_field() {
+            Field::SiteAlerts => self.set_site_alert_override(!self.site_alert_override()),
             Field::Units => self.toggle_units(),
             Field::Desktop => self.alerts.desktop = !self.alerts.desktop,
             Field::Sound => self.alerts.sound = !self.alerts.sound,
@@ -513,6 +523,7 @@ impl App {
                 }
             }
         }
+        self.sync_active_alerts();
     }
 
     /// Persist current settings back to config.toml. Sites and theme are
@@ -537,15 +548,28 @@ impl App {
     /// Reconstruct a `Config` from current settings for persistence. A lone
     /// "default" site is written back in the legacy top-level form.
     pub(super) fn build_config(&self) -> Config {
-        let single_default = self.sites.len() == 1 && self.sites[0].name == "default";
+        let mut persisted_sites = self.sites.clone();
+        for (idx, (site, override_alerts)) in persisted_sites
+            .iter_mut()
+            .zip(&self.site_alerts)
+            .enumerate()
+        {
+            let current = (idx == self.site_idx && override_alerts.is_some())
+                .then_some(&self.alerts)
+                .or(override_alerts.as_ref());
+            site.alerts = current.map(|alerts| AlertsConfig::from_resolved(alerts, self.units));
+        }
+        let single_default = persisted_sites.len() == 1
+            && persisted_sites[0].name == "default"
+            && persisted_sites[0].alerts.is_none();
         let (url, token, sites) = if single_default {
             (
-                Some(self.sites[0].url.clone()),
-                Some(self.sites[0].token.clone()),
+                Some(persisted_sites[0].url.clone()),
+                Some(persisted_sites[0].token.clone()),
                 Vec::new(),
             )
         } else {
-            (None, None, self.sites.clone())
+            (None, None, persisted_sites)
         };
         let u = self.units;
         Config {
@@ -554,24 +578,14 @@ impl App {
             sites,
             units: u,
             refresh_secs: self.refresh_secs,
-            alerts: AlertsConfig {
-                urgent_low: Some(u.from_mgdl(self.alerts.urgent_low)),
-                low: Some(u.from_mgdl(self.alerts.low)),
-                high: Some(u.from_mgdl(self.alerts.high)),
-                urgent_high: Some(u.from_mgdl(self.alerts.urgent_high)),
-                stale_minutes: Some(self.alerts.stale_minutes),
-                desktop: Some(self.alerts.desktop),
-                sound: Some(self.alerts.sound),
-                snooze_minutes: Some(self.alerts.snooze_minutes),
-                quiet_start: self.alerts.quiet_start.map(crate::config::fmt_hhmm),
-                quiet_end: self.alerts.quiet_end.map(crate::config::fmt_hhmm),
-                quiet_urgent_low: Some(self.alerts.quiet_urgent_low),
-                escalate_minutes: Some(self.alerts.escalate_minutes),
-                push_url: self.alerts.push_url.clone(),
-                push_enabled: Some(self.alerts.push_enabled),
-                notify_content: Some(self.alerts.notify_content),
-                predict_horizon_minutes: Some(self.alerts.predict_horizon_minutes),
-            },
+            alerts: AlertsConfig::from_resolved(
+                if self.site_alert_override() {
+                    &self.global_alerts
+                } else {
+                    &self.alerts
+                },
+                u,
+            ),
             theme: ThemeConfig {
                 low: Some(self.theme_names[0].clone()),
                 in_range: Some(self.theme_names[1].clone()),
@@ -593,6 +607,12 @@ impl App {
     pub fn field_value(&self, field: Field) -> String {
         match field {
             Field::SiteName => self.active_site().name.clone(),
+            Field::SiteAlerts => if self.site_alert_override() {
+                "custom for this site"
+            } else {
+                "use global defaults"
+            }
+            .to_string(),
             Field::Units => self.units.label().to_string(),
             Field::Refresh => format!("{}s", self.refresh_secs),
             Field::Desktop => if self.alerts.desktop { "on" } else { "off" }.to_string(),

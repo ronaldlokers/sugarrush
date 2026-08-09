@@ -246,13 +246,15 @@ async fn main() -> Result<()> {
             let cfg = Config::load()?;
             // Bars read stdout and ignore stderr, so the warning reaches a
             // human running it by hand without corrupting the bar's input.
-            warn_about_config(&cfg.alerts.resolve_checked(cfg.units).1);
+            let sites = cfg.resolve_sites()?;
+            warn_about_config(&sites[0].resolve_alerts(&cfg.alerts, cfg.units).1);
             println!("{}", waybar::line(&cfg).await);
             Ok(())
         }
         Mode::Status { format } => {
             let cfg = Config::load()?;
-            warn_about_config(&cfg.alerts.resolve_checked(cfg.units).1);
+            let sites = cfg.resolve_sites()?;
+            warn_about_config(&sites[0].resolve_alerts(&cfg.alerts, cfg.units).1);
             println!("{}", status::status(&cfg).await.render(format));
             Ok(())
         }
@@ -287,9 +289,9 @@ async fn main() -> Result<()> {
 async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
     let cfg = Config::load()?;
     let days = if days == 0 { cfg.agp_days } else { days }.clamp(1, 90);
-    let (alerts, warnings) = cfg.alerts.resolve_checked(cfg.units);
-    warn_about_config(&warnings);
     let sites = cfg.resolve_sites()?;
+    let (alerts, warnings) = sites[0].resolve_alerts(&cfg.alerts, cfg.units);
+    warn_about_config(&warnings);
     let client = Client::for_site(&sites[0])?;
 
     let now = now_ms();
@@ -331,7 +333,15 @@ async fn run_tui(screen: Screen, demo: bool) -> Result<()> {
         Config::load()?
     };
     let sites = cfg.resolve_sites()?;
-    let (alerts, warnings) = cfg.alerts.resolve_checked(cfg.units);
+    let (alerts, mut warnings) = cfg.alerts.resolve_checked(cfg.units);
+    for site in &sites {
+        let (_, site_warnings) = site.resolve_alerts(&cfg.alerts, cfg.units);
+        warnings.extend(
+            site_warnings
+                .into_iter()
+                .map(|w| format!("{}: {w}", site.name)),
+        );
+    }
     // Also to stderr: a misconfigured threshold is worth seeing even if the
     // terminal is about to be taken over by the alternate screen.
     warn_about_config(&warnings);
@@ -504,7 +514,8 @@ fn roff(s: &str) -> String {
 /// simply no way in.
 fn run_snooze(minutes: Option<i64>) -> Result<()> {
     let cfg = Config::load()?;
-    let alerts = cfg.alerts.resolve(cfg.units);
+    let sites = cfg.resolve_sites()?;
+    let alerts = sites[0].resolve_alerts(&cfg.alerts, cfg.units).0;
     let minutes = minutes.unwrap_or(alerts.snooze_minutes.max(1));
 
     if minutes == 0 {
@@ -655,12 +666,17 @@ fn print_about() {
                             .and_then(|r| r.split('/').next())
                             .unwrap_or("?");
                         println!(
-                            "                {} · {host} · token {}",
+                            "                {} · {host} · token {} · alerts {}",
                             site.name,
                             if site.token.is_empty() {
                                 "not set"
                             } else {
                                 "set"
+                            },
+                            if site.alerts.is_some() {
+                                "custom"
+                            } else {
+                                "global"
                             }
                         );
                     }
@@ -1098,7 +1114,7 @@ struct Plan {
     minimap: bool,
     /// `Some((start, end, count))` when the heavy history buffer is due.
     agp: Option<(i64, i64, usize)>,
-    followers: Option<(Vec<config::Site>, config::Alerts)>,
+    followers: Option<Vec<(config::Site, config::Alerts)>>,
 }
 
 /// Whatever the network returned. Every field is best-effort except `entries`,
@@ -1144,8 +1160,14 @@ fn plan(app: &mut App, now: i64) -> Plan {
         minimap_span_ms: app.minimap_span_ms,
         minimap: app.minimap_enabled && (app.view.is_live() || app.minimap_entries.is_empty()),
         agp,
-        followers: (app.sites.len() > 1 && app.screen == Screen::Followers)
-            .then(|| (app.sites.clone(), app.alerts.clone())),
+        followers: (app.sites.len() > 1 && app.screen == Screen::Followers).then(|| {
+            app.sites
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(i, site)| (site, app.alerts_for_site(i)))
+                .collect()
+        }),
     }
 }
 
@@ -1226,8 +1248,8 @@ async fn gather(client: &Client, p: &Plan) -> Gathered {
         g.minimap = minimap;
         g.live_edge = live_edge;
     }
-    if let Some((sites, alerts)) = &p.followers {
-        g.followers = Some(follow::poll(sites, alerts, p.now).await);
+    if let Some(sites) = &p.followers {
+        g.followers = Some(follow::poll(sites, p.now).await);
     }
     g
 }

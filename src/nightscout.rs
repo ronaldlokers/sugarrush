@@ -525,6 +525,7 @@ pub mod fake {
             name: "fake".into(),
             url: format!("http://127.0.0.1:{port}"),
             token: "test-token".into(),
+            alerts: None,
         }
     }
 
@@ -558,6 +559,7 @@ pub mod fake {
             name: "slow".into(),
             url: format!("http://127.0.0.1:{port}"),
             token: String::new(),
+            alerts: None,
         }
     }
 
@@ -580,6 +582,7 @@ pub mod fake {
             name: "stalled".into(),
             url: format!("http://127.0.0.1:{port}"),
             token: String::new(),
+            alerts: None,
         }
     }
 }
@@ -620,6 +623,7 @@ mod tests {
             name: "default".into(),
             url: "http://127.0.0.1:1".into(),
             token: "SEKRIT-TOKEN-9Q7X".into(),
+            alerts: None,
         };
         let client = Client::for_site(&site).unwrap();
         let err = client.entries_range(0, 1, 1).await.unwrap_err();

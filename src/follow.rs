@@ -69,9 +69,9 @@ impl SiteStatus {
 ///
 /// One slow or dead site must not delay the others — a caregiver's list is
 /// only useful if it arrives — so these run together rather than in sequence.
-pub async fn poll(sites: &[Site], alerts: &Alerts, now_ms: i64) -> Vec<SiteStatus> {
+pub async fn poll(sites: &[(Site, Alerts)], now_ms: i64) -> Vec<SiteStatus> {
     let mut tasks = tokio::task::JoinSet::new();
-    for site in sites {
+    for (site, alerts) in sites {
         let (site, alerts) = (site.clone(), alerts.clone());
         tasks.spawn(async move { poll_one(&site, &alerts, now_ms).await });
     }
