@@ -37,12 +37,12 @@ Three rules follow from this, and each of them was once broken:
    machine's idea of "already announced" out of step with reality — and the two
    front ends then disagree.
 
-This also defines failed-delivery policy: one-shot desktop and webhook events
-are consumed even when the operating system or remote endpoint rejects them.
-Blind automatic retries can deliver an old alert after recovery or duplicate a
-message accepted just before a timeout. Reliability is established before the
-episode with `sugarrush watch --test`; runtime failures are surfaced in the TUI
-or watcher journal and are not silently queued for later.
+Desktop events remain one-shot. The headless watcher persists a webhook intent
+inside the episode state before dispatch and retries it at most three times with
+backoff. It stores the message but never the secret-bearing destination, which
+is resolved from current config for each attempt. Recovery cancels a pending
+webhook so an old escalation cannot arrive after the episode ended. The
+dashboard remains one-shot because it does not own the durable watcher state.
 
 Each desktop and webhook attempt is appended to the owner-only alert history
 without its URL, token, message, or glucose value. Outcomes are called
@@ -111,6 +111,8 @@ An *episode* is one continuous run in a single urgent state. It carries:
 The daemon persists all of this to `$XDG_STATE_HOME/sugarrush/watch.json` and
 restores it on start (`App::restore_episode`), so a restarted service does not
 re-announce an ongoing low, restart an escalation timer, or cancel a snooze
+or forget an unresolved watcher webhook. Fast-ticker transitions are persisted
+immediately rather than waiting for the next network poll,
 someone set on purpose.
 
 Every configured site remains in that snapshot even while its fetch is in
