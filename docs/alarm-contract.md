@@ -114,6 +114,15 @@ daemon saves, the latest on-disk snooze value wins over the snapshot it took
 before polling. Network latency must never make a successful snooze command
 disappear.
 
+Snooze targets one site by stable configured name. With several sites, the CLI
+requires `--site NAME` or an explicit `--all`; the dashboard and follower list
+target the active or selected person. Responding to one person's alarm must
+never silence another person's independent episode.
+
+Webhook HTTP delivery is spawned outside the central reaction loop. Its
+network timeout must never delay the three-second classification and audible
+alarm cadence, even when several sites escalate together.
+
 ## The handover
 
 The dashboard and the daemon must never alarm in chorus, and must never both

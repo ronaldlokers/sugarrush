@@ -192,7 +192,7 @@ design: file-only, documented.
 | `End` | Jump to the start of the overview strip |
 | `f` / `Home` / `Esc` | Return to live |
 | `e` | Export the clinical window (CSV + summary) |
-| `a` | Snooze the audible alarm (also silences a running `watch`) |
+| `a` | Snooze the active person's alarm (also reaches a running `watch`) |
 | `n` | Switch site (multi-site) |
 | `m` | Follow all sites at once (caregiver view) |
 | `s` | Open / close settings |
@@ -201,9 +201,10 @@ Settings screen: `↑`/`↓` select, `←`/`→` change, `Enter` edit or run an 
 (including add/remove site), `w` save, `?` help, `s`/`Esc` back. The overlay is screen-aware — on settings it
 lists the settings keys, not the graph ones.
 
-Caregiver view: `↑`/`↓` or `j`/`k` scroll, `PgUp`/`PgDn` move five people,
-`Home`/`End` jump to the first/last person, `m`/`Esc` return to the dashboard,
-`r` refresh, `s` settings, `?` help, `q` quit. The worst state stays summarized
+Caregiver view: `↑`/`↓` or `j`/`k` select, `PgUp`/`PgDn` move five people,
+`Home`/`End` jump to the first/last person, `Enter` opens that person's dashboard,
+`a` snoozes only that person, `m`/`Esc` returns to the dashboard, `r` refresh,
+`s` settings, `?` help, `q` quit. The worst state stays summarized
 in the header even while the list is scrolled.
 When the minimap is on, click or drag it to move the window — or use `H`/`L`
 and `End` for the same navigation from the keyboard.
@@ -282,10 +283,10 @@ than saying so.
 without stopping it, so the *next* alarm still fires:
 
 ```bash
-sugarrush snooze          # the configured snooze length
-sugarrush snooze 15m
-sugarrush snooze 2h
-sugarrush snooze off      # cancel; the alarm is armed again
+sugarrush snooze                         # one configured site only
+sugarrush snooze 15m --site Alex         # target one followed person
+sugarrush snooze 2h --all                # household-wide, explicitly
+sugarrush snooze off --site Alex         # cancel for one person
 ```
 
 It works whether or not a watcher is running: with none up, it arms the next one
@@ -422,7 +423,7 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush [--demo] [--screen settings]` | the dashboard |
 | `sugarrush watch` | headless alarm watcher (no terminal needed) |
 | `sugarrush watch --test [--quiet]` | check that every alarm channel actually works |
-| `sugarrush snooze [15m\|2h\|off]` | silence the alarm daemon without stopping it |
+| `sugarrush snooze [15m\|2h\|off] [--site NAME\|--all]` | silence the alarm daemon without stopping it |
 | `sugarrush alerts [--days N]` | what the alarm has actually done |
 | `sugarrush export [--days N] [--out DIR]` | CSV + a clinical summary |
 | `sugarrush status [--format FORMAT]` | one line for a status bar |

@@ -63,7 +63,11 @@ enum Mode {
     /// enable it.
     InstallUnit,
     /// Silence a running (or next-starting) alarm daemon.
-    Snooze { minutes: Option<i64> },
+    Snooze {
+        minutes: Option<i64>,
+        site: Option<String>,
+        all: bool,
+    },
     /// Walk every alarm channel and report which ones actually work.
     AlarmTest { quiet: bool },
     /// Print what the alarm has actually done.
@@ -118,6 +122,8 @@ fn parse_args() -> Mode {
     let mut export_days: Option<u32> = None;
     let mut status_format: Option<String> = None;
     let mut export_dir: Option<String> = None;
+    let mut snooze_site: Option<String> = None;
+    let mut snooze_all = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -161,8 +167,21 @@ fn parse_args() -> Mode {
                     }
                     None => None,
                 };
-                mode = Some(Mode::Snooze { minutes });
+                mode = Some(Mode::Snooze {
+                    minutes,
+                    site: None,
+                    all: false,
+                });
             }
+            "--site" => {
+                i += 1;
+                snooze_site = args.get(i).cloned();
+                if snooze_site.is_none() {
+                    eprintln!("sugarrush: --site needs a site name");
+                    std::process::exit(2);
+                }
+            }
+            "--all" => snooze_all = true,
             "--install-unit" => mode = Some(Mode::InstallUnit),
             "--man" => mode = Some(Mode::Man),
             "help" | "--help" | "-h" => mode = Some(Mode::Help),
@@ -230,6 +249,17 @@ fn parse_args() -> Mode {
                 })
                 .unwrap_or(status::Format::Text),
         },
+        Some(Mode::Snooze { minutes, .. }) => {
+            if snooze_all && snooze_site.is_some() {
+                eprintln!("sugarrush: choose either --site NAME or --all");
+                std::process::exit(2);
+            }
+            Mode::Snooze {
+                minutes,
+                site: snooze_site,
+                all: snooze_all,
+            }
+        }
         Some(m) => m,
         None => Mode::Tui { screen, demo },
     }
@@ -260,7 +290,7 @@ async fn main() -> Result<()> {
         }
         Mode::Export { days, dir } => run_export(days, dir).await,
         Mode::Watch => watch::run().await,
-        Mode::Snooze { minutes } => run_snooze(minutes),
+        Mode::Snooze { minutes, site, all } => run_snooze(minutes, site.as_deref(), all),
         Mode::AlarmTest { quiet } => selftest::run(quiet).await,
         Mode::Alerts { days } => {
             let cfg = Config::load()?;
@@ -411,7 +441,7 @@ const COMMANDS: &[(&str, &str)] = &[
         "check that every alarm channel actually works",
     ),
     (
-        "sugarrush snooze [15m|2h|off]",
+        "sugarrush snooze [15m|2h|off] [--site NAME|--all]",
         "silence the alarm daemon without stopping it",
     ),
     (
@@ -448,6 +478,11 @@ const OPTIONS: &[(&str, &str)] = &[
     ("--format FORMAT", "status-bar syntax"),
     ("--test", "run the alarm self-test"),
     ("--quiet", "with --test: check without making a noise"),
+    ("--site NAME", "with snooze: target one configured site"),
+    (
+        "--all",
+        "with snooze: explicitly target every configured site",
+    ),
     (
         "--install-unit",
         "write a systemd user unit for `watch` and explain how to enable it",
@@ -539,20 +574,28 @@ fn roff(s: &str) -> String {
 /// `systemctl --user stop`, which also disarms the *next* one. The episode
 /// state already persisted a snooze and honoured it on restore; there was
 /// simply no way in.
-fn run_snooze(minutes: Option<i64>) -> Result<()> {
+fn run_snooze(minutes: Option<i64>, site: Option<&str>, all: bool) -> Result<()> {
     let cfg = Config::load()?;
     let sites = cfg.resolve_sites()?;
+    let target = match (site, all, sites.len()) {
+        (Some(name), false, _) => watch::SnoozeTarget::Site(name),
+        (None, true, _) | (None, false, 1) => watch::SnoozeTarget::All,
+        (None, false, _) => {
+            anyhow::bail!("multiple sites are configured; choose --site NAME or explicit --all")
+        }
+        (Some(_), true, _) => unreachable!("parser rejects conflicting targets"),
+    };
     let alerts = sites[0].resolve_alerts(&cfg.alerts, cfg.units).0;
     let minutes = minutes.unwrap_or(alerts.snooze_minutes.max(1));
 
     if minutes == 0 {
-        let sites = watch::set_snooze(None)?;
+        let sites = watch::set_snooze(None, target)?;
         println!("snooze cancelled on {sites} site(s) — the alarm is armed");
         return Ok(());
     }
 
     let until = now_ms() + minutes * 60_000;
-    let sites = watch::set_snooze(Some(until))?;
+    let sites = watch::set_snooze(Some(until), target)?;
     use chrono::TimeZone;
     let clock = chrono::Local
         .timestamp_millis_opt(until)
@@ -935,8 +978,39 @@ fn handle_key(app: &mut App, fetch: &Fetcher, key: KeyEvent) {
             KeyCode::Up | KeyCode::Char('k') => app.scroll_followers(-1),
             KeyCode::PageDown => app.scroll_followers(5),
             KeyCode::PageUp => app.scroll_followers(-5),
-            KeyCode::Home => app.follower_scroll = 0,
-            KeyCode::End => app.follower_scroll = app.followers.len().saturating_sub(1),
+            KeyCode::Home => app.select_follower_edge(false),
+            KeyCode::End => app.select_follower_edge(true),
+            KeyCode::Enter => {
+                if let Some(name) = app.selected_follower().map(str::to_owned) {
+                    if app.activate_site(&name) {
+                        app.screen = Screen::Dashboard;
+                        fetch.request(app);
+                    }
+                }
+            }
+            KeyCode::Char('a') => {
+                if let Some(name) = app.selected_follower().map(str::to_owned) {
+                    let until = now_ms()
+                        + app
+                            .alerts_for_site(
+                                app.sites
+                                    .iter()
+                                    .position(|site| site.name == name)
+                                    .unwrap_or(0),
+                            )
+                            .snooze_minutes
+                            .max(1)
+                            * 60_000;
+                    if app.demo {
+                        app.status = Some(format!("demo: snoozed {name}"));
+                    } else {
+                        match watch::set_snooze(Some(until), watch::SnoozeTarget::Site(&name)) {
+                            Ok(_) => app.status = Some(format!("snoozed {name}")),
+                            Err(e) => app.status = Some(format!("snooze failed: {e}")),
+                        }
+                    }
+                }
+            }
             _ => {}
         }
         return;
@@ -1040,7 +1114,10 @@ fn handle_key(app: &mut App, fetch: &Fetcher, key: KeyEvent) {
             // Best-effort — a dashboard with no daemon configured still snoozes
             // itself.
             if !app.demo {
-                let _ = watch::set_snooze(app.snooze_until());
+                let _ = watch::set_snooze(
+                    app.snooze_until(),
+                    watch::SnoozeTarget::Site(&app.active_site().name),
+                );
             }
         }
         KeyCode::Char('e') => app.export_window(now_ms()),
@@ -1436,6 +1513,20 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
 
     if let Some(f) = g.followers {
         app.followers = f;
+        if app
+            .follower_selected
+            .as_ref()
+            .is_none_or(|name| !app.followers.iter().any(|site| &site.name == name))
+        {
+            app.follower_selected = app.followers.first().map(|site| site.name.clone());
+        }
+        if let Some(index) = app
+            .follower_selected
+            .as_ref()
+            .and_then(|name| app.followers.iter().position(|site| &site.name == name))
+        {
+            app.follower_scroll = index;
+        }
         app.follower_scroll = app
             .follower_scroll
             .min(app.followers.len().saturating_sub(1));
