@@ -8,6 +8,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **The AGP no longer calls one bad night a pattern.** Insights were guarded by
+  how long a run lasted but not by how many days fed it, and with a single
+  day's readings the 25th percentile and the median are the same number — so
+  one rough night could be named as a recurring overnight low, on screen and in
+  the clinician export. A time-of-day pattern now needs readings from at least
+  three separate days.
 - **Chart time labels no longer collide into a date that never existed.** On a
   narrow terminal the three `MM-DD HH:MM` stamps under the graph overlapped and
   rendered as text like `8-09 01:-09` — a wrong reading of when, on a chart
