@@ -8,6 +8,10 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **`--demo` is no longer silently ignored by the subcommands.** `sugarrush
+  watch --demo` looked like a safe way to try the alarm out and instead started
+  the daemon against the real site and the real config; `export`, `status` and
+  `waybar` ignored the flag the same way. They now say so and exit non-zero.
 - **The AGP no longer calls one bad night a pattern.** Insights were guarded by
   how long a run lasted but not by how many days fed it, and with a single
   day's readings the 25th percentile and the median are the same number — so
