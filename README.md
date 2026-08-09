@@ -138,7 +138,7 @@ design: file-only, documented.
 | Key | Action |
 |-----|--------|
 | `q` | Quit |
-| `?` | Toggle the keybinding help overlay |
+| `?` | Toggle the keybinding help overlay (works on every screen) |
 | `r` | Refresh now (also resumes fetching after a token/URL error) |
 | `u` | Toggle mg/dL ↔ mmol/L |
 | `Tab` / `Shift+Tab` | Switch graph view (3h / 24h / AGP) |
@@ -156,7 +156,11 @@ design: file-only, documented.
 | `s` | Open / close settings |
 
 Settings screen: `↑`/`↓` select, `←`/`→` change, `Enter` edit (site URL / token),
-`w` save, `s`/`Esc` back.
+`w` save, `?` help, `s`/`Esc` back. The overlay is screen-aware — on settings it
+lists the settings keys, not the graph ones.
+
+Caregiver view: `m`/`Esc` back to the dashboard, `r` refresh, `s` settings,
+`?` help, `q` quit.
 When the minimap is on, click or drag it to move the window — or use `H`/`L`
 and `End` for the same navigation from the keyboard.
 

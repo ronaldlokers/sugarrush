@@ -8,6 +8,16 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **`?` now works on every screen.** Pressing it in the caregiver view did
+  nothing, then the overlay appeared unbidden on the next dashboard render; the
+  settings screen — the one with thirty rows of unexplained options — had no
+  help key at all. The overlay opens over whatever screen you're on, any key
+  closes it, and both footers advertise it. On settings it lists the settings
+  keys rather than the graph ones.
+- **Two settings rows explain themselves again.** Pressing `←`/`→` on the site
+  URL or on push alerts is meant to answer "press enter to edit" and "set
+  push_url in config.toml"; both messages were written and then erased before
+  anything drew them, so the rows looked like dead keys.
 - **Text prompts put the real cursor where you're typing.** The site URL, the
   token and the date-jump prompt drew a fake blinking `_` and never positioned
   the terminal cursor, so screen-reader caret tracking and braille cursor
