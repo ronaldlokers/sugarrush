@@ -659,6 +659,7 @@ pub mod fake {
             }
         });
         Site {
+            id: String::new(),
             name: "fake".into(),
             url: format!("http://127.0.0.1:{port}"),
             token: "test-token".into(),
@@ -695,6 +696,7 @@ pub mod fake {
             }
         });
         Site {
+            id: String::new(),
             name: "slow".into(),
             url: format!("http://127.0.0.1:{port}"),
             token: String::new(),
@@ -720,6 +722,7 @@ pub mod fake {
             }
         });
         Site {
+            id: String::new(),
             name: "stalled".into(),
             url: format!("http://127.0.0.1:{port}"),
             token: String::new(),
@@ -779,6 +782,7 @@ mod tests {
     async fn errors_never_carry_the_token() {
         // Port 1 refuses instantly — no DNS, no network, no flakiness.
         let site = Site {
+            id: String::new(),
             name: "default".into(),
             url: "http://127.0.0.1:1".into(),
             token: "SEKRIT-TOKEN-9Q7X".into(),

@@ -8,6 +8,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **People now have immutable internal identities.** Renaming a display label
+  no longer moves alarm episodes, snoozes, cached readings, or treatment audit
+  receipts between people; legacy configurations receive a deterministic ID
+  and newly added sites receive a generated UUID.
+
 - **Treatment writes are available behind an explicit security boundary.** A
   separate per-site CarePortal token is masked in Settings and capability-
   checked before every confirmed `treatment` command; amounts, timestamps, and

@@ -48,6 +48,7 @@ pub async fn run() -> Result<()> {
         }
 
         let site = Site {
+            id: uuid::Uuid::new_v4().to_string(),
             name: "default".to_string(),
             url: url.clone(),
             token: token.clone(),

@@ -413,6 +413,7 @@ impl App {
         };
         let url = self.active_site().url.clone();
         self.sites.push(Site {
+            id: uuid::Uuid::new_v4().to_string(),
             name,
             url,
             token: String::new(),
