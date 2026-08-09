@@ -85,6 +85,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **A slow followed site can no longer stall every alarm.** The headless
+  watcher used to await entries and device status for each person in sequence
+  inside the same loop that rechecks alarms every three seconds. Polls now run
+  concurrently in the background, with at most one per site, so stalled
+  Nightscout requests cannot delay local stale detection or another person's
+  alarm cadence.
 - **Watcher retries and concurrent saves can no longer erase alarm state.** A
   site skipped during retry backoff used to disappear from the persisted
   episode map, and a `sugarrush snooze` command issued while the daemon was
