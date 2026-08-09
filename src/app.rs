@@ -119,6 +119,9 @@ pub struct App {
     pub sensor_fetched_ms: i64,
     /// Configured alert thresholds and behaviour (mg/dL internally).
     pub alerts: Alerts,
+    /// Top-level defaults and optional resolved overrides, parallel to `sites`.
+    global_alerts: Alerts,
+    site_alerts: Vec<Option<Alerts>>,
     /// Current alert state (only meaningful in live mode).
     pub alert: Alert,
     /// State that spans alert passes: episode identity, debounce, escalation,
@@ -276,6 +279,14 @@ pub struct Reaction {
 
 impl App {
     pub fn new(cfg: &Config, alerts: Alerts, sites: Vec<Site>) -> Self {
+        let site_alerts: Vec<Option<Alerts>> = sites
+            .iter()
+            .map(|site| {
+                site.alerts
+                    .as_ref()
+                    .map(|_| site.resolve_alerts(&cfg.alerts, cfg.units).0)
+            })
+            .collect();
         Self {
             units: cfg.units,
             entries: Vec::new(),
@@ -294,7 +305,12 @@ impl App {
             alarm_test: None,
             sensor_start_ms: None,
             sensor_fetched_ms: 0,
-            alerts,
+            alerts: site_alerts
+                .first()
+                .and_then(Clone::clone)
+                .unwrap_or_else(|| alerts.clone()),
+            global_alerts: alerts,
+            site_alerts,
             alert: Alert::InRange,
             alert_engine: AlertEngine::default(),
             screen: Screen::Dashboard,
@@ -456,10 +472,52 @@ impl App {
         &self.sites[self.site_idx.min(self.sites.len().saturating_sub(1))]
     }
 
+    pub fn site_alert_override(&self) -> bool {
+        self.site_alerts
+            .get(self.site_idx)
+            .is_some_and(Option::is_some)
+    }
+
+    pub fn set_site_alert_override(&mut self, enabled: bool) {
+        let idx = self.site_idx.min(self.sites.len().saturating_sub(1));
+        if enabled {
+            self.site_alerts[idx] = Some(self.alerts.clone());
+        } else {
+            self.site_alerts[idx] = None;
+            self.alerts = self.global_alerts.clone();
+        }
+    }
+
+    pub fn sync_active_alerts(&mut self) {
+        let idx = self.site_idx.min(self.sites.len().saturating_sub(1));
+        if self.site_alerts[idx].is_some() {
+            self.site_alerts[idx] = Some(self.alerts.clone());
+        } else {
+            self.global_alerts = self.alerts.clone();
+        }
+    }
+
+    fn load_active_alerts(&mut self) {
+        self.alerts = self
+            .site_alerts
+            .get(self.site_idx)
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| self.global_alerts.clone());
+    }
+
+    pub fn alerts_for_site(&self, idx: usize) -> Alerts {
+        self.site_alerts
+            .get(idx)
+            .and_then(Clone::clone)
+            .unwrap_or_else(|| self.global_alerts.clone())
+    }
+
     /// Switch to the next configured site (no-op with a single site).
     pub fn next_site(&mut self) {
         if self.sites.len() > 1 {
+            self.sync_active_alerts();
             self.site_idx = (self.site_idx + 1) % self.sites.len();
+            self.load_active_alerts();
             self.site_dirty = true;
             self.view.follow();
         }
@@ -1717,6 +1775,44 @@ mod tests {
     }
 
     #[test]
+    fn switching_sites_switches_alert_thresholds_and_persists_them() {
+        let mut cfg = Config::demo();
+        cfg.url = None;
+        cfg.token = None;
+        cfg.sites = vec![
+            Site {
+                name: "alice".into(),
+                url: "https://alice.example".into(),
+                token: "a".into(),
+                alerts: None,
+            },
+            Site {
+                name: "bob".into(),
+                url: "https://bob.example".into(),
+                token: "b".into(),
+                alerts: Some(AlertsConfig {
+                    low: Some(4.5),
+                    ..AlertsConfig::default()
+                }),
+            },
+        ];
+        let global = cfg.alerts.resolve(cfg.units);
+        let mut a = App::new(&cfg, global.clone(), cfg.resolve_sites().unwrap());
+        assert_eq!(a.alerts.low, global.low);
+        a.next_site();
+        assert!((a.alerts.low - cfg.units.to_mgdl(4.5)).abs() < 0.1);
+        a.alerts.low = cfg.units.to_mgdl(4.6);
+        a.sync_active_alerts();
+
+        let written = a.build_config();
+        let sites = written.resolve_sites().unwrap();
+        let bob = sites[1].resolve_alerts(&written.alerts, written.units).0;
+        assert!((bob.low - cfg.units.to_mgdl(4.6)).abs() < 0.1);
+        let alice = sites[0].resolve_alerts(&written.alerts, written.units).0;
+        assert_eq!(alice.low, global.low);
+    }
+
+    #[test]
     fn duplicate_site_names_are_rejected() {
         let mut a = app();
         a.add_site();
@@ -1773,6 +1869,7 @@ mod tests {
             name: "bob".into(),
             url: "https://ns.example.com".into(),
             token: "t".into(),
+            alerts: None,
         });
         a.entries = vec![entry(40.0, NOW)];
         a.live_edge = Some(entry(40.0, NOW));

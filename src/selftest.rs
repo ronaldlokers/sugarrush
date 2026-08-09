@@ -44,7 +44,25 @@ impl Check {
 /// supposed to work doesn't, so it can be used in a cron or a health check.
 pub async fn run(quiet: bool) -> Result<()> {
     let cfg = Config::load()?;
-    let (alerts, warnings) = cfg.alerts.resolve_checked(cfg.units);
+    let (_, mut warnings) = cfg.alerts.resolve_checked(cfg.units);
+    let sites = cfg.resolve_sites()?;
+    for site in &sites {
+        let (_, site_warnings) = site.resolve_alerts(&cfg.alerts, cfg.units);
+        warnings.extend(
+            site_warnings
+                .into_iter()
+                .map(|w| format!("{}: {w}", site.name)),
+        );
+    }
+    let profiles: Vec<_> = sites
+        .iter()
+        .map(|site| {
+            (
+                site.name.clone(),
+                site.resolve_alerts(&cfg.alerts, cfg.units).0,
+            )
+        })
+        .collect();
     let now = now_ms();
     let mut checks: Vec<Check> = Vec::new();
 
@@ -52,7 +70,7 @@ pub async fn run(quiet: bool) -> Result<()> {
     if warnings.is_empty() {
         checks.push(Check::Ok(
             "config".into(),
-            format!("{} site(s), thresholds valid", cfg.resolve_sites()?.len()),
+            format!("{} site(s), thresholds valid", sites.len()),
         ));
     } else {
         checks.push(Check::Bad("config".into(), warnings.join("; ")));
@@ -60,8 +78,8 @@ pub async fn run(quiet: bool) -> Result<()> {
 
     // 2. Can we see the data at all? An alarm can only fire on readings that
     //    arrive.
-    let sites = cfg.resolve_sites()?;
     for site in &sites {
+        let site_alerts = site.resolve_alerts(&cfg.alerts, cfg.units).0;
         let label = if sites.len() > 1 {
             format!("site · {}", site.name)
         } else {
@@ -79,7 +97,7 @@ pub async fn run(quiet: bool) -> Result<()> {
                         );
                         // Older than the staleness threshold means the alarm
                         // would already be reporting a gap.
-                        if age > alerts.stale_minutes {
+                        if age > site_alerts.stale_minutes {
                             checks.push(Check::Bad(
                                 label,
                                 format!("{detail} — already past stale_minutes"),
@@ -101,7 +119,7 @@ pub async fn run(quiet: bool) -> Result<()> {
 
     // 3. The audible alarm. This is the one that has to actually make a noise:
     //    a working config field and a working audio path are different claims.
-    if !alerts.sound {
+    if !profiles.iter().any(|(_, alerts)| alerts.sound) {
         checks.push(Check::Off(
             "audible alarm".into(),
             "off (sound = false)".into(),
@@ -130,30 +148,34 @@ pub async fn run(quiet: bool) -> Result<()> {
     }
 
     // 4. Quiet hours — a scheduled, invisible silence.
-    match (alerts.quiet_start, alerts.quiet_end) {
-        (Some(start), Some(end)) => {
-            let min_of_day = Local
-                .timestamp_millis_opt(now)
-                .single()
-                .map(|d| d.hour() as i32 * 60 + d.minute() as i32)
-                .unwrap_or(0);
-            let hhmm = |m: i32| format!("{:02}:{:02}", m / 60, m % 60);
-            let window = format!("{}–{}", hhmm(start), hhmm(end));
-            if alerts.in_quiet_hours(min_of_day) {
-                let detail = if alerts.quiet_urgent_low {
-                    format!("active now ({window}) — only urgent lows will sound")
+    for (site, alerts) in &profiles {
+        let label = if profiles.len() > 1 {
+            format!("quiet hours · {site}")
+        } else {
+            "quiet hours".into()
+        };
+        match (alerts.quiet_start, alerts.quiet_end) {
+            (Some(start), Some(end)) => {
+                let min_of_day = Local
+                    .timestamp_millis_opt(now)
+                    .single()
+                    .map(|d| d.hour() as i32 * 60 + d.minute() as i32)
+                    .unwrap_or(0);
+                let hhmm = |m: i32| format!("{:02}:{:02}", m / 60, m % 60);
+                let window = format!("{}–{}", hhmm(start), hhmm(end));
+                if alerts.in_quiet_hours(min_of_day) {
+                    let detail = if alerts.quiet_urgent_low {
+                        format!("active now ({window}) — only urgent lows will sound")
+                    } else {
+                        format!("active now ({window}) — nothing will sound")
+                    };
+                    checks.push(Check::Off(label, detail));
                 } else {
-                    format!("active now ({window}) — nothing will sound")
-                };
-                checks.push(Check::Off("quiet hours".into(), detail));
-            } else {
-                checks.push(Check::Ok(
-                    "quiet hours".into(),
-                    format!("set ({window}), not active now"),
-                ));
+                    checks.push(Check::Ok(label, format!("set ({window}), not active now")));
+                }
             }
+            _ => checks.push(Check::Ok(label, "not set".into())),
         }
-        _ => checks.push(Check::Ok("quiet hours".into(), "not set".into())),
     }
 
     // 5. An active snooze someone forgot about.
@@ -174,7 +196,7 @@ pub async fn run(quiet: bool) -> Result<()> {
 
     // 6. Desktop notifications: the D-Bus call can fail with no daemon running,
     //    and the result used to be discarded.
-    if !alerts.desktop {
+    if !profiles.iter().any(|(_, alerts)| alerts.desktop) {
         checks.push(Check::Off(
             "desktop notification".into(),
             "off (desktop = false)".into(),
@@ -195,50 +217,57 @@ pub async fn run(quiet: bool) -> Result<()> {
 
     // 7. The push webhook — the channel that reaches a phone, and the only one
     //    escalation has.
-    match (&alerts.push_url, alerts.push_enabled) {
-        (Some(url), true) if !quiet => {
-            if crate::push(url, "sugarrush: alarm self-test").await {
-                checks.push(Check::Ok("push webhook".into(), "delivered".into()));
-            } else {
-                checks.push(Check::Bad(
-                    "push webhook".into(),
-                    "the POST failed — check push_url".into(),
-                ));
+    for (site, alerts) in &profiles {
+        let label = if profiles.len() > 1 {
+            format!("push webhook · {site}")
+        } else {
+            "push webhook".into()
+        };
+        match (&alerts.push_url, alerts.push_enabled) {
+            (Some(url), true) if !quiet => {
+                if crate::push(url, "sugarrush: alarm self-test").await {
+                    checks.push(Check::Ok(label, "delivered".into()));
+                } else {
+                    checks.push(Check::Bad(label, "the POST failed — check push_url".into()));
+                }
             }
+            (Some(_), true) => {
+                checks.push(Check::Off(label, "configured — not sent (--quiet)".into()))
+            }
+            (Some(_), false) => checks.push(Check::Off(label, "configured but disabled".into())),
+            (None, _) => checks.push(Check::Off(label, "not configured".into())),
         }
-        (Some(_), true) => checks.push(Check::Off(
-            "push webhook".into(),
-            "configured — not sent (--quiet)".into(),
-        )),
-        (Some(_), false) => checks.push(Check::Off(
-            "push webhook".into(),
-            "configured but disabled".into(),
-        )),
-        (None, _) => checks.push(Check::Off("push webhook".into(), "not configured".into())),
     }
 
     // 8. Escalation with nowhere to go — a setting that reads as armed and does
     //    nothing at all.
-    if alerts.escalate_minutes > 0 {
-        if alerts.push_url.is_some() && alerts.push_enabled {
-            checks.push(Check::Ok(
-                "escalation".into(),
-                format!(
-                    "after {} min, via the push webhook",
-                    alerts.escalate_minutes
-                ),
-            ));
+    for (site, alerts) in &profiles {
+        let label = if profiles.len() > 1 {
+            format!("escalation · {site}")
         } else {
-            checks.push(Check::Bad(
-                "escalation".into(),
-                format!(
+            "escalation".into()
+        };
+        if alerts.escalate_minutes > 0 {
+            if alerts.push_url.is_some() && alerts.push_enabled {
+                checks.push(Check::Ok(
+                    label,
+                    format!(
+                        "after {} min, via the push webhook",
+                        alerts.escalate_minutes
+                    ),
+                ));
+            } else {
+                checks.push(Check::Bad(
+                    label,
+                    format!(
                     "set to {} min but the push webhook is its only channel — it will do nothing",
                     alerts.escalate_minutes
                 ),
-            ));
+                ));
+            }
+        } else {
+            checks.push(Check::Off(label, "off".into()));
         }
-    } else {
-        checks.push(Check::Off("escalation".into(), "off".into()));
     }
 
     // 9. Is anything actually watching? Everything above is moot if nothing is

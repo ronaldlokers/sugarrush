@@ -8,6 +8,10 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Each followed site can now have its own alert settings.** A person can
+  inherit the global thresholds and channels or use a complete override edited
+  from the same settings screen; the dashboard, followers list, status output
+  and headless watcher all classify that site with its effective settings.
 - **Sites can now be added and removed in the settings screen.** Site names,
   URLs and read-only tokens are editable in-app, additions never copy another
   person's token, and the final site cannot be removed accidentally.
