@@ -206,13 +206,26 @@ pub async fn run(quiet: bool) -> Result<()> {
             "desktop notification".into(),
             "on — not sent (--quiet)".into(),
         ));
-    } else if crate::notify_text("sugarrush: alarm self-test") {
-        checks.push(Check::Ok("desktop notification".into(), "delivered".into()));
     } else {
-        checks.push(Check::Bad(
-            "desktop notification".into(),
-            "the notification daemon rejected it or isn't running".into(),
-        ));
+        let accepted = crate::notify_text("sugarrush: alarm self-test");
+        for (site, alerts) in &profiles {
+            if alerts.desktop {
+                crate::alertlog::record_delivery(
+                    site,
+                    "desktop-test",
+                    if accepted { "accepted" } else { "rejected" },
+                    crate::alert::Alert::InRange,
+                );
+            }
+        }
+        if accepted {
+            checks.push(Check::Ok("desktop notification".into(), "accepted".into()));
+        } else {
+            checks.push(Check::Bad(
+                "desktop notification".into(),
+                "the notification daemon rejected it or isn't running".into(),
+            ));
+        }
     }
 
     // 7. The push webhook — the channel that reaches a phone, and the only one
@@ -225,8 +238,15 @@ pub async fn run(quiet: bool) -> Result<()> {
         };
         match (&alerts.push_url, alerts.push_enabled) {
             (Some(url), true) if !quiet => {
-                if crate::push(url, "sugarrush: alarm self-test").await {
-                    checks.push(Check::Ok(label, "delivered".into()));
+                let accepted = crate::push(url, "sugarrush: alarm self-test").await;
+                crate::alertlog::record_delivery(
+                    site,
+                    "webhook-test",
+                    if accepted { "accepted" } else { "rejected" },
+                    crate::alert::Alert::InRange,
+                );
+                if accepted {
+                    checks.push(Check::Ok(label, "accepted".into()));
                 } else {
                     checks.push(Check::Bad(label, "the POST failed — check push_url".into()));
                 }

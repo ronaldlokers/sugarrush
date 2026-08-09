@@ -7,6 +7,7 @@ mod config;
 mod demo;
 mod export;
 mod follow;
+mod health;
 mod nightscout;
 mod predict;
 mod selftest;
@@ -72,6 +73,8 @@ enum Mode {
     AlarmTest { quiet: bool },
     /// Print what the alarm has actually done.
     Alerts { days: i64 },
+    /// Print per-site watcher/data/channel health as JSON.
+    Health,
     /// Print usage and exit.
     Help,
     /// Write the man page to stdout.
@@ -148,6 +151,7 @@ fn parse_args() -> Mode {
                 }
             }
             "alerts" => mode = Some(Mode::Alerts { days: 7 }),
+            "health" => mode = Some(Mode::Health),
             "snooze" => {
                 // An optional duration follows: `15m`, `2h`, a bare number of
                 // minutes, or `off` to cancel. No argument means the configured
@@ -182,6 +186,7 @@ fn parse_args() -> Mode {
                 }
             }
             "--all" => snooze_all = true,
+            "--json" if matches!(mode, Some(Mode::Health)) => {}
             "--install-unit" => mode = Some(Mode::InstallUnit),
             "--man" => mode = Some(Mode::Man),
             "help" | "--help" | "-h" => mode = Some(Mode::Help),
@@ -295,6 +300,16 @@ async fn main() -> Result<()> {
         Mode::Alerts { days } => {
             let cfg = Config::load()?;
             print!("{}", alertlog::report(days, cfg.units));
+            Ok(())
+        }
+        Mode::Health => {
+            let cfg = Config::load()?;
+            let report = health::inspect(&cfg).await?;
+            let healthy = report.healthy;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if !healthy {
+                std::process::exit(1);
+            }
             Ok(())
         }
         Mode::InstallUnit => install_unit(),
@@ -449,6 +464,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "what the alarm has actually done",
     ),
     (
+        "sugarrush health --json",
+        "machine-readable watcher, data and delivery health",
+    ),
+    (
         "sugarrush export [--days N] [--out DIR]",
         "CSV + a clinical summary",
     ),
@@ -483,6 +502,7 @@ const OPTIONS: &[(&str, &str)] = &[
         "--all",
         "with snooze: explicitly target every configured site",
     ),
+    ("--json", "with health: emit the stable JSON report"),
     (
         "--install-unit",
         "write a systemd user unit for `watch` and explain how to enable it",
@@ -1568,12 +1588,21 @@ fn deliver(app: &mut App, r: app::Reaction, fetch: &Fetcher) {
             // notification daemon running the D-Bus call fails and nothing is
             // shown, which — paired with a failing audio player — is two dead
             // channels reported as healthy.
-            app.notify_failed = !notify(
+            let accepted = notify(
                 a,
                 app.live_latest().map(|e| e.sgv),
                 app.units,
                 app.alerts.notify_content,
             );
+            app.notify_failed = !accepted;
+            if !app.demo {
+                alertlog::record_delivery(
+                    &app.active_site().name,
+                    "desktop",
+                    if accepted { "accepted" } else { "rejected" },
+                    a,
+                );
+            }
         }
     }
     if let Some(msg) = r.predictive {
@@ -1589,8 +1618,17 @@ fn deliver(app: &mut App, r: app::Reaction, fetch: &Fetcher) {
         // The push webhook is a safety channel (unacknowledged-urgent
         // escalation); a dead URL must not fail silently.
         let errors = fetch.errors.clone();
+        let site = app.active_site().name.clone();
+        let state = r.state;
         tokio::spawn(async move {
-            if !push(&url, &msg).await {
+            let accepted = push(&url, &msg).await;
+            alertlog::record_delivery(
+                &site,
+                "webhook",
+                if accepted { "accepted" } else { "rejected" },
+                state,
+            );
+            if !accepted {
                 let _ = errors.send("push notification failed — check push_url".to_string());
             }
         });

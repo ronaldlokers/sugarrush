@@ -8,6 +8,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Alarm delivery is now auditable and monitorable.** Alert history records
+  privacy-safe channel outcomes using careful accepted/rejected language, and
+  `sugarrush health --json` exposes watcher liveness, per-site freshness,
+  snoozes, alarm state, and the latest delivery attempt for external monitors.
+
 - **Caregiver actions now target the right person.** The follower list has a
   stable selected row that opens that person's dashboard with Enter and
   snoozes only that person with `a`; the CLI accepts `--site NAME` and requires

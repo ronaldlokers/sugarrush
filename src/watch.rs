@@ -359,6 +359,14 @@ pub fn snoozed_until() -> Option<i64> {
     values.all(|v| v == Some(first)).then_some(first)
 }
 
+pub fn snoozes() -> std::collections::HashMap<String, Option<i64>> {
+    State::load()
+        .sites
+        .into_iter()
+        .map(|(name, episode)| (name, episode.snooze_until))
+        .collect()
+}
+
 /// The parts of one site's alert episode worth carrying across a restart.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Episode {
@@ -694,16 +702,22 @@ fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reaction {
         if app.alerts.desktop {
             // The notification names the site, or a caregiver gets "URGENT
             // LOW" with no idea whose it is.
-            if multi && app.alerts.notify_content {
-                crate::notify_text(&format!("{}: {}", w.name, a.label()));
+            let accepted = if multi && app.alerts.notify_content {
+                crate::notify_text(&format!("{}: {}", w.name, a.label()))
             } else {
                 crate::notify(
                     a,
                     app.latest().map(|e| e.sgv),
                     app.units,
                     app.alerts.notify_content,
-                );
-            }
+                )
+            };
+            crate::alertlog::record_delivery(
+                &w.name,
+                "desktop",
+                if accepted { "accepted" } else { "rejected" },
+                a,
+            );
         }
     }
     if let Some(msg) = r.predictive.clone() {
@@ -729,8 +743,16 @@ fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reaction {
         // the reaction loop: simultaneous caregiver escalations must not turn
         // the three-second alarm cadence into N × 10 seconds.
         let site = w.name.clone();
+        let state = r.state;
         tokio::spawn(async move {
-            if !crate::push(&url, &msg).await {
+            let accepted = crate::push(&url, &msg).await;
+            crate::alertlog::record_delivery(
+                &site,
+                "webhook",
+                if accepted { "accepted" } else { "rejected" },
+                state,
+            );
+            if !accepted {
                 eprintln!("sugarrush watch [{site}]: push failed — check push_url");
             }
         });

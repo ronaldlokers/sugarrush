@@ -43,6 +43,12 @@ Blind automatic retries can deliver an old alert after recovery or duplicate a
 message accepted just before a timeout. Reliability is established before the
 episode with `sugarrush watch --test`; runtime failures are surfaced in the TUI
 or watcher journal and are not silently queued for later.
+
+Each desktop and webhook attempt is appended to the owner-only alert history
+without its URL, token, message, or glucose value. Outcomes are called
+`accepted` or `rejected`: endpoint acceptance is evidence about the software
+path, never evidence that a person received, read, or heard the alert.
+
 2. **Whatever sounds also announces.** The dashboard's 3-second ticker used to
    classify and sound without consuming a notification or a push, so a sensor
    gap crossing into `Stale` between refreshes beeped immediately while the
