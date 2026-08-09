@@ -85,6 +85,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Watcher retries and concurrent saves can no longer erase alarm state.** A
+  site skipped during retry backoff used to disappear from the persisted
+  episode map, and a `sugarrush snooze` command issued while the daemon was
+  polling could be overwritten by its older snapshot. Every site now remains
+  restart-safe, while serialized updates merge the latest external snooze
+  immediately before the watcher saves.
 - **A sensor gap now notifies and escalates as fast as it starts beeping.** The
   audible alarm ran on a 3-second tick while notifications and the escalation
   webhook only went out on a refresh, so a gap that crossed into "no recent
