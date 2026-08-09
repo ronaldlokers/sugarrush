@@ -46,6 +46,12 @@ Three rules follow from this, and each of them was once broken:
    episode timers it maintains, so escalation must be able to fire on the pass
    that earns it.
 
+Network polling is never awaited inside that three-second reaction loop. Each
+site has at most one background poll in flight, sites poll concurrently, and
+entries plus device status are requested together. A stalled follower can
+therefore neither delay another person's fetch nor stop already-known data
+from becoming stale and sounding on schedule.
+
 ## States
 
 Five alert states plus `Stale`, in `src/alert.rs`:

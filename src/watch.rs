@@ -20,11 +20,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 use crate::alert::Alert;
 use crate::app::App;
 use crate::config::Config;
-use crate::nightscout::Client;
+use crate::nightscout::{Client, DeviceStatus, Entry, Prediction};
 use crate::{now_ms, predict, sound};
 
 /// How often the watcher says it is alive and well, even when nothing
@@ -404,6 +405,7 @@ pub async fn run() -> Result<()> {
                 client: Client::for_site(site)?,
                 app,
                 last_logged: None,
+                polling: false,
             })
         })
         .collect::<Result<_>>()?;
@@ -439,6 +441,7 @@ pub async fn run() -> Result<()> {
     let mut alarm_ticker = tokio::time::interval(Duration::from_secs(3));
     alarm_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     alarm_ticker.tick().await;
+    let (poll_tx, mut poll_rx) = mpsc::unbounded_channel::<PollResult>();
 
     loop {
         tokio::select! {
@@ -451,20 +454,18 @@ pub async fn run() -> Result<()> {
                 // daemon never sets a snooze itself, so anything that differs
                 // from what we last wrote came from outside and wins.
                 let on_disk = State::load();
-                for w in watched.iter_mut() {
+                for (index, w) in watched.iter_mut().enumerate() {
                     adopt_external_snooze(&mut w.app, on_disk.sites.get(&w.name));
                     // The retry policy already exists on App and the TUI obeys
                     // it; the daemon was hammering a failing site at full rate
                     // and ignoring a paused-after-auth-failure state entirely.
-                    if !w.app.online() && !w.app.should_retry(now) {
+                    if w.polling || (!w.app.online() && !w.app.should_retry(now)) {
                         continue;
                     }
-                    if let Err(e) = poll(&mut w.app, &w.client, now).await {
-                        // Keep watching: an outage is exactly when the Stale
-                        // alarm matters, and it can only fire if we stay alive.
-                        eprintln!("sugarrush watch [{}]: {e}", w.name);
-                    }
-                    react(w, now, multi).await;
+                    let (start, end) = w.app.view.bounds(now);
+                    let count = w.app.view.span.fetch_count();
+                    w.polling = true;
+                    spawn_poll(index, w.client.clone(), start, end, count, poll_tx.clone());
                 }
                 // Snapshot every site, including ones skipped during retry
                 // backoff. Omitting a skipped site used to delete its episode
@@ -476,6 +477,21 @@ pub async fn run() -> Result<()> {
                 if last_liveness.is_none_or(|t| now - t >= LIVENESS_INTERVAL_MS) {
                     println!("{} · {}", stamp(now), liveness(&watched, now));
                     last_liveness = Some(now);
+                }
+            }
+            Some(result) = poll_rx.recv() => {
+                let now = now_ms();
+                let w = &mut watched[result.index];
+                w.polling = false;
+                if let Some(error) = apply_poll(&mut w.app, result, now) {
+                    // Keep watching: an outage is exactly when the Stale alarm
+                    // matters, and it can only fire if we stay alive.
+                    eprintln!("sugarrush watch [{}]: {error}", w.name);
+                }
+                react(w, now, multi).await;
+                let mut state = snapshot(&watched);
+                if let Err(e) = state.save_daemon_snapshot() {
+                    eprintln!("sugarrush watch: {e}");
                 }
             }
             _ = alarm_ticker.tick() => {
@@ -524,6 +540,9 @@ struct Watched {
     app: App,
     /// What the journal last said about this site, so recoveries are logged.
     last_logged: Option<Alert>,
+    /// At most one network poll per site. Alarm ticks remain independent while
+    /// the request is in flight.
+    polling: bool,
 }
 
 /// True when the dashboard is up: it is already showing and sounding this, so
@@ -532,15 +551,40 @@ fn deferring(now_ms: i64) -> bool {
     is_alive(Role::Tui, now_ms)
 }
 
-/// One fetch cycle: readings, and the uploader forecast that predictive alerts
-/// read. Deliberately narrower than the TUI's refresh — no treatments, no AGP
-/// history, no minimap. Nothing here is drawn.
-async fn poll(app: &mut App, client: &Client, now_ms: i64) -> Result<()> {
-    let (start, end) = app.view.bounds(now_ms);
-    match client
-        .entries_range(start, end, app.view.span.fetch_count())
-        .await
-    {
+struct PollResult {
+    index: usize,
+    entries: crate::nightscout::Result<Vec<Entry>>,
+    device: crate::nightscout::Result<(DeviceStatus, Option<Vec<Prediction>>)>,
+}
+
+fn spawn_poll(
+    index: usize,
+    client: Client,
+    start: i64,
+    end: i64,
+    count: usize,
+    tx: mpsc::UnboundedSender<PollResult>,
+) {
+    tokio::spawn(async move {
+        // Entries and device status have independent endpoints. Running both
+        // together bounds a site's poll by the slower request rather than the
+        // sum, while this task keeps all network waits outside the alarm loop.
+        let (entries, device) = tokio::join!(
+            client.entries_range(start, end, count),
+            client.device_status()
+        );
+        let _ = tx.send(PollResult {
+            index,
+            entries,
+            device,
+        });
+    });
+}
+
+/// Apply completed network work on the watcher loop. Nothing in here awaits,
+/// so the three-second alarm cadence cannot be held hostage by a slow site.
+fn apply_poll(app: &mut App, result: PollResult, now_ms: i64) -> Option<String> {
+    match result.entries {
         Ok(entries) => {
             app.entries = entries;
             app.mark_online(now_ms);
@@ -548,15 +592,15 @@ async fn poll(app: &mut App, client: &Client, now_ms: i64) -> Result<()> {
         Err(e) => {
             let permanent = e.is_permanent();
             app.mark_offline(now_ms, e.to_string(), permanent);
-            return Err(e.into());
+            return Some(e.to_string());
         }
     }
-    let published = client.device_status().await.ok().and_then(|(status, p)| {
+    let published = result.device.ok().and_then(|(status, p)| {
         app.device = status;
         p
     });
     app.predictions = published.unwrap_or_else(|| predict::ar2(&app.entries));
-    Ok(())
+    None
 }
 
 /// Deliver the alarm machine's reaction to the journal, the desktop and the
@@ -780,6 +824,7 @@ mod tests {
             client: Client::for_site(&sites[0]).unwrap(),
             app,
             last_logged: None,
+            polling: false,
         }];
         assert_eq!(snapshot(&watched).sites["default"], episode);
     }
@@ -899,6 +944,26 @@ mod tests {
         assert_eq!(bob.take_notification(), Some(Alert::UrgentLow));
     }
 
+    #[tokio::test]
+    async fn a_stalled_poll_runs_outside_the_alarm_cadence() {
+        let site = crate::nightscout::fake::serve_stalled().await;
+        let client = Client::for_site(&site).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        spawn_poll(0, client, 0, NOW, 10, tx);
+
+        // The endpoint deliberately never answers. Scheduling it must still
+        // return immediately so the watcher can service its alarm ticker.
+        let mut alarm = tokio::time::interval(Duration::from_millis(10));
+        alarm.tick().await;
+        tokio::time::timeout(Duration::from_millis(100), alarm.tick())
+            .await
+            .expect("a stalled Nightscout request blocked the alarm ticker");
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
     #[test]
     fn liveness_reports_what_the_watcher_can_see() {
         let cfg = Config::demo();
@@ -917,6 +982,7 @@ mod tests {
             client: Client::for_site(&sites[0]).unwrap(),
             app,
             last_logged: None,
+            polling: false,
         }];
 
         let line = liveness(&watched, NOW);
@@ -942,6 +1008,7 @@ mod tests {
             client: Client::for_site(&sites[0]).unwrap(),
             app,
             last_logged: None,
+            polling: false,
         }];
         assert!(liveness(&watched, NOW).contains("offline"));
     }
