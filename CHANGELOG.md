@@ -8,6 +8,12 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **`sugarrush snooze` silences the alarm daemon.** Until now the only way to
+  stop a 3am alarm from `sugarrush watch` was `systemctl --user stop`, which
+  also disarms the *next* one. `sugarrush snooze 15m` (or `2h`, or `off`)
+  silences it without stopping it, works whether or not a watcher is currently
+  running, and survives a service restart. Pressing `a` in the dashboard now
+  does the same, so a snooze isn't lost when you close it.
 - **Every time-in-range band now has a number, not just a colour.** The stats
   panel printed only "in range" and "below"; above-range and very-low existed
   solely as segments of the bar — and on the default palette two of those

@@ -60,10 +60,29 @@ enum Mode {
     /// Write a systemd user unit pointing at this binary, and explain how to
     /// enable it.
     InstallUnit,
+    /// Silence a running (or next-starting) alarm daemon.
+    Snooze { minutes: Option<i64> },
     /// Print usage and exit.
     Help,
     /// Print the version and exit.
     Version,
+}
+
+/// Parse a snooze duration into minutes: `15m`, `2h`, a bare `90`, or `off`
+/// (which cancels, and is reported as zero).
+fn parse_snooze(arg: &str) -> Option<i64> {
+    let a = arg.trim().to_ascii_lowercase();
+    if matches!(a.as_str(), "off" | "cancel" | "clear" | "0") {
+        return Some(0);
+    }
+    let (digits, mult) = match a.strip_suffix('h') {
+        Some(d) => (d, 60),
+        None => (a.strip_suffix('m').unwrap_or(&a), 1),
+    };
+    let n: i64 = digits.trim().parse().ok()?;
+    // A day is the ceiling: beyond that someone means "turn it off", and a
+    // snooze that outlives the night it was set in is a trap.
+    (1..=24 * 60).contains(&(n * mult)).then_some(n * mult)
 }
 
 /// The subcommand `--demo` cannot honour, if this is one.
@@ -107,6 +126,27 @@ fn parse_args() -> Mode {
             "about" => mode = Some(Mode::About),
             "export" => mode = Some(Mode::Export { days: 0, dir: None }),
             "watch" => mode = Some(Mode::Watch),
+            "snooze" => {
+                // An optional duration follows: `15m`, `2h`, a bare number of
+                // minutes, or `off` to cancel. No argument means the configured
+                // snooze length, which is what the dashboard's `a` key uses.
+                let arg = args.get(i + 1).filter(|a| !a.starts_with('-'));
+                let minutes = match arg {
+                    Some(a) => {
+                        i += 1;
+                        match parse_snooze(a) {
+                            Some(m) => Some(m),
+                            None => {
+                                eprintln!("sugarrush: can't read '{a}' as a duration");
+                                eprintln!("Try: 15m, 2h, 90, or off.");
+                                std::process::exit(2);
+                            }
+                        }
+                    }
+                    None => None,
+                };
+                mode = Some(Mode::Snooze { minutes });
+            }
             "--install-unit" => mode = Some(Mode::InstallUnit),
             "help" | "--help" | "-h" => mode = Some(Mode::Help),
             "--version" | "-V" => mode = Some(Mode::Version),
@@ -198,6 +238,7 @@ async fn main() -> Result<()> {
         }
         Mode::Export { days, dir } => run_export(days, dir).await,
         Mode::Watch => watch::run().await,
+        Mode::Snooze { minutes } => run_snooze(minutes),
         Mode::InstallUnit => install_unit(),
         Mode::Help => {
             print_help();
@@ -296,6 +337,7 @@ USAGE:
     sugarrush watch                          headless alarm watcher (no terminal needed)
     sugarrush export [--days N] [--out DIR]  CSV + a clinical summary
     sugarrush status [--format FORMAT]       one line for a status bar
+    sugarrush snooze [15m|2h|off]            silence the alarm daemon
     sugarrush waybar                         alias for --format waybar
     sugarrush about                          version, repo and the safety note
 
@@ -314,6 +356,42 @@ sugarrush is not a medical device — don't use it for treatment decisions.",
         version = env!("CARGO_PKG_VERSION"),
         formats = status::Format::NAMES,
     );
+}
+
+/// `sugarrush snooze [15m|2h|90|off]` — silence the alarm daemon.
+///
+/// Before this, the only way to stop a 3am alarm from `watch` was
+/// `systemctl --user stop`, which also disarms the *next* one. The episode
+/// state already persisted a snooze and honoured it on restore; there was
+/// simply no way in.
+fn run_snooze(minutes: Option<i64>) -> Result<()> {
+    let cfg = Config::load()?;
+    let alerts = cfg.alerts.resolve(cfg.units);
+    let minutes = minutes.unwrap_or(alerts.snooze_minutes.max(1));
+
+    if minutes == 0 {
+        let sites = watch::set_snooze(None)?;
+        println!("snooze cancelled on {sites} site(s) — the alarm is armed");
+        return Ok(());
+    }
+
+    let until = now_ms() + minutes * 60_000;
+    let sites = watch::set_snooze(Some(until))?;
+    use chrono::TimeZone;
+    let clock = chrono::Local
+        .timestamp_millis_opt(until)
+        .single()
+        .map(|t| t.format("%H:%M").to_string())
+        .unwrap_or_else(|| format!("{minutes}m from now"));
+    println!("snoozed until {clock} ({minutes}m) on {sites} site(s)");
+    // Say how long it takes to land, rather than leaving someone at 3am
+    // wondering whether it worked.
+    if watch::is_alive(watch::Role::Watch, now_ms()) {
+        println!("a running watcher picks this up on its next poll");
+    } else {
+        println!("no watcher running — this arms the next one");
+    }
+    Ok(())
 }
 
 /// Write a systemd user unit that points at *this* binary.
@@ -643,7 +721,17 @@ fn handle_key(app: &mut App, fetch: &Fetcher, key: KeyEvent) {
                 fetch.request(app);
             }
         }
-        KeyCode::Char('a') => app.snooze_alarm(now_ms()),
+        KeyCode::Char('a') => {
+            app.snooze_alarm(now_ms());
+            // Hand the snooze to the daemon as well, or closing the dashboard
+            // un-silences an alarm someone deliberately silenced: the watcher
+            // stops deferring the moment the TUI's heartbeat goes stale.
+            // Best-effort — a dashboard with no daemon configured still snoozes
+            // itself.
+            if !app.demo {
+                let _ = watch::set_snooze(app.snooze_until());
+            }
+        }
         KeyCode::Char('e') => app.export_window(now_ms()),
         _ => {}
     }
@@ -1338,6 +1426,30 @@ mod tests {
 
         // …but not forever, or a sensor change would never show up.
         assert!(plan(&mut app, now + 31 * 60_000).sensor);
+    }
+
+    /// `sugarrush snooze 15m` at 3am has to be unambiguous, and must not
+    /// silently accept something that means a different thing than intended.
+    #[test]
+    fn snooze_durations_parse_the_way_people_write_them() {
+        for (input, expected) in [
+            ("15m", Some(15)),
+            ("15", Some(15)),
+            ("2h", Some(120)),
+            ("1h", Some(60)),
+            (" 45M ", Some(45)),
+            ("off", Some(0)),
+            ("cancel", Some(0)),
+            ("0", Some(0)),
+            // A snooze that outlives the night it was set in is a trap.
+            ("25h", None),
+            ("2000", None),
+            ("bogus", None),
+            ("-5", None),
+            ("", None),
+        ] {
+            assert_eq!(parse_snooze(input), expected, "for {input:?}");
+        }
     }
 
     fn fetcher(site: &config::Site) -> (Fetcher, mpsc::UnboundedReceiver<(Plan, Gathered)>) {

@@ -187,6 +187,49 @@ impl State {
     }
 }
 
+/// Take on a snooze that was set from outside this process.
+///
+/// The daemon writes this file every poll, so on-disk and in-memory normally
+/// agree. The daemon never sets a snooze itself, which means any difference
+/// came from `sugarrush snooze` — including a cancellation — and wins. Without
+/// this the next poll would quietly overwrite the snooze someone just set.
+fn adopt_external_snooze(app: &mut App, on_disk: Option<&Episode>) {
+    if let Some(e) = on_disk {
+        if e.snooze_until != app.snooze_until() {
+            app.set_snooze(e.snooze_until);
+        }
+    }
+}
+
+/// Set (or clear) the snooze on every watched site, by writing the state file
+/// the daemon already reads.
+///
+/// This is how `sugarrush snooze` reaches a running `watch`. There is no IPC:
+/// the daemon re-reads this file every poll, so the snooze lands within one
+/// interval — and, more importantly, it works when *no* daemon is running,
+/// arming the next one instead of failing. A 3am snooze that only works if the
+/// service happens to be up is not a snooze.
+///
+/// Returns how many sites it applied to.
+pub fn set_snooze(until: Option<i64>) -> Result<usize> {
+    let mut state = State::load();
+    if state.sites.is_empty() {
+        // No episode file yet (a daemon that has never run, or never alarmed).
+        // Record it anyway under the configured site names, so the snooze is
+        // in place before the first alarm rather than after it.
+        let cfg = crate::config::Config::load()?;
+        for site in cfg.resolve_sites()? {
+            state.sites.entry(site.name).or_default();
+        }
+    }
+    for episode in state.sites.values_mut() {
+        episode.snooze_until = until;
+    }
+    let n = state.sites.len();
+    state.save()?;
+    Ok(n)
+}
+
 /// The parts of one site's alert episode worth carrying across a restart.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Episode {
@@ -312,8 +355,15 @@ pub async fn run() -> Result<()> {
             _ = ticker.tick() => {
                 let now = now_ms();
                 heartbeat(Role::Watch, now);
+                // Re-read before writing: `sugarrush snooze` sets the snooze by
+                // writing this file, and without this the daemon would overwrite
+                // it with its own in-memory copy on the very next poll. The
+                // daemon never sets a snooze itself, so anything that differs
+                // from what we last wrote came from outside and wins.
+                let on_disk = State::load();
                 let mut state = State::default();
                 for w in watched.iter_mut() {
+                    adopt_external_snooze(&mut w.app, on_disk.sites.get(&w.name));
                     // The retry policy already exists on App and the TUI obeys
                     // it; the daemon was hammering a failing site at full rate
                     // and ignoring a paused-after-auth-failure state entirely.
@@ -524,6 +574,39 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_700_000_000_000;
+
+    /// Before `sugarrush snooze`, the only way to stop a 3am alarm from the
+    /// daemon was `systemctl --user stop` — which also disarms the *next* one.
+    /// The snooze arrives by way of this file, and the daemon rewrites the file
+    /// every poll, so it has to take on what it finds rather than overwrite it.
+    #[test]
+    fn an_externally_set_snooze_is_adopted_not_clobbered() {
+        let cfg = crate::config::Config::demo();
+        let alerts = cfg.alerts.resolve(cfg.units);
+        let sites = cfg.resolve_sites().unwrap();
+        let mut app = App::new(&cfg, alerts, sites);
+        assert_eq!(app.snooze_until(), None);
+
+        let until = NOW + 15 * 60_000;
+        adopt_external_snooze(
+            &mut app,
+            Some(&Episode {
+                snooze_until: Some(until),
+                ..Episode::default()
+            }),
+        );
+        assert_eq!(app.snooze_until(), Some(until), "the snooze must land");
+
+        // `sugarrush snooze off` clears it the same way.
+        adopt_external_snooze(&mut app, Some(&Episode::default()));
+        assert_eq!(app.snooze_until(), None, "a cancellation must land too");
+
+        // No entry on disk yet (a site the daemon has never alarmed on) leaves
+        // whatever is in memory alone.
+        app.set_snooze(Some(until));
+        adopt_external_snooze(&mut app, None);
+        assert_eq!(app.snooze_until(), Some(until));
+    }
 
     #[test]
     fn a_heartbeat_goes_stale() {
