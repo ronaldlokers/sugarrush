@@ -6,6 +6,13 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Health and delivery joins survive person renames safely.** Concurrent
+  follower results and new delivery receipts now carry immutable site IDs;
+  legacy name-only receipts remain readable without letting a reused display
+  name inherit another person's current delivery status.
+
 ### Added
 
 - **Treatment submissions have a privacy-safe receipt view.** `treatments`
