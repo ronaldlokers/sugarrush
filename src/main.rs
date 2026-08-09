@@ -93,6 +93,12 @@ enum Mode {
     /// Print per-site watcher/data/channel health as JSON.
     Health,
     Treatment(treatment::Request),
+    Cache {
+        action: history_cache::Action,
+        site: Option<String>,
+        all: bool,
+        confirm: bool,
+    },
     /// Print usage and exit.
     Help,
     /// Write the man page to stdout.
@@ -204,6 +210,22 @@ fn parse_args() -> Mode {
                     non_interactive: false,
                     operation_id: None,
                 }))
+            }
+            "cache" => {
+                i += 1;
+                mode = Some(Mode::Cache {
+                    action: match args.get(i).map(String::as_str) {
+                        Some("status") => history_cache::Action::Status,
+                        Some("clear") => history_cache::Action::Clear,
+                        _ => {
+                            eprintln!("sugarrush: cache needs 'status' or 'clear'");
+                            std::process::exit(2)
+                        }
+                    },
+                    site: None,
+                    all: false,
+                    confirm: false,
+                });
             }
             "snooze" => {
                 // An optional duration follows: `15m`, `2h`, a bare number of
@@ -379,6 +401,12 @@ fn parse_args() -> Mode {
             non_interactive: treatment_non_interactive,
             operation_id: treatment_operation_id,
         }),
+        Some(Mode::Cache { action, .. }) => Mode::Cache {
+            action,
+            site: snooze_site,
+            all: snooze_all,
+            confirm: treatment_confirm,
+        },
         Some(m) => m,
         None => Mode::Tui { screen, demo },
     }
@@ -430,6 +458,12 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Mode::Treatment(request) => treatment::run(request).await,
+        Mode::Cache {
+            action,
+            site,
+            all,
+            confirm,
+        } => run_cache(action, site.as_deref(), all, confirm),
         Mode::Service(action) => service::run(action),
         Mode::Help => {
             print_help();
@@ -465,12 +499,14 @@ async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
     {
         Ok(entries) => {
             if cfg.history_cache.enabled {
-                let _ = history_cache::merge(
+                if let Err(error) = history_cache::merge(
                     &sites[0].stable_id(),
                     &entries,
                     now,
                     cfg.history_cache.retention_days,
-                );
+                ) {
+                    eprintln!("sugarrush export: cache update failed: {error}");
+                }
             }
             entries
         }
@@ -622,6 +658,10 @@ const COMMANDS: &[(&str, &str)] = &[
     (
         "sugarrush treatment --site NAME [--carbs G] [--insulin U] [--note TEXT] [--at RFC3339]",
         "review and write a durable CarePortal treatment",
+    ),
+    (
+        "sugarrush cache status|clear [--site NAME|--all] [--confirm]",
+        "inspect or deliberately erase private cached history",
     ),
     (
         "sugarrush export [--days N] [--out DIR]",
@@ -800,6 +840,67 @@ fn run_snooze(minutes: Option<i64>, site: Option<&str>, all: bool) -> Result<()>
         println!("no watcher running — this arms the next one");
     }
     Ok(())
+}
+
+fn run_cache(
+    action: history_cache::Action,
+    selected: Option<&str>,
+    all: bool,
+    confirm: bool,
+) -> Result<()> {
+    let cfg = Config::load()?;
+    let sites = cfg.resolve_sites()?;
+    match action {
+        history_cache::Action::Status => {
+            println!(
+                "private history cache: {} · retention {} days",
+                if cfg.history_cache.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+                cfg.history_cache.retention_days
+            );
+            for site in &sites {
+                let (count, oldest, newest, bytes) = history_cache::describe(&site.stable_id())?;
+                println!(
+                    "{}: {count} readings · {bytes} bytes · {} to {}",
+                    site.name,
+                    oldest
+                        .map(format_timestamp)
+                        .unwrap_or_else(|| "empty".into()),
+                    newest
+                        .map(format_timestamp)
+                        .unwrap_or_else(|| "empty".into())
+                );
+            }
+        }
+        history_cache::Action::Clear => {
+            if !confirm {
+                anyhow::bail!("cache deletion requires --confirm");
+            }
+            if all {
+                history_cache::purge_all()?;
+                println!("cleared private cached history for every configured person");
+            } else {
+                let name = selected
+                    .context("multi-person cache deletion requires --site NAME or --all")?;
+                let site = sites
+                    .iter()
+                    .find(|site| site.name == name)
+                    .with_context(|| format!("unknown site '{name}'"))?;
+                history_cache::clear_site(&site.stable_id())?;
+                println!("cleared private cached history for {}", site.name);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_timestamp(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|at| at.to_rfc3339())
+        .unwrap_or_else(|| "invalid time".into())
 }
 
 /// Print name/version/repo and a not-a-medical-device note, and also fire a
@@ -1562,7 +1663,10 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
     match g.entries {
         Some(Ok(entries)) => {
             if p.cache_enabled {
-                let _ = history_cache::merge(&p.cache_key, &entries, now, p.cache_days);
+                if let Err(error) = history_cache::merge(&p.cache_key, &entries, now, p.cache_days)
+                {
+                    app.status = Some(format!("live · private cache update failed: {error}"));
+                }
             }
             if p.live {
                 let fresh = entries
@@ -1642,7 +1746,11 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
         match g.agp {
             Some(Ok(entries)) => {
                 if p.cache_enabled {
-                    let _ = history_cache::merge(&p.cache_key, &entries, now, p.cache_days);
+                    if let Err(error) =
+                        history_cache::merge(&p.cache_key, &entries, now, p.cache_days)
+                    {
+                        app.status = Some(format!("live · private cache update failed: {error}"));
+                    }
                 }
                 app.agp_entries = entries;
                 app.agp_fetched_ms = now;

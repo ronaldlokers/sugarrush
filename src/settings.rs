@@ -671,6 +671,13 @@ impl App {
                             false
                         };
                     }
+                } else if persisted.history_cache.enabled {
+                    if let Err(e) = crate::history_cache::enable() {
+                        return {
+                            self.status = Some(format!("saved; cache enabling failed: {e}"));
+                            false
+                        };
+                    }
                 }
                 self.settings_dirty = false;
                 self.settings_baseline = persisted;
