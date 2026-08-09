@@ -13,6 +13,11 @@ this file in the same commit.
 advances. It classifies, updates the episode timers, and returns everything
 that should be announced:
 
+`App` owns the live readings and classification inputs; `AlertEngine` in
+`src/alert_engine.rs` owns the episode state that spans passes (identity,
+debounce, escalation, recovery, and snooze). `App::react` is the sole facade
+that advances both together.
+
 | Field | Meaning |
 |---|---|
 | `state` | the alert state after this pass |

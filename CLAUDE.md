@@ -13,7 +13,8 @@ glucose, trend, history, forecasts, alerts, and stats. Not a medical device.
 | File | Responsibility |
 |------|----------------|
 | `src/main.rs` | Entry point, CLI parsing (`watch`/`export`/`status`/`waybar`/`about`/`--help`), run loop, input, notifications |
-| `src/app.rs` | `App` state, the alert episode machine, graph navigation, and fetch state |
+| `src/app.rs` | `App` state, alert classification/reaction facade, graph navigation, and fetch state |
+| `src/alert_engine.rs` | Alert episode identity, debounce, escalation, recovery, and snooze state |
 | `src/settings.rs` | Settings rows, text editing, adjustment, display, and config persistence |
 | `src/ui.rs` | All rendering — dashboard, settings, AGP, minimap, followers, help overlay, footer |
 | `src/watch.rs` | The headless alarm daemon: per-site pipelines, the TUI handshake, persisted episode state |
