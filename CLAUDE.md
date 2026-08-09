@@ -33,6 +33,11 @@ glucose, trend, history, forecasts, alerts, and stats. Not a medical device.
 | `src/demo.rs`, `src/bigfont.rs` | Synthetic data for `--demo`; block-glyph digits |
 | `src/waybar.rs` | Thin wrapper over `status.rs`, kept so `sugarrush waybar` still works |
 
+The alarm's behavioural contract — the reaction sequence, episode lifecycle,
+the TUI/daemon handover, and the list of ways a night can pass without a sound —
+is written down in [`docs/alarm-contract.md`](docs/alarm-contract.md). **Change
+it in the same commit as any change to the alarm path.**
+
 ## Commands
 
 Rust is pinned via [mise](https://mise.jdx.dev); prefix cargo with `mise exec --`:

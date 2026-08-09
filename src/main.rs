@@ -477,11 +477,12 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -
                 // Re-classify locally every few seconds (no network) so a sensor
                 // gap escalates to a Stale alarm promptly instead of waiting for
                 // the next full refresh.
-                app.evaluate_alert(now);
-                app.update_urgent(now);
-                if app.alarm_active(now) {
-                    sound::alarm(app.alarm_tone());
-                }
+                // The full reaction, not a partial copy of it: this used to
+                // classify and sound but never consume a notification or a
+                // push, so a transition between refreshes waited out the whole
+                // refresh interval before it was announced.
+                let r = app.react(now);
+                deliver(app, r, &fetch);
                 // Retry the connection sooner than the normal interval when down.
                 if app.should_retry(now) {
                     fetch.request(app);
@@ -879,18 +880,17 @@ async fn gather(client: &Client, p: &Plan) -> Gathered {
 /// The mutation half: fold a finished `Gathered` back into `App`, then run the
 /// alert machine. Synchronous, so the run loop can never block in here.
 ///
-/// Returns the push-webhook call to make, if any — the one remaining piece of
-/// network in the tail, handed back so the caller can spawn it rather than
-/// await it.
+/// Returns the `Reaction` the alarm machine produced, for the caller to
+/// deliver — the announcements involve network and D-Bus, which do not belong
+/// on the run loop.
 #[must_use]
-fn apply(app: &mut App, p: &Plan, g: Gathered) -> Option<(String, String)> {
+fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
     let now = p.now;
 
     // Demo mode: synthesize everything locally, no network.
     if p.demo {
         app.entries = demo::entries(p.start, p.end);
         app.mark_online(now);
-        app.evaluate_alert(now);
         if p.live {
             app.predictions = predict::ar2(&app.entries);
             app.device = demo::device();
@@ -904,7 +904,7 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> Option<(String, String)> {
         // Always synthesized: the stats panel reads this clinical-window
         // buffer even outside the AGP view.
         app.agp_entries = demo::entries(now - app.agp_span_ms(), now);
-        return None;
+        return app.react(now);
     }
 
     match g.entries {
@@ -990,9 +990,18 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> Option<(String, String)> {
 
     // Alert evaluation and notifications run every refresh, online or not, so a
     // sensor gap still escalates to a Stale alarm.
-    app.evaluate_alert(now);
-    if app.alerts.desktop {
-        if let Some(a) = app.take_notification() {
+    app.react(now)
+}
+
+/// Deliver what the alarm machine decided: desktop toast, webhook, sound.
+///
+/// The one place that turns a `Reaction` into side effects for the dashboard.
+/// Announcements that can't be delivered are dropped, never re-queued — a
+/// notification held back because desktop notifications were off used to fire
+/// the moment they were switched on, for an episode long finished.
+fn deliver(app: &mut App, r: app::Reaction, fetch: &Fetcher) {
+    if let Some(a) = r.notification {
+        if app.alerts.desktop {
             // A discarded result meant "Desktop: on" could be a lie: with no
             // notification daemon running the D-Bus call fails and nothing is
             // shown, which — paired with a failing audio player — is two dead
@@ -1005,8 +1014,7 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> Option<(String, String)> {
             );
         }
     }
-    app.update_urgent(now);
-    if let Some(msg) = app.take_predictive(now) {
+    if let Some(msg) = r.predictive {
         if app.alerts.desktop {
             if app.alerts.notify_content {
                 let _ = notify_text(&msg);
@@ -1015,9 +1023,19 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> Option<(String, String)> {
             }
         }
     }
-    app.take_push(now)
-        .zip(app.alerts.push_url.clone())
-        .map(|(msg, url)| (url, msg))
+    if let Some((url, msg)) = r.push {
+        // The push webhook is a safety channel (unacknowledged-urgent
+        // escalation); a dead URL must not fail silently.
+        let errors = fetch.errors.clone();
+        tokio::spawn(async move {
+            if !push(&url, &msg).await {
+                let _ = errors.send("push notification failed — check push_url".to_string());
+            }
+        });
+    }
+    if r.sound {
+        sound::alarm(app.alarm_tone());
+    }
 }
 
 /// Hands refreshes to background tasks so the run loop never awaits the
@@ -1077,14 +1095,8 @@ impl Fetcher {
     /// Fold a finished fetch into `App`, and start the next one if the view
     /// moved while this was in flight.
     fn deliver(&self, app: &mut App, p: Plan, g: Gathered) {
-        if let Some((url, msg)) = apply(app, &p, g) {
-            let errors = self.errors.clone();
-            tokio::spawn(async move {
-                if !push(&url, &msg).await {
-                    let _ = errors.send("push notification failed — check push_url".to_string());
-                }
-            });
-        }
+        let reaction = apply(app, &p, g);
+        deliver(app, reaction, self);
         if self.pending.swap(false, Ordering::SeqCst) {
             self.request(app);
         }
@@ -1096,12 +1108,28 @@ impl Fetcher {
 async fn refresh(app: &mut App, client: &Client) {
     let p = plan(app, now_ms());
     let g = gather(client, &p).await;
-    if let Some((url, msg)) = apply(app, &p, g) {
+    let r = apply(app, &p, g);
+    if let Some((url, msg)) = r.push.clone() {
         // The push webhook is a safety channel (unacknowledged-urgent
         // escalation); a dead URL must not fail silently.
         if !push(&url, &msg).await {
             app.last_error = Some("push notification failed — check push_url".to_string());
         }
+    }
+    // The rest of the reaction still has to be delivered; only the push is
+    // awaited here, on the startup path that has nothing else to do.
+    if let Some(a) = r.notification {
+        if app.alerts.desktop {
+            app.notify_failed = !notify(
+                a,
+                app.live_latest().map(|e| e.sgv),
+                app.units,
+                app.alerts.notify_content,
+            );
+        }
+    }
+    if r.sound {
+        sound::alarm(app.alarm_tone());
     }
 }
 
