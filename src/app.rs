@@ -1677,6 +1677,36 @@ mod tests {
     }
 
     #[test]
+    fn write_token_is_separate_masked_and_removable() {
+        let mut a = app();
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::SiteWriteToken)
+            .unwrap();
+        assert!(a.begin_field_edit());
+        assert!(a.field_edit.as_ref().unwrap().masked);
+        a.field_edit.as_mut().unwrap().buffer = "careportal-secret".into();
+        a.commit_field_edit();
+        assert_eq!(a.active_site().token, "demo");
+        assert_eq!(
+            a.active_site().write_token.as_deref(),
+            Some("careportal-secret")
+        );
+        assert!(!a.field_value(Field::SiteWriteToken).contains("secret"));
+        assert_eq!(
+            a.build_config().resolve_sites().unwrap()[0]
+                .write_token
+                .as_deref(),
+            Some("careportal-secret")
+        );
+
+        assert!(a.begin_field_edit());
+        a.field_edit.as_mut().unwrap().buffer = "off".into();
+        a.commit_field_edit();
+        assert!(a.active_site().write_token.is_none());
+    }
+
+    #[test]
     fn push_url_edit_is_masked_replaceable_and_clearable() {
         let mut a = app();
         a.settings_sel = Field::ALL
@@ -1939,6 +1969,7 @@ mod tests {
                 name: "alice".into(),
                 url: "https://alice.example".into(),
                 token: "a".into(),
+                write_token: None,
                 timezone: None,
                 alerts: None,
             },
@@ -1946,6 +1977,7 @@ mod tests {
                 name: "bob".into(),
                 url: "https://bob.example".into(),
                 token: "b".into(),
+                write_token: None,
                 timezone: None,
                 alerts: Some(AlertsConfig {
                     low: Some(4.5),
@@ -2026,6 +2058,7 @@ mod tests {
             name: "bob".into(),
             url: "https://ns.example.com".into(),
             token: "t".into(),
+            write_token: None,
             timezone: None,
             alerts: None,
         });

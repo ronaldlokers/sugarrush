@@ -42,6 +42,22 @@ can understand and revisit the arrangement as their independence changes.
 
 ## What it does
 
+Treatment logging is optional and read-only remains the default. A separate
+Nightscout `careportal` token can authorize an explicitly confirmed command;
+Sugarrush checks its exact treatment-create permission before each write and
+keeps a private audit without token or note contents:
+
+```sh
+sugarrush treatment --site Alex --carbs 15 --note "snack" --confirm
+sugarrush treatment --site Alex --insulin 1.5 --at 2026-08-09T14:30:00+02:00 --confirm
+```
+
+This records what someone reports having taken; it does not recommend a dose,
+deliver insulin, or verify that a treatment was clinically correct. Confirm the
+accepted entry in Nightscout. Create the write token as a Nightscout Subject
+with the `careportal` role, keep the existing `readable` token separate, and
+remove the write token in Settings by entering `off` when it is no longer needed.
+
 **At a glance**
 - Big, colour-coded current value with trend arrow, delta, and a plain-text
   range label (readable without colour)
@@ -446,6 +462,7 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush watch --test [--quiet]` | check that every alarm channel actually works |
 | `sugarrush watch --install-service\|--service-status\|--uninstall-service` | manage the native always-on user service |
 | `sugarrush snooze [15m\|2h\|off] [--site NAME\|--all]` | silence the alarm daemon without stopping it |
+| `sugarrush treatment --site NAME [--carbs G] [--insulin U] [--note TEXT] [--at RFC3339] --confirm` | write a validated, audited CarePortal treatment |
 | `sugarrush alerts [--days N] [--site NAME] [--format text\|json\|csv]` | filter or export what the alarm has done |
 | `sugarrush health --json` | machine-readable watcher, data and delivery health |
 | `sugarrush export [--days N] [--out DIR]` | CSV + a clinical summary |

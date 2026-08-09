@@ -14,6 +14,7 @@ pub enum Field {
     SiteName,
     SiteUrl,
     SiteToken,
+    SiteWriteToken,
     SiteTimezone,
     TestSite,
     AddSite,
@@ -56,10 +57,11 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 41] = [
+    pub const ALL: [Field; 42] = [
         Field::SiteName,
         Field::SiteUrl,
         Field::SiteToken,
+        Field::SiteWriteToken,
         Field::SiteTimezone,
         Field::TestSite,
         Field::AddSite,
@@ -105,6 +107,7 @@ impl Field {
             Field::SiteName => "Site name",
             Field::SiteUrl => "Site URL",
             Field::SiteToken => "Read-only token",
+            Field::SiteWriteToken => "Treatment write token",
             Field::SiteTimezone => "Person's timezone",
             Field::TestSite => "Test this site",
             Field::AddSite => "Add site",
@@ -153,6 +156,7 @@ impl Field {
             Field::SiteName
             | Field::SiteUrl
             | Field::SiteToken
+            | Field::SiteWriteToken
             | Field::SiteTimezone
             | Field::TestSite
             | Field::AddSite
@@ -245,7 +249,7 @@ impl App {
             },
             // Start empty and masked — a token is replaced wholesale, and
             // pre-filling it would put the secret back on screen.
-            Field::SiteToken => FieldEdit {
+            Field::SiteToken | Field::SiteWriteToken => FieldEdit {
                 field,
                 buffer: String::new(),
                 masked: true,
@@ -339,6 +343,23 @@ impl App {
                     self.status = Some("token updated · press w to save".to_string());
                 }
             }
+            Field::SiteWriteToken => {
+                let value = edit.buffer.trim();
+                if value.is_empty() {
+                    self.status = Some("write token unchanged · type 'off' to clear".into());
+                } else if value.eq_ignore_ascii_case("off") {
+                    self.sites[idx].write_token = None;
+                    self.settings_dirty = true;
+                    self.status = Some("write access removed · press w to save".into());
+                } else {
+                    self.sites[idx].write_token = Some(value.to_string());
+                    self.settings_dirty = true;
+                    self.status = Some(
+                        "write token set · capability is checked before every treatment write"
+                            .into(),
+                    );
+                }
+            }
             Field::SiteTimezone => {
                 let value = edit.buffer.trim();
                 if value.is_empty() || value.eq_ignore_ascii_case("local") {
@@ -395,6 +416,7 @@ impl App {
             name,
             url,
             token: String::new(),
+            write_token: None,
             timezone: None,
             alerts: None,
         });
@@ -560,6 +582,7 @@ impl App {
             Field::SiteName
             | Field::SiteUrl
             | Field::SiteToken
+            | Field::SiteWriteToken
             | Field::SiteTimezone
             | Field::PushUrl => {
                 self.status = Some("press enter to edit".to_string());
@@ -722,6 +745,7 @@ impl App {
         }
         let single_default = persisted_sites.len() == 1
             && persisted_sites[0].name == "default"
+            && persisted_sites[0].write_token.is_none()
             && persisted_sites[0].timezone.is_none()
             && persisted_sites[0].alerts.is_none();
         let (url, token, sites) = if single_default {
@@ -839,6 +863,12 @@ impl App {
                 "not set"
             } else {
                 "set · ••••••"
+            }
+            .to_string(),
+            Field::SiteWriteToken => if self.active_site().write_token.is_some() {
+                "set · hidden · can modify Nightscout"
+            } else {
+                "off · read-only"
             }
             .to_string(),
             Field::SiteTimezone => self
