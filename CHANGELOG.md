@@ -6,6 +6,15 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The clinical export cites its sources.** Time-in-range and CV goals now
+  reference the 2019 international consensus (Battelino et al., Diabetes Care)
+  and GMI references Bergenstal et al. 2018, with a note that the consensus
+  targets are stated for 70–180 mg/dL while the percentages are computed
+  against your configured thresholds — so a clinician can tell whether they're
+  comparing like with like.
+
 ### Fixed
 
 - **The AGP no longer calls one bad night a pattern.** Insights were guarded by
