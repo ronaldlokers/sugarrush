@@ -21,6 +21,11 @@ pub enum Format {
     Report,
 }
 
+pub struct Context<'a> {
+    pub timezone: Option<&'a str>,
+    pub subject: Option<&'a str>,
+}
+
 impl Format {
     pub fn extension(self) -> &'static str {
         match self {
@@ -44,18 +49,18 @@ pub fn write_pair(
     units: Units,
     days: u32,
     now_ms: i64,
-    timezone: Option<&str>,
+    context: Context<'_>,
 ) -> anyhow::Result<Vec<std::path::PathBuf>> {
     use anyhow::Context;
     let mut written = Vec::new();
     for (format, body) in [
-        (Format::Csv, csv_in(entries, units, timezone)),
+        (Format::Csv, csv_in(entries, units, context.timezone)),
         (
             Format::Report,
-            report_in(entries, alerts, units, days, now_ms, timezone),
+            report_in(entries, alerts, units, days, now_ms, context.timezone),
         ),
     ] {
-        let path = dir.join(filename(format, now_ms));
+        let path = dir.join(filename(format, now_ms, context.subject));
         crate::config::write_private(&path, &body)
             .with_context(|| format!("failed to write {}", path.display()))?;
         written.push(std::fs::canonicalize(&path).unwrap_or(path));
@@ -64,13 +69,34 @@ pub fn write_pair(
 }
 
 /// `sugarrush-YYYYMMDD-HHMM.csv` — sortable, and obvious in a Downloads folder.
-pub fn filename(format: Format, now_ms: i64) -> String {
+pub fn filename(format: Format, now_ms: i64, subject: Option<&str>) -> String {
     let stamp = Local
         .timestamp_millis_opt(now_ms)
         .single()
         .map(|dt| dt.format("%Y%m%d-%H%M").to_string())
         .unwrap_or_else(|| "export".into());
-    format!("sugarrush-{stamp}.{}", format.extension())
+    let subject = subject.map(|subject| {
+        let slug = subject
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>();
+        let slug = slug.trim_matches('-').to_string();
+        if slug.is_empty() {
+            "site".into()
+        } else {
+            slug
+        }
+    });
+    match subject {
+        Some(subject) => format!("sugarrush-{subject}-{stamp}.{}", format.extension()),
+        None => format!("sugarrush-{stamp}.{}", format.extension()),
+    }
 }
 
 /// Readings as CSV, oldest first — the order a human reads and a spreadsheet
@@ -471,9 +497,10 @@ mod tests {
 
     #[test]
     fn filenames_are_sortable_and_typed() {
-        let csv_name = filename(Format::Csv, NOW);
-        let txt_name = filename(Format::Report, NOW);
+        let csv_name = filename(Format::Csv, NOW, Some("Alice Smith"));
+        let txt_name = filename(Format::Report, NOW, Some("Alice Smith"));
         assert!(csv_name.starts_with("sugarrush-"));
+        assert!(csv_name.contains("alice-smith"));
         assert!(csv_name.ends_with(".csv"));
         assert!(txt_name.ends_with(".txt"));
         // Same instant → same stem, so the pair stays together in a listing.

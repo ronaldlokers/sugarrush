@@ -8,6 +8,15 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Operational health is explicit instead of collapsing unlike guarantees.**
+  JSON now separates process, data, configured-channel, suppression, and known
+  delivery status; `--strict-delivery` gives external monitors an opt-in
+  degraded exit policy without claiming that an accepted alert was received.
+
+- **Multi-person exports can no longer silently choose the first person.** A
+  follower must select `--site NAME` or explicitly request `--all`; filenames
+  and output identify their subject and the matching cache/timezone are used.
+
 - **Private cache storage is inspectable and selectively erasable.** `cache
   status` reports each person's entry count, date span, and bytes without
   printing readings; confirmed clear commands target one person or everyone.

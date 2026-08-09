@@ -68,6 +68,8 @@ enum Mode {
     Export {
         days: u32,
         dir: Option<String>,
+        site: Option<String>,
+        all: bool,
     },
     /// Run the headless alarm watcher until killed.
     Watch,
@@ -91,7 +93,9 @@ enum Mode {
         format: alertlog::Format,
     },
     /// Print per-site watcher/data/channel health as JSON.
-    Health,
+    Health {
+        strict_delivery: bool,
+    },
     Treatment(treatment::Request),
     Cache {
         action: history_cache::Action,
@@ -182,7 +186,14 @@ fn parse_args() -> Mode {
                 status_format = args.get(i).cloned();
             }
             "about" => mode = Some(Mode::About),
-            "export" => mode = Some(Mode::Export { days: 0, dir: None }),
+            "export" => {
+                mode = Some(Mode::Export {
+                    days: 0,
+                    dir: None,
+                    site: None,
+                    all: false,
+                })
+            }
             "watch" => mode = Some(Mode::Watch),
             // `watch --test` reads as "test the watcher"; accept it either way.
             "--test" => mode = Some(Mode::AlarmTest { quiet: false }),
@@ -198,7 +209,11 @@ fn parse_args() -> Mode {
                     format: alertlog::Format::Text,
                 })
             }
-            "health" => mode = Some(Mode::Health),
+            "health" => {
+                mode = Some(Mode::Health {
+                    strict_delivery: false,
+                })
+            }
             "treatment" => {
                 mode = Some(Mode::Treatment(treatment::Request {
                     site: String::new(),
@@ -295,7 +310,15 @@ fn parse_args() -> Mode {
                 }));
             }
             "--all" => snooze_all = true,
-            "--json" if matches!(mode, Some(Mode::Health)) => {}
+            "--json" if matches!(mode, Some(Mode::Health { .. })) => {}
+            "--strict-delivery" => {
+                if let Some(Mode::Health { strict_delivery }) = mode.as_mut() {
+                    *strict_delivery = true;
+                } else {
+                    eprintln!("sugarrush: --strict-delivery only applies to health");
+                    std::process::exit(2);
+                }
+            }
             "--install-unit" | "--install-service" => {
                 mode = Some(Mode::Service(service::Action::Install))
             }
@@ -349,6 +372,8 @@ fn parse_args() -> Mode {
         Some(Mode::Export { .. }) => Mode::Export {
             days: export_days.unwrap_or(0),
             dir: export_dir,
+            site: snooze_site,
+            all: snooze_all,
         },
         Some(Mode::Alerts { .. }) => Mode::Alerts {
             days: export_days.map(i64::from).unwrap_or(7),
@@ -435,7 +460,12 @@ async fn main() -> Result<()> {
             println!("{}", status::status(&cfg).await.render(format));
             Ok(())
         }
-        Mode::Export { days, dir } => run_export(days, dir).await,
+        Mode::Export {
+            days,
+            dir,
+            site,
+            all,
+        } => run_export(days, dir, site.as_deref(), all).await,
         Mode::Watch => watch::run().await,
         Mode::Snooze { minutes, site, all } => run_snooze(minutes, site.as_deref(), all),
         Mode::AlarmTest { quiet } => selftest::run(quiet).await,
@@ -447,12 +477,12 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
-        Mode::Health => {
+        Mode::Health { strict_delivery } => {
             let cfg = Config::load()?;
             let report = health::inspect(&cfg).await?;
             let healthy = report.healthy;
             println!("{}", serde_json::to_string_pretty(&report)?);
-            if !healthy {
+            if !healthy || (strict_delivery && report.degraded) {
                 std::process::exit(1);
             }
             Ok(())
@@ -483,13 +513,52 @@ async fn main() -> Result<()> {
 
 /// Headless export: fetch the clinical window and write both files, printing
 /// the paths. Useful in a cron job or right before an appointment.
-async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
+async fn run_export(
+    days: u32,
+    dir: Option<String>,
+    selected: Option<&str>,
+    all: bool,
+) -> Result<()> {
     let cfg = Config::load()?;
     let days = if days == 0 { cfg.agp_days } else { days }.clamp(1, 90);
     let sites = cfg.resolve_sites()?;
-    let (alerts, warnings) = sites[0].resolve_alerts(&cfg.alerts, cfg.units);
+    if all && selected.is_some() {
+        anyhow::bail!("choose either --site NAME or --all");
+    }
+    if sites.len() > 1 && selected.is_none() && !all {
+        anyhow::bail!("multiple people are configured; choose --site NAME or explicitly use --all");
+    }
+    let selected_sites: Vec<_> = if all {
+        sites.iter().collect()
+    } else if let Some(name) = selected {
+        vec![sites.iter().find(|site| site.name == name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "no site named '{name}'; available: {}",
+                sites
+                    .iter()
+                    .map(|site| site.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?]
+    } else {
+        vec![&sites[0]]
+    };
+    for site in selected_sites {
+        run_export_site(&cfg, site, days, dir.as_deref()).await?;
+    }
+    Ok(())
+}
+
+async fn run_export_site(
+    cfg: &Config,
+    site: &config::Site,
+    days: u32,
+    dir: Option<&str>,
+) -> Result<()> {
+    let (alerts, warnings) = site.resolve_alerts(&cfg.alerts, cfg.units);
     warn_about_config(&warnings);
-    let client = Client::for_site(&sites[0])?;
+    let client = Client::for_site(site)?;
 
     let now = now_ms();
     let start = now - days as i64 * 24 * 3_600_000;
@@ -500,7 +569,7 @@ async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
         Ok(entries) => {
             if cfg.history_cache.enabled {
                 if let Err(error) = history_cache::merge(
-                    &sites[0].stable_id(),
+                    &site.stable_id(),
                     &entries,
                     now,
                     cfg.history_cache.retention_days,
@@ -511,7 +580,7 @@ async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
             entries
         }
         Err(error) if cfg.history_cache.enabled => {
-            let cached = history_cache::load(&sites[0].stable_id(), start, now);
+            let cached = history_cache::load(&site.stable_id(), start, now);
             if cached.is_empty() {
                 return Err(error.into());
             }
@@ -534,9 +603,12 @@ async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
         cfg.units,
         days,
         now,
-        sites[0].timezone.as_deref(),
+        export::Context {
+            timezone: site.timezone.as_deref(),
+            subject: Some(&site.name),
+        },
     )? {
-        println!("{}", path.display());
+        println!("{}: {}", site.name, path.display());
     }
     Ok(())
 }
@@ -652,7 +724,7 @@ const COMMANDS: &[(&str, &str)] = &[
         "filter or export what the alarm has done",
     ),
     (
-        "sugarrush health --json",
+        "sugarrush health --json [--strict-delivery]",
         "machine-readable watcher, data and delivery health",
     ),
     (
@@ -664,7 +736,7 @@ const COMMANDS: &[(&str, &str)] = &[
         "inspect or deliberately erase private cached history",
     ),
     (
-        "sugarrush export [--days N] [--out DIR]",
+        "sugarrush export [--days N] [--out DIR] [--site NAME|--all]",
         "CSV + a clinical summary",
     ),
     (
@@ -699,6 +771,10 @@ const OPTIONS: &[(&str, &str)] = &[
         "with snooze: explicitly target every configured site",
     ),
     ("--json", "with health: emit the stable JSON report"),
+    (
+        "--strict-delivery",
+        "health exits nonzero for alarm or delivery degradation",
+    ),
     (
         "--non-interactive --confirm --operation-id UUID",
         "automation-only treatment confirmation with a stable retry identity",
@@ -2118,7 +2194,15 @@ mod tests {
     fn demo_is_rejected_by_the_subcommands_that_cannot_honour_it() {
         for (mode, expected) in [
             (Some(Mode::Watch), Some("watch")),
-            (Some(Mode::Export { days: 0, dir: None }), Some("export")),
+            (
+                Some(Mode::Export {
+                    days: 0,
+                    dir: None,
+                    site: None,
+                    all: false,
+                }),
+                Some("export"),
+            ),
             (
                 Some(Mode::Status {
                     format: status::Format::Text,
