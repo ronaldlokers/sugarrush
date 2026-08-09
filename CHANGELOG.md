@@ -8,6 +8,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The always-on watcher now has native service management on every shipped
+  desktop platform.** One command installs, starts, inspects, or removes a
+  systemd user service on Linux, a launchd agent on macOS, or a Task Scheduler
+  task on Windows; the old `--install-unit` spelling remains an alias.
+
 - **Alarm delivery is now auditable and monitorable.** Alert history records
   privacy-safe channel outcomes using careful accepted/rejected language, and
   `sugarrush health --json` exposes watcher liveness, per-site freshness,

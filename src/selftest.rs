@@ -298,7 +298,7 @@ pub async fn run(quiet: bool) -> Result<()> {
         checks.push(Check::Bad(
             "watcher".into(),
             "not running — start it with `systemctl --user start sugarrush-watch` \
-             (see `sugarrush --install-unit`)"
+             (see `sugarrush watch --install-service`)"
                 .into(),
         ));
     }
