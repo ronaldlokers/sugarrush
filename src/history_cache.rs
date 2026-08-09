@@ -3,8 +3,15 @@
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crate::nightscout::Entry;
+
+#[derive(Debug, Clone, Copy)]
+pub enum Action {
+    Status,
+    Clear,
+}
 
 fn path(site: &str) -> PathBuf {
     let base = std::env::var_os("XDG_STATE_HOME")
@@ -19,7 +26,19 @@ fn path(site: &str) -> PathBuf {
     base.join("sugarrush/cache").join(format!("{key}.json"))
 }
 
+fn state_root() -> PathBuf {
+    path("placeholder")
+        .parent()
+        .and_then(|cache| cache.parent())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 pub fn merge(site: &str, entries: &[Entry], now_ms: i64, retention_days: u32) -> Result<()> {
+    let _lock = CacheLock::acquire()?;
+    if state_root().join("cache.disabled").exists() {
+        anyhow::bail!("history cache was disabled by another process");
+    }
     let kept = merge_entries(read_all(site), entries, now_ms, retention_days);
     let body = serde_json::to_string(&kept)?;
     let target = path(site);
@@ -69,6 +88,11 @@ fn read_all(site: &str) -> Vec<Entry> {
 }
 
 pub fn clear_all() -> Result<()> {
+    let _lock = CacheLock::acquire()?;
+    std::fs::create_dir_all(state_root())?;
+    // Publish the opt-out boundary before deleting. Even if deletion then
+    // fails, a stale process cannot recreate or add more health data.
+    crate::config::Config::write_atomic(&state_root().join("cache.disabled"), "disabled\n")?;
     let Some(parent) = path("placeholder").parent().map(ToOwned::to_owned) else {
         return Ok(());
     };
@@ -77,6 +101,82 @@ pub fn clear_all() -> Result<()> {
             .with_context(|| format!("failed to remove {}", parent.display()))?;
     }
     Ok(())
+}
+
+pub fn enable() -> Result<()> {
+    let _lock = CacheLock::acquire()?;
+    let marker = state_root().join("cache.disabled");
+    match std::fs::remove_file(marker) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub fn describe(site: &str) -> Result<(usize, Option<i64>, Option<i64>, u64)> {
+    let target = path(site);
+    let entries = read_all(site);
+    let bytes = std::fs::metadata(target).map(|m| m.len()).unwrap_or(0);
+    Ok((
+        entries.len(),
+        entries.iter().map(|entry| entry.date).min(),
+        entries.iter().map(|entry| entry.date).max(),
+        bytes,
+    ))
+}
+
+pub fn clear_site(site: &str) -> Result<()> {
+    let _lock = CacheLock::acquire()?;
+    match std::fs::remove_file(path(site)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub fn purge_all() -> Result<()> {
+    let _lock = CacheLock::acquire()?;
+    let cache = path("placeholder").parent().map(ToOwned::to_owned);
+    if let Some(cache) = cache.filter(|path| path.exists()) {
+        std::fs::remove_dir_all(cache)?;
+    }
+    Ok(())
+}
+
+struct CacheLock(PathBuf);
+
+impl CacheLock {
+    fn acquire() -> Result<Self> {
+        let root = state_root();
+        std::fs::create_dir_all(&root)?;
+        let path = root.join("cache.lock");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
+                Ok(_) => return Ok(Self(path)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if Instant::now() >= deadline {
+                        anyhow::bail!("timed out waiting to update private history cache");
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+}
+
+impl Drop for CacheLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 #[cfg(test)]

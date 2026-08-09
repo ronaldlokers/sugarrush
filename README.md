@@ -61,6 +61,15 @@ accepted entry in Nightscout. Create the write token as a Nightscout Subject
 with the `careportal` role, keep the existing `readable` token separate, and
 remove the write token in Settings by entering `off` when it is no longer needed.
 
+Inspect or deliberately erase the opt-in private history cache without exposing
+its readings:
+
+```sh
+sugarrush cache status
+sugarrush cache clear --site Alex --confirm
+sugarrush cache clear --all --confirm
+```
+
 **At a glance**
 - Big, colour-coded current value with trend arrow, delta, and a plain-text
   range label (readable without colour)
@@ -470,6 +479,7 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush watch --install-service\|--service-status\|--uninstall-service` | manage the native always-on user service |
 | `sugarrush snooze [15m\|2h\|off] [--site NAME\|--all]` | silence the alarm daemon without stopping it |
 | `sugarrush treatment --site NAME [--carbs G] [--insulin U] [--note TEXT] [--at RFC3339]` | review and write a durable CarePortal treatment |
+| `sugarrush cache status\|clear [--site NAME\|--all] [--confirm]` | inspect or deliberately erase private cached history |
 | `sugarrush alerts [--days N] [--site NAME] [--format text\|json\|csv]` | filter or export what the alarm has done |
 | `sugarrush health --json` | machine-readable watcher, data and delivery health |
 | `sugarrush export [--days N] [--out DIR]` | CSV + a clinical summary |

@@ -8,6 +8,10 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Private cache storage is inspectable and selectively erasable.** `cache
+  status` reports each person's entry count, date span, and bytes without
+  printing readings; confirmed clear commands target one person or everyone.
+
 - **People now have immutable internal identities.** Renaming a display label
   no longer moves alarm episodes, snoozes, cached readings, or treatment audit
   receipts between people; legacy configurations receive a deterministic ID
@@ -45,6 +49,11 @@ All notable changes to sugarrush are documented here. The format is based on
   explicit `--all` when several sites are configured.
 
 ### Fixed
+
+- **Private cache opt-out is now durable across running processes.** Cache
+  merges and deletion are serialized, disabling writes a persistent boundary
+  that stale dashboards cannot cross, and write/deletion failures are surfaced
+  instead of silently pretending history was retained or removed.
 
 - **Treatment writes now survive ambiguous failures safely.** An operation is
   durably recorded before sending, transport uncertainty is distinct from
