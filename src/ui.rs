@@ -838,10 +838,6 @@ fn range_bar<'a>(app: &App, sgv: f64, width: u16) -> Line<'a> {
     let u = app.units;
     let lo = u.from_mgdl(app.alerts.urgent_low);
     let hi = u.from_mgdl(app.alerts.urgent_high);
-    let low = u.from_mgdl(app.alerts.low);
-    let high = u.from_mgdl(app.alerts.high);
-    let ulow = u.from_mgdl(app.alerts.urgent_low);
-    let uhigh = u.from_mgdl(app.alerts.urgent_high);
     let lo_s = fmt_disp(u, lo);
     let hi_s = fmt_disp(u, hi);
     // ` <lo> ` + bar + ` <hi>`
@@ -851,6 +847,7 @@ fn range_bar<'a>(app: &App, sgv: f64, width: u16) -> Line<'a> {
         return Line::from("");
     }
     let span = (hi - lo).max(0.1);
+    let span_mgdl = (app.alerts.urgent_high - app.alerts.urgent_low).max(0.1);
     let cur = u.from_mgdl(sgv);
     let marker = (((cur - lo) / span) * (cells as f64 - 1.0)).round();
     let marker = marker.clamp(0.0, cells as f64 - 1.0) as usize;
@@ -869,19 +866,11 @@ fn range_bar<'a>(app: &App, sgv: f64, width: u16) -> Line<'a> {
             ));
             continue;
         }
-        let v = lo + (i as f64 / (cells as f64 - 1.0)) * span;
-        // Four zones: the bar spans urgent-low → urgent-high, so tint the
-        // extremes urgent, then low / in-range / high between the thresholds.
-        let c = if v <= ulow || v >= uhigh {
-            app.theme.urgent
-        } else if v < low {
-            app.theme.low
-        } else if v > high {
-            app.theme.high
-        } else {
-            app.theme.in_range
-        };
-        spans.push(Span::styled("━", Style::default().fg(c)));
+        // The bar spans urgent-low → urgent-high. Interpolate in mg/dL and
+        // colour each cell exactly as a reading of that value would be
+        // coloured, so the bar can never disagree with the number above it.
+        let v = app.alerts.urgent_low + (i as f64 / (cells as f64 - 1.0)) * span_mgdl;
+        spans.push(Span::styled("━", Style::default().fg(color_for(v, app))));
     }
     spans.push(Span::styled(
         format!(" {hi_s}"),
@@ -1683,17 +1672,7 @@ fn fmt_time(ms: i64) -> String {
 
 /// Colour a reading by configured thresholds and theme.
 fn color_for(sgv: f64, app: &App) -> Color {
-    let a = &app.alerts;
-    let t = &app.theme;
-    if sgv <= a.urgent_low || sgv >= a.urgent_high {
-        t.urgent
-    } else if sgv < a.low {
-        t.low
-    } else if sgv > a.high {
-        t.high
-    } else {
-        t.in_range
-    }
+    crate::alert::from_value(sgv, &app.alerts).color(&app.theme)
 }
 
 #[cfg(test)]
