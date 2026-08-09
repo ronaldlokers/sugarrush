@@ -41,7 +41,7 @@ use tokio::time::MissedTickBehavior;
 
 use app::{App, Screen};
 use config::Config;
-use nightscout::{Client, FetchError};
+use nightscout::Client;
 
 /// How the binary was invoked.
 #[derive(Debug)]
@@ -1104,17 +1104,17 @@ struct Plan {
 /// whose failure is what marks the app offline.
 #[derive(Default)]
 struct Gathered {
-    entries: Option<Result<Vec<nightscout::Entry>>>,
-    treatments: Option<Result<Vec<nightscout::Treatment>>>,
+    entries: Option<nightscout::Result<Vec<nightscout::Entry>>>,
+    treatments: Option<nightscout::Result<Vec<nightscout::Treatment>>>,
     device: Option<
-        Result<(
+        nightscout::Result<(
             nightscout::DeviceStatus,
             Option<Vec<nightscout::Prediction>>,
         )>,
     >,
-    sensor_start: Option<Result<Option<i64>>>,
-    agp: Option<Result<Vec<nightscout::Entry>>>,
-    minimap: Option<Result<Vec<nightscout::Entry>>>,
+    sensor_start: Option<nightscout::Result<Option<i64>>>,
+    agp: Option<nightscout::Result<Vec<nightscout::Entry>>>,
+    minimap: Option<nightscout::Result<Vec<nightscout::Entry>>>,
     live_edge: Option<Vec<nightscout::Entry>>,
     followers: Option<Vec<follow::SiteStatus>>,
 }
@@ -1273,7 +1273,7 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
         // config-level failure (bad token / URL) is not a transient outage —
         // App pauses retries after a few of them.
         Some(Err(e)) => {
-            let permanent = e.downcast_ref::<FetchError>().is_some();
+            let permanent = e.is_permanent();
             app.mark_offline(now, e.to_string(), permanent);
         }
         None => {}
