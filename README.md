@@ -191,8 +191,8 @@ design: file-only, documented.
 | `m` | Follow all sites at once (caregiver view) |
 | `s` | Open / close settings |
 
-Settings screen: `↑`/`↓` select, `←`/`→` change, `Enter` edit (site URL / token),
-`w` save, `?` help, `s`/`Esc` back. The overlay is screen-aware — on settings it
+Settings screen: `↑`/`↓` select, `←`/`→` change, `Enter` edit or run an action
+(including add/remove site), `w` save, `?` help, `s`/`Esc` back. The overlay is screen-aware — on settings it
 lists the settings keys, not the graph ones.
 
 Caregiver view: `m`/`Esc` back to the dashboard, `r` refresh, `s` settings,
@@ -343,6 +343,10 @@ With more than one `[[sites]]` entry it watches **all of them**, each with its
 own independent alert state — a low for one person doesn't silence the
 announcement for another — and names whose reading it is in every notification
 and log line.
+
+Sites can be added, renamed, edited, and removed in the in-app settings screen;
+press `w` to persist the list. A newly added site deliberately starts without a
+token, so credentials are never copied from the person currently selected.
 
 Before following another person, agree what “watching” means: whether the
 watcher is expected to respond, which hours are covered, how to contact each

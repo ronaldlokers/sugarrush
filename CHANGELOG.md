@@ -8,6 +8,9 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Sites can now be added and removed in the settings screen.** Site names,
+  URLs and read-only tokens are editable in-app, additions never copy another
+  person's token, and the final site cannot be removed accidentally.
 - **The documentation now covers the human and technical on-ramp for
   following.** It explains consent, shared expectations, read-only access and
   the limits of remote monitoring, then points Libre and Dexcom users to the

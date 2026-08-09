@@ -1686,6 +1686,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn sites_can_be_added_renamed_removed_and_round_trip() {
+        let mut a = app();
+        let original_url = a.active_site().url.clone();
+
+        a.add_site();
+        assert_eq!(a.sites.len(), 2);
+        assert_eq!(a.site_idx, 1);
+        assert_eq!(a.active_site().url, original_url);
+        assert!(a.active_site().token.is_empty(), "a token was copied");
+
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::SiteName)
+            .unwrap();
+        assert!(a.begin_field_edit());
+        a.field_edit.as_mut().unwrap().buffer = "alice".into();
+        a.commit_field_edit();
+        assert_eq!(a.active_site().name, "alice");
+
+        let sites = a.build_config().resolve_sites().unwrap();
+        assert_eq!(sites.len(), 2);
+        assert_eq!(sites[1].name, "alice");
+
+        a.remove_site();
+        assert_eq!(a.sites.len(), 1);
+        a.remove_site();
+        assert_eq!(a.sites.len(), 1, "the final site was removed");
+    }
+
+    #[test]
+    fn duplicate_site_names_are_rejected() {
+        let mut a = app();
+        a.add_site();
+        a.settings_sel = Field::ALL
+            .iter()
+            .position(|&f| f == Field::SiteName)
+            .unwrap();
+        assert!(a.begin_field_edit());
+        a.field_edit.as_mut().unwrap().buffer = "default".into();
+        a.commit_field_edit();
+        assert!(a.field_edit.is_some());
+        assert_ne!(a.active_site().name, "default");
+    }
+
     /// End to end: a real 401 from a real socket must pause fetching, and a
     /// real 500 must not. This is the join between the client's error
     /// classification and the app's retry policy — each half was tested, the

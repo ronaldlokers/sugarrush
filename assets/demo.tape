@@ -43,7 +43,7 @@ Type "u"
 Sleep 1.6s
 Type "u"
 Sleep 1.2s
-# Open settings; the Site section is at the top — show the URL editor, then
+# Open settings; the Site section is at the top — show the name editor, then
 # cancel out of it
 Type "s"
 Sleep 1.5s
@@ -51,10 +51,16 @@ Enter
 Sleep 1.4s
 Escape
 Sleep 0.8s
-# Move down and change a value
+# Add a draft site (no token is copied), show it, then remove the draft
 Down
 Down
 Down
+Enter
+Sleep 1.5s
+Down
+Enter
+Sleep 1.2s
+# Move into General and change a value
 Down
 Sleep 0.8s
 Right

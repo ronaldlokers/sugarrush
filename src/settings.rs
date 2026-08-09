@@ -5,8 +5,11 @@ use super::*;
 /// Editable rows on the settings screen, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
+    SiteName,
     SiteUrl,
     SiteToken,
+    AddSite,
+    RemoveSite,
     Units,
     Refresh,
     Desktop,
@@ -41,9 +44,12 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 32] = [
+    pub const ALL: [Field; 35] = [
+        Field::SiteName,
         Field::SiteUrl,
         Field::SiteToken,
+        Field::AddSite,
+        Field::RemoveSite,
         Field::Units,
         Field::Refresh,
         Field::Desktop,
@@ -78,8 +84,11 @@ impl Field {
 
     pub fn label(self) -> &'static str {
         match self {
+            Field::SiteName => "Site name",
             Field::SiteUrl => "Site URL",
             Field::SiteToken => "Read-only token",
+            Field::AddSite => "Add site",
+            Field::RemoveSite => "Remove site",
             Field::Units => "Units",
             Field::Refresh => "Refresh interval",
             Field::Desktop => "Desktop notifications",
@@ -117,7 +126,11 @@ impl Field {
     /// `ALL`, so a header is drawn whenever this changes between rows.
     pub fn group(self) -> &'static str {
         match self {
-            Field::SiteUrl | Field::SiteToken => "Site",
+            Field::SiteName
+            | Field::SiteUrl
+            | Field::SiteToken
+            | Field::AddSite
+            | Field::RemoveSite => "Site",
             Field::Units | Field::Refresh => "General",
             Field::Desktop
             | Field::NotifyContent
@@ -191,6 +204,11 @@ impl App {
     pub fn begin_field_edit(&mut self) -> bool {
         let field = Field::ALL[self.settings_sel.min(Field::ALL.len() - 1)];
         let edit = match field {
+            Field::SiteName => FieldEdit {
+                field,
+                buffer: self.active_site().name.clone(),
+                masked: false,
+            },
             Field::SiteUrl => FieldEdit {
                 field,
                 // Pre-fill: a URL is usually being corrected, not replaced.
@@ -234,6 +252,25 @@ impl App {
         };
         let idx = self.site_idx.min(self.sites.len().saturating_sub(1));
         match edit.field {
+            Field::SiteName => {
+                let name = edit.buffer.trim();
+                if name.is_empty() {
+                    self.status = Some("site name cannot be empty".to_string());
+                    self.field_edit = Some(edit);
+                } else if self
+                    .sites
+                    .iter()
+                    .enumerate()
+                    .any(|(i, site)| i != idx && site.name == name)
+                {
+                    self.status = Some(format!("a site named '{name}' already exists"));
+                    self.field_edit = Some(edit);
+                } else {
+                    self.sites[idx].name = name.to_string();
+                    self.settings_dirty = true;
+                    self.status = Some("site renamed · press w to save".to_string());
+                }
+            }
             Field::SiteUrl => match crate::config::normalize_site_url(&edit.buffer) {
                 Ok(url) => {
                     self.sites[idx].url = url;
@@ -262,6 +299,40 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    pub fn add_site(&mut self) {
+        let mut n = self.sites.len() + 1;
+        let name = loop {
+            let candidate = format!("site {n}");
+            if self.sites.iter().all(|site| site.name != candidate) {
+                break candidate;
+            }
+            n += 1;
+        };
+        let url = self.active_site().url.clone();
+        self.sites.push(Site {
+            name,
+            url,
+            token: String::new(),
+        });
+        self.site_idx = self.sites.len() - 1;
+        self.site_dirty = true;
+        self.settings_dirty = true;
+        self.status = Some("site added · edit its name, URL and token, then press w".to_string());
+    }
+
+    pub fn remove_site(&mut self) {
+        if self.sites.len() == 1 {
+            self.status = Some("the last site cannot be removed".to_string());
+            return;
+        }
+        let idx = self.site_idx.min(self.sites.len() - 1);
+        let removed = self.sites.remove(idx).name;
+        self.site_idx = idx.min(self.sites.len() - 1);
+        self.site_dirty = true;
+        self.settings_dirty = true;
+        self.status = Some(format!("removed {removed} · press w to save"));
     }
 
     // ---- Settings screen ----
@@ -330,6 +401,10 @@ impl App {
                 self.status = Some("press enter to run the alarm test".to_string());
                 self.settings_dirty = was_dirty;
             }
+            Field::AddSite | Field::RemoveSite => {
+                self.status = Some("press enter".to_string());
+                self.settings_dirty = was_dirty;
+            }
             Field::Snooze => {
                 let next = self.alerts.snooze_minutes + dir as i64 * 5;
                 self.alerts.snooze_minutes = next.clamp(1, 120);
@@ -393,7 +468,7 @@ impl App {
                 self.alerts.urgent_high =
                     clamp_bg(self.alerts.urgent_high + d * step_mgdl).max(self.alerts.high)
             }
-            Field::SiteUrl | Field::SiteToken => {
+            Field::SiteName | Field::SiteUrl | Field::SiteToken => {
                 self.status = Some("press enter to edit".to_string());
                 self.settings_dirty = was_dirty;
             }
@@ -517,6 +592,7 @@ impl App {
     /// Formatted value of a field for display on the settings screen.
     pub fn field_value(&self, field: Field) -> String {
         match field {
+            Field::SiteName => self.active_site().name.clone(),
             Field::Units => self.units.label().to_string(),
             Field::Refresh => format!("{}s", self.refresh_secs),
             Field::Desktop => if self.alerts.desktop { "on" } else { "off" }.to_string(),
@@ -573,6 +649,14 @@ impl App {
                 "set · ••••••"
             }
             .to_string(),
+            Field::AddSite => "press enter".to_string(),
+            Field::RemoveSite => {
+                if self.sites.len() == 1 {
+                    "unavailable · one site required".to_string()
+                } else {
+                    format!("press enter · {} selected", self.active_site().name)
+                }
+            }
             Field::PredictHorizon => {
                 let h = self.alerts.predict_horizon_minutes;
                 if h == 0 {
