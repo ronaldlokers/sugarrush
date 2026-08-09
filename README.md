@@ -117,8 +117,11 @@ checkout: `cargo build --release` (binary at `target/release/sugarrush`).
 
 ## Configuration
 
-First run with no config launches an interactive setup wizard. Prefer to do it
-by hand? Copy the example:
+First run with no config launches an interactive setup wizard. It links to
+Nightscout's token help, lets you enter `q` at the URL prompt to leave, and only
+saves after Nightscout returns a fresh reading. After setup it points out the
+main dashboard keys and how to install and test the always-on alarm. Prefer to
+do it by hand? Copy the example:
 
 ```bash
 mkdir -p ~/.config/sugarrush

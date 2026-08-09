@@ -8,6 +8,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **First-run setup now gets users all the way to a working dashboard.** The
+  wizard has an explicit exit hatch and Nightscout token-help link, verifies
+  that the site returns a reading from the last hour instead of treating an
+  empty response as success, and finishes with the key dashboard controls plus
+  the commands for installing and testing the always-on alarm.
 - **Each followed site can now have its own alert settings.** A person can
   inherit the global thresholds and channels or use a complete override edited
   from the same settings screen; the dashboard, followers list, status output
