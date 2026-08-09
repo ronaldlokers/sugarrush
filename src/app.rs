@@ -170,6 +170,8 @@ pub struct App {
     pub agp_fetched_ms: i64,
     /// How many days of history the AGP view and stats window fold over.
     pub agp_days: u32,
+    pub cache_enabled: bool,
+    pub cache_days: u32,
 
     // Minimap navigator.
     pub minimap_enabled: bool,
@@ -344,6 +346,8 @@ impl App {
             agp_entries: Vec::new(),
             agp_fetched_ms: 0,
             agp_days: cfg.agp_days.clamp(1, 90),
+            cache_enabled: cfg.history_cache.enabled,
+            cache_days: cfg.history_cache.retention_days.clamp(1, 90),
             minimap_enabled: cfg.minimap.enabled,
             minimap_span_ms: cfg.minimap.span_hours.max(1) as i64 * MS_PER_HOUR,
             minimap_entries: Vec::new(),

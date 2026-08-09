@@ -38,6 +38,30 @@ pub struct Config {
     /// Minimap navigator settings.
     #[serde(default)]
     pub minimap: MinimapConfig,
+    /// Optional private local history for outage context and instant startup.
+    #[serde(default)]
+    pub history_cache: HistoryCacheConfig,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct HistoryCacheConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_cache_days")]
+    pub retention_days: u32,
+}
+
+impl Default for HistoryCacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            retention_days: default_cache_days(),
+        }
+    }
+}
+
+fn default_cache_days() -> u32 {
+    14
 }
 
 /// The 24h (configurable) overview strip and its mouse navigation.
@@ -553,6 +577,7 @@ impl Config {
             graph_style: GraphStyle::default(),
             agp_days: default_agp_days(),
             minimap: MinimapConfig::default(),
+            history_cache: HistoryCacheConfig::default(),
         }
     }
 
@@ -1028,6 +1053,10 @@ desktop = false
             graph_style: GraphStyle::Dots,
             agp_days: 14,
             minimap: MinimapConfig::default(),
+            history_cache: HistoryCacheConfig {
+                enabled: true,
+                retention_days: 14,
+            },
         };
         let toml = toml::to_string_pretty(&cfg).unwrap();
         let example = include_str!("../config.example.toml");

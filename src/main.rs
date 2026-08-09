@@ -8,6 +8,7 @@ mod demo;
 mod export;
 mod follow;
 mod health;
+mod history_cache;
 mod nightscout;
 mod predict;
 mod selftest;
@@ -369,9 +370,31 @@ async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
 
     let now = now_ms();
     let start = now - days as i64 * 24 * 3_600_000;
-    let entries = client
+    let entries = match client
         .entries_range(start, now, days as usize * 24 * 12 + 200)
-        .await?;
+        .await
+    {
+        Ok(entries) => {
+            if cfg.history_cache.enabled {
+                let _ = history_cache::merge(
+                    &sites[0].name,
+                    &entries,
+                    now,
+                    cfg.history_cache.retention_days,
+                );
+            }
+            entries
+        }
+        Err(error) if cfg.history_cache.enabled => {
+            let cached = history_cache::load(&sites[0].name, start, now);
+            if cached.is_empty() {
+                return Err(error.into());
+            }
+            eprintln!("sugarrush export: offline — exporting private cached history");
+            cached
+        }
+        Err(error) => return Err(error.into()),
+    };
 
     let dir = dir.map(std::path::PathBuf::from).unwrap_or_default();
     let dir = if dir.as_os_str().is_empty() {
@@ -1258,6 +1281,9 @@ struct Plan {
     /// `Some((start, end, count))` when the heavy history buffer is due.
     agp: Option<(i64, i64, usize)>,
     followers: Option<Vec<(config::Site, config::Alerts)>>,
+    site_name: String,
+    cache_enabled: bool,
+    cache_days: u32,
 }
 
 /// Whatever the network returned. Every field is best-effort except `entries`,
@@ -1311,6 +1337,9 @@ fn plan(app: &mut App, now: i64) -> Plan {
                 .map(|(i, site)| (site, app.alerts_for_site(i)))
                 .collect()
         }),
+        site_name: app.active_site().name.clone(),
+        cache_enabled: app.cache_enabled,
+        cache_days: app.cache_days,
     }
 }
 
@@ -1435,6 +1464,9 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
 
     match g.entries {
         Some(Ok(entries)) => {
+            if p.cache_enabled {
+                let _ = history_cache::merge(&p.site_name, &entries, now, p.cache_days);
+            }
             if p.live {
                 let fresh = entries
                     .first()
@@ -1458,6 +1490,16 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
         Some(Err(e)) => {
             let permanent = e.is_permanent();
             app.mark_offline(now, e.to_string(), permanent);
+            if p.cache_enabled {
+                let cached = history_cache::load(&p.site_name, p.start, p.end);
+                if !cached.is_empty() {
+                    if p.live {
+                        app.live_edge = cached.first().cloned();
+                    }
+                    app.entries = cached;
+                    app.status = Some("offline · showing private cached history".into());
+                }
+            }
         }
         None => {}
     }
@@ -1502,6 +1544,9 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
         }
         match g.agp {
             Some(Ok(entries)) => {
+                if p.cache_enabled {
+                    let _ = history_cache::merge(&p.site_name, &entries, now, p.cache_days);
+                }
                 app.agp_entries = entries;
                 app.agp_fetched_ms = now;
             }

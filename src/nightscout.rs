@@ -5,7 +5,7 @@
 
 use chrono::DateTime;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::Site;
@@ -22,7 +22,7 @@ const MIN_PHYSIOLOGICAL_SGV: f64 = 39.0;
 pub type Result<T> = std::result::Result<T, NsError>;
 
 /// A single sensor glucose reading as returned by Nightscout.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
     /// Sensor glucose value in mg/dL.
     pub sgv: f64,

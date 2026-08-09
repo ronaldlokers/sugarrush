@@ -8,6 +8,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Offline history is available as an explicit privacy choice.** An opt-in,
+  owner-only per-site cache gives instant startup and outage context without
+  ever presenting cached data as a live fetch; retention is bounded to 1–90
+  days and disabling it deletes the local record.
+
 - **Caregiver review now follows the person's context.** Each site can set an
   IANA timezone used by AGP bucketing, pattern names, CSV offsets, and clinical
   summaries; alert history can be filtered with `--site` or emitted as

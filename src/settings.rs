@@ -42,6 +42,8 @@ pub enum Field {
     Stale,
     GraphStyle,
     AgpDays,
+    CacheEnabled,
+    CacheDays,
     MinimapEnabled,
     MinimapSpan,
     ThemeLow,
@@ -54,7 +56,7 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 39] = [
+    pub const ALL: [Field; 41] = [
         Field::SiteName,
         Field::SiteUrl,
         Field::SiteToken,
@@ -85,6 +87,8 @@ impl Field {
         Field::Stale,
         Field::GraphStyle,
         Field::AgpDays,
+        Field::CacheEnabled,
+        Field::CacheDays,
         Field::MinimapEnabled,
         Field::MinimapSpan,
         Field::ThemeLow,
@@ -128,6 +132,8 @@ impl Field {
             Field::Stale => "Stale after",
             Field::GraphStyle => "Graph style",
             Field::AgpDays => "AGP days",
+            Field::CacheEnabled => "Offline history cache",
+            Field::CacheDays => "Cache retention",
             Field::MinimapEnabled => "Minimap",
             Field::MinimapSpan => "Minimap span",
             Field::ThemeLow => "Color: low",
@@ -152,7 +158,7 @@ impl Field {
             | Field::AddSite
             | Field::RemoveSite
             | Field::SiteAlerts => "Site",
-            Field::Units | Field::Refresh => "General",
+            Field::Units | Field::Refresh | Field::CacheEnabled | Field::CacheDays => "General",
             Field::Desktop
             | Field::NotifyContent
             | Field::Sound
@@ -583,6 +589,15 @@ impl App {
                 // must be refetched on the next refresh.
                 self.agp_fetched_ms = 0;
             }
+            Field::CacheEnabled => {
+                self.cache_enabled = !self.cache_enabled;
+                if !self.cache_enabled {
+                    self.status = Some("cache will be deleted when settings are saved".into());
+                }
+            }
+            Field::CacheDays => {
+                self.cache_days = (self.cache_days as i32 + dir * 7).clamp(1, 90) as u32;
+            }
             Field::MinimapEnabled => self.minimap_enabled = !self.minimap_enabled,
             Field::MinimapSpan => {
                 let next = self.minimap_span_ms / MS_PER_HOUR + dir as i64 * 6;
@@ -623,6 +638,16 @@ impl App {
         });
         self.status = Some(match result {
             Ok(p) => {
+                let delete_cache = self.settings_baseline.history_cache.enabled
+                    && !persisted.history_cache.enabled;
+                if delete_cache {
+                    if let Err(e) = crate::history_cache::clear_all() {
+                        return {
+                            self.status = Some(format!("saved; cache deletion failed: {e}"));
+                            false
+                        };
+                    }
+                }
                 self.settings_dirty = false;
                 self.settings_baseline = persisted;
                 format!("saved to {}", p.display())
@@ -661,6 +686,8 @@ impl App {
         self.refresh_secs = fresh.refresh_secs;
         self.graph_style = fresh.graph_style;
         self.agp_days = fresh.agp_days;
+        self.cache_enabled = fresh.cache_enabled;
+        self.cache_days = fresh.cache_days;
         self.minimap_enabled = fresh.minimap_enabled;
         self.minimap_span_ms = fresh.minimap_span_ms;
         self.theme = fresh.theme;
@@ -734,6 +761,10 @@ impl App {
             minimap: MinimapConfig {
                 enabled: self.minimap_enabled,
                 span_hours: (self.minimap_span_ms / MS_PER_HOUR) as u32,
+            },
+            history_cache: crate::config::HistoryCacheConfig {
+                enabled: self.cache_enabled,
+                retention_days: self.cache_days,
             },
         }
     }
@@ -874,6 +905,13 @@ impl App {
             Field::UrgentHigh => self.threshold(self.alerts.urgent_high),
             Field::GraphStyle => self.graph_style.label().to_string(),
             Field::AgpDays => format!("{} days", self.agp_days),
+            Field::CacheEnabled => if self.cache_enabled {
+                "on · stores health data locally"
+            } else {
+                "off"
+            }
+            .into(),
+            Field::CacheDays => format!("{} days", self.cache_days),
             Field::MinimapEnabled => if self.minimap_enabled { "on" } else { "off" }.to_string(),
             Field::MinimapSpan => format!("{}h", self.minimap_span_ms / MS_PER_HOUR),
             Field::Colorblind => if self.is_colorblind() { "on" } else { "off" }.to_string(),

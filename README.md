@@ -86,6 +86,10 @@ can understand and revisit the arrangement as their independence changes.
   editable there too, so a bad token is fixed without leaving the app. A detail
   pane explains the selected field and the list shows when more rows are above
   or below the viewport
+- Optional **private offline history cache** for instant startup, outage
+  context, and cached exports. It is off by default, owner-only, bounded to
+  1–90 days, isolated per site, visibly labelled when used, and deleted when
+  disabled
 - Configurable colours (incl. a colorblind-safe preset), graph style, and
   **multiple sites** — `n` to switch between them, `m` for a **follower view**
   that lists everyone you watch at once, worst first. Each site can carry the
@@ -176,6 +180,12 @@ your glucose data, not account control), but keep the file private —
 `chmod 600`. The setup wizard already does this, and sugarrush warns in the
 footer if the file is group/world-readable. No `token_cmd`/env indirection by
 design: file-only, documented.
+
+The optional history cache is also stored owner-only under
+`$XDG_STATE_HOME/sugarrush/cache`, but contains longitudinal glucose readings
+rather than a credential. It is disabled by default. Enabling it is an explicit
+privacy choice in Settings; reducing retention bounds future updates, and
+turning it off deletes the cache directory.
 
 ## Keybindings
 

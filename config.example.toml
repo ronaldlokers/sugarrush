@@ -34,6 +34,13 @@ refresh_secs = 30
 enabled = true
 span_hours = 24
 
+# Optional local outage/startup history. Off by default because enabling it
+# creates a durable health-data record on this computer. Files are owner-only;
+# turning this off in settings deletes them.
+[history_cache]
+enabled = false
+retention_days = 14
+
 
 # Alert thresholds and behaviour. Glucose bounds are in the same unit as
 # `units` above (mmol/L here). This whole section is optional, as is each key;
