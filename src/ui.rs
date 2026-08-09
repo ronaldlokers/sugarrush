@@ -786,11 +786,11 @@ fn draw_banner(f: &mut Frame, area: Rect, app: &App) {
 /// on a rejected token the last was simply untrue: nothing was loading and
 /// nothing ever would.
 fn empty_reason(app: &App) -> &'static str {
-    if app.fetch_paused {
+    if app.fetch_paused() {
         "not loading — see the error below"
-    } else if !app.online {
+    } else if !app.online() {
         "no readings — can't reach Nightscout"
-    } else if app.last_ok_ms.is_none() {
+    } else if app.last_ok_ms().is_none() {
         "loading…"
     } else {
         "no readings in this window"
@@ -803,7 +803,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
     // red authentication error and read as "the connection is live" — the
     // opposite of the truth. `live`/`history` is a view mode and says nothing
     // about the network.
-    let (dot, dot_color) = if !app.online {
+    let (dot, dot_color) = if !app.online() {
         ("✖", app.theme.urgent)
     } else if app.alert == crate::alert::Alert::Stale {
         ("◌", app.theme.high)
@@ -865,9 +865,9 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(app.theme.high),
         ));
     }
-    if !app.online {
+    if !app.online() {
         let age = app
-            .last_ok_ms
+            .last_ok_ms()
             .map(|t| {
                 format!(
                     " (last {} ago)",
@@ -877,10 +877,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             .unwrap_or_default();
         // Show the actual cause (auth vs unreachable) rather than a blanket
         // "offline", so a bad token doesn't send the user to debug the network.
-        let msg = app
-            .last_error
-            .clone()
-            .unwrap_or_else(|| "can't reach Nightscout".to_string());
+        let msg = app.last_error().unwrap_or("can't reach Nightscout");
         spans.push(Span::styled(
             format!(" ⚠ {msg}{age} "),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
@@ -1824,14 +1821,14 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     // user in that state never saw a keybinding again, including the one that
     // opens the help explaining the fix.
     let mut hints: Option<String> = None;
-    let warning: Option<(String, Color)> = match &app.last_error {
+    let warning: Option<(String, Color)> = match app.last_error() {
         Some(err) => Some((format!(" error: {err}"), Color::Red)),
         // Readings arrived but something alongside them didn't: not an outage,
         // but the affected panels are showing stale values, so say which.
-        None if app.partial.is_some() => Some((
+        None if app.partial().is_some() => Some((
             format!(
                 " ⚠ unavailable, showing last known: {}",
-                app.partial.as_deref().unwrap_or_default()
+                app.partial().unwrap_or_default()
             ),
             Color::Yellow,
         )),
