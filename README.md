@@ -164,6 +164,23 @@ Caregiver view: `m`/`Esc` back to the dashboard, `r` refresh, `s` settings,
 When the minimap is on, click or drag it to move the window — or use `H`/`L`
 and `End` for the same navigation from the keyboard.
 
+## Is the alarm armed?
+
+The header answers it, always:
+
+| Chip | Means |
+|---|---|
+| `⚑ alarm armed` | it will sound |
+| `⚑ alarm armed · watcher up` | …and a headless `watch` is running too |
+| `☾ quiet until 07:00 · urgent lows only` | quiet hours, with the safety override |
+| `☾ quiet until 07:00 · all alarms silent` | quiet hours, no override |
+| `⏸ alarm snoozed · 12m left` | someone snoozed it |
+| `⚠ watcher stopped` | a watcher was running and isn't now |
+| `⚑ alarm off` | nothing is switched on to announce with |
+
+`⚠ escalation inactive` appears alongside when "escalate after" is set but the
+push webhook — its only channel — isn't configured.
+
 ## Checking the alarm works
 
 "Audible alarm: on" is a claim about a config field, not about whether your
