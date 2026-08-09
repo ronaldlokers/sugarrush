@@ -8,6 +8,15 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The header always says whether your alarm is armed.** Four things could
+  silence it with no on-screen evidence — quiet hours, a snooze, a watcher that
+  stopped, and an alarm with nothing switched on to announce with — and the app
+  never mentioned any of them. One chip now answers it, naming the most
+  suppressing condition: `⚑ alarm armed · watcher up`, `☾ quiet until 07:00 ·
+  urgent lows only`, `⏸ alarm snoozed · 12m left`, `⚠ watcher stopped`,
+  `⚑ alarm off`. Escalation configured with no push channel is called out
+  alongside as `⚠ escalation inactive`. It lives in the header, so unlike the
+  old snooze chip it survives an error state.
 - **`sugarrush watch --test` checks that the alarm can actually reach you.**
   There are eight independent reasons a night can pass without a sound — the
   alarm switched off, quiet hours, a forgotten snooze, no working audio player,

@@ -836,20 +836,33 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::Blue),
         ));
     }
-    // Only speak up about the watcher once there is something to say: silence
-    // for someone who doesn't run it, confirmation while it's up, and a
-    // warning if it was up and then stopped.
-    if app.watcher_alive {
+    // "Is my safety net armed?" — always answered, in the header, where it
+    // survives every error state. It used to be four separate silences with no
+    // on-screen evidence: quiet hours, a snooze, a stopped watcher, and an
+    // alarm with nothing switched on to announce with.
+    let armed = app.armed_state(chrono::Utc::now().timestamp_millis());
+    let mut chip = Style::default().fg(if armed.is_suppressed() {
+        app.theme.high
+    } else {
+        app.theme.in_range
+    });
+    if matches!(
+        armed,
+        crate::app::Armed::Off | crate::app::Armed::WatcherStopped
+    ) {
+        chip = Style::default()
+            .fg(app.theme.urgent)
+            .add_modifier(Modifier::BOLD);
+    }
+    spans.push(Span::styled(armed.label(), chip));
+    // Escalation with no channel is a setting that reads as armed and does
+    // nothing at all; it rides alongside rather than replacing the answer.
+    if app.alerts.escalate_minutes > 0
+        && !(app.alerts.push_url.is_some() && app.alerts.push_enabled)
+    {
         spans.push(Span::styled(
-            " ⚑ watcher up ",
-            Style::default().fg(app.theme.in_range),
-        ));
-    } else if app.watcher_seen {
-        spans.push(Span::styled(
-            " ⚠ watcher stopped ",
-            Style::default()
-                .fg(app.theme.urgent)
-                .add_modifier(Modifier::BOLD),
+            " ⚠ escalation inactive ",
+            Style::default().fg(app.theme.high),
         ));
     }
     if !app.online {
@@ -1879,8 +1892,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             None
         }
     };
-    // A visible acknowledgement that the safety alarm is silenced, with a
-    // countdown, shown ahead of the normal footer content.
+    // The snooze countdown used to live here too. It is in the header chip now
+    // — one place, and one that an error state can't take over.
     let mut spans = Vec::new();
     let text = match (warning, hints) {
         (Some((msg, color)), _) => {
@@ -1904,14 +1917,6 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         (None, Some(s)) => Span::raw(s),
         (None, None) => Span::raw(""),
     };
-    if let Some(mins) = app.snooze_remaining_min(chrono::Utc::now().timestamp_millis()) {
-        spans.push(Span::styled(
-            format!(" ⏸ alarm snoozed · {mins}m left "),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
     spans.push(text);
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }

@@ -382,6 +382,59 @@ pub struct App {
     pub show_help: bool,
 }
 
+/// Whether the alarm can reach you *right now*, in one phrase.
+///
+/// The review's headline finding was that the app never told you the state of
+/// your own safety net: whether it was armed, whether quiet hours or a snooze
+/// was suppressing it, whether the watcher was even running, whether escalation
+/// had a channel. Four separate silences, each invisible. This is the one
+/// answer, and it is drawn in the header where it survives every error state —
+/// unlike the footer, which an error used to take over completely.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Armed {
+    /// Nothing is configured to announce anything.
+    Off,
+    /// A snooze someone set, with minutes remaining.
+    Snoozed(i64),
+    /// Inside quiet hours: minute-of-day it ends, and whether urgent lows
+    /// still sound.
+    Quiet { until: i32, urgent_low_only: bool },
+    /// A watcher was running and isn't any more.
+    WatcherStopped,
+    /// Armed, and a headless watcher is up.
+    Watching,
+    /// Armed.
+    Ready,
+}
+
+impl Armed {
+    /// The chip text. Deliberately says "alarm" every time: the word is what
+    /// makes the chip findable when someone is looking for exactly this.
+    pub fn label(self) -> String {
+        let hhmm = |m: i32| format!("{:02}:{:02}", (m / 60) % 24, m % 60);
+        match self {
+            Armed::Off => " ⚑ alarm off ".into(),
+            Armed::Snoozed(mins) => format!(" ⏸ alarm snoozed · {mins}m left "),
+            Armed::Quiet {
+                until,
+                urgent_low_only: true,
+            } => format!(" ☾ quiet until {} · urgent lows only ", hhmm(until)),
+            Armed::Quiet {
+                until,
+                urgent_low_only: false,
+            } => format!(" ☾ quiet until {} · all alarms silent ", hhmm(until)),
+            Armed::WatcherStopped => " ⚠ watcher stopped ".into(),
+            Armed::Watching => " ⚑ alarm armed · watcher up ".into(),
+            Armed::Ready => " ⚑ alarm armed ".into(),
+        }
+    }
+
+    /// Whether this state means something is suppressing or breaking the alarm.
+    pub fn is_suppressed(self) -> bool {
+        !matches!(self, Armed::Ready | Armed::Watching)
+    }
+}
+
 /// Everything one pass of the alarm machine decided to announce.
 ///
 /// The reaction sequence used to be written out twice — once in the TUI's
@@ -936,6 +989,41 @@ impl App {
             self.snooze_until = Some(now_ms + mins * 60_000);
             self.status = Some(format!("alarm snoozed {mins}m"));
         }
+    }
+
+    /// The one-phrase answer to "is my safety net armed?".
+    ///
+    /// Ordered by what actually stops an alarm reaching someone, worst first,
+    /// so the chip always names the most suppressing condition rather than the
+    /// first one that happens to be true.
+    pub fn armed_state(&self, now_ms: i64) -> Armed {
+        // Nothing switched on to announce with. Escalation doesn't count: its
+        // only channel is the push webhook, which is already in this list.
+        let has_channel = self.alerts.sound
+            || self.alerts.desktop
+            || (self.alerts.push_url.is_some() && self.alerts.push_enabled);
+        if !has_channel {
+            return Armed::Off;
+        }
+        if let Some(mins) = self.snooze_remaining_min(now_ms) {
+            return Armed::Snoozed(mins);
+        }
+        if let Some(dt) = Local.timestamp_millis_opt(now_ms).single() {
+            let min_of_day = dt.hour() as i32 * 60 + dt.minute() as i32;
+            if self.alerts.in_quiet_hours(min_of_day) {
+                return Armed::Quiet {
+                    until: self.alerts.quiet_end.unwrap_or(min_of_day),
+                    urgent_low_only: self.alerts.quiet_urgent_low,
+                };
+            }
+        }
+        if self.watcher_seen && !self.watcher_alive {
+            return Armed::WatcherStopped;
+        }
+        if self.watcher_alive {
+            return Armed::Watching;
+        }
+        Armed::Ready
     }
 
     /// Run one pass of the alarm machine and report what to announce.
@@ -1518,6 +1606,80 @@ mod tests {
             a.alarm_active(NOW + 16 * 60_000),
             "the alarm must re-arm when the snooze expires"
         );
+    }
+
+    /// The review's headline: the app never told you the state of your own
+    /// safety net. Four separate silences, each invisible — quiet hours, a
+    /// snooze, a stopped watcher, and an alarm with nothing switched on to
+    /// announce with. One phrase answers all four, and it names the most
+    /// suppressing condition rather than the first that happens to be true.
+    #[test]
+    fn the_armed_chip_names_the_worst_thing_suppressing_the_alarm() {
+        let mut a = app();
+        a.alerts.sound = true;
+        a.alerts.desktop = false;
+        a.alerts.push_url = None;
+        a.alerts.quiet_start = None;
+        a.alerts.quiet_end = None;
+
+        assert_eq!(a.armed_state(NOW), Armed::Ready);
+        assert!(!a.armed_state(NOW).is_suppressed());
+
+        // A watcher that was up and went away outranks "armed".
+        a.watcher_alive = true;
+        assert_eq!(a.armed_state(NOW), Armed::Watching);
+        a.watcher_seen = true;
+        a.watcher_alive = false;
+        assert_eq!(a.armed_state(NOW), Armed::WatcherStopped);
+
+        // A snooze outranks a stopped watcher: it's the nearer cause.
+        a.set_snooze(Some(NOW + 12 * 60_000));
+        assert!(matches!(a.armed_state(NOW), Armed::Snoozed(_)));
+
+        // And nothing switched on at all outranks everything.
+        a.alerts.sound = false;
+        assert_eq!(a.armed_state(NOW), Armed::Off);
+        assert!(a.armed_state(NOW).is_suppressed());
+    }
+
+    /// Quiet hours mute the alarm on a schedule with no on-screen evidence —
+    /// and the chip has to distinguish "urgent lows still sound" from "nothing
+    /// sounds", because those are very different nights.
+    #[test]
+    fn quiet_hours_say_whether_anything_still_sounds() {
+        let mut a = app();
+        a.alerts.sound = true;
+        // A window anchored to NOW's own local time, so the test doesn't
+        // depend on the machine's timezone.
+        let min_of_day = Local
+            .timestamp_millis_opt(NOW)
+            .single()
+            .map(|d| d.hour() as i32 * 60 + d.minute() as i32)
+            .unwrap();
+        a.alerts.quiet_start = Some(min_of_day.saturating_sub(60));
+        a.alerts.quiet_end = Some((min_of_day + 60) % (24 * 60));
+        a.alerts.quiet_urgent_low = true;
+
+        let state = a.armed_state(NOW);
+        let Armed::Quiet {
+            until,
+            urgent_low_only,
+        } = state
+        else {
+            panic!("expected quiet hours, got {state:?}");
+        };
+        assert_eq!(until, (min_of_day + 60) % (24 * 60));
+        assert!(urgent_low_only);
+        assert!(
+            state.label().contains("urgent lows only"),
+            "{}",
+            state.label()
+        );
+        let clock = format!("{:02}:{:02}", (until / 60) % 24, until % 60);
+        assert!(state.label().contains(&clock), "{}", state.label());
+
+        a.alerts.quiet_urgent_low = false;
+        assert!(a.armed_state(NOW).label().contains("all alarms silent"));
     }
 
     /// The audible alarm and the notification channels used to run on separate
