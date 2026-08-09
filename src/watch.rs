@@ -400,6 +400,16 @@ pub struct Episode {
     /// isn't mistaken for a change of emergency.
     #[serde(default)]
     pub episode_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_push: Option<PendingPush>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PendingPush {
+    message: String,
+    state: String,
+    attempts: u8,
+    next_attempt_ms: i64,
 }
 
 impl Episode {
@@ -412,6 +422,7 @@ impl Episode {
             escalated: app.escalated(),
             snooze_until: app.snooze_until(),
             episode_kind: app.episode_kind().map(|a| a.class().to_string()),
+            pending_push: None,
         }
     }
 
@@ -476,6 +487,10 @@ pub async fn run() -> Result<()> {
         .map(|site| {
             let alerts = site.resolve_alerts(&cfg.alerts, cfg.units).0;
             let mut app = App::new(&cfg, alerts, vec![site.clone()]);
+            let pending_push = state
+                .sites
+                .get(&site.stable_id())
+                .and_then(|episode| episode.pending_push.clone());
             if let Some(episode) = state.sites.get(&site.stable_id()) {
                 episode.restore(&mut app);
             }
@@ -486,6 +501,8 @@ pub async fn run() -> Result<()> {
                 app,
                 last_logged: None,
                 polling: false,
+                pending_push,
+                push_in_flight: false,
             })
         })
         .collect::<Result<_>>()?;
@@ -522,6 +539,7 @@ pub async fn run() -> Result<()> {
     alarm_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     alarm_ticker.tick().await;
     let (poll_tx, mut poll_rx) = mpsc::unbounded_channel::<PollResult>();
+    let (delivery_tx, mut delivery_rx) = mpsc::unbounded_channel::<DeliveryResult>();
 
     loop {
         tokio::select! {
@@ -536,6 +554,7 @@ pub async fn run() -> Result<()> {
                 let on_disk = State::load();
                 for (index, w) in watched.iter_mut().enumerate() {
                     adopt_external_snooze(&mut w.app, on_disk.sites.get(&w.id));
+                    dispatch_pending(w, now, delivery_tx.clone());
                     // The retry policy already exists on App and the TUI obeys
                     // it; the daemon was hammering a failing site at full rate
                     // and ignoring a paused-after-auth-failure state entirely.
@@ -569,6 +588,7 @@ pub async fn run() -> Result<()> {
                     eprintln!("sugarrush watch [{}]: {error}", w.name);
                 }
                 react(w, now, multi);
+                dispatch_pending(w, now, delivery_tx.clone());
                 let mut state = snapshot(&watched);
                 if let Err(e) = state.save_daemon_snapshot() {
                     eprintln!("sugarrush watch: {e}");
@@ -592,11 +612,40 @@ pub async fn run() -> Result<()> {
                     if r.sound && worst.is_none_or(|(a, _)| alert.severity() < a.severity()) {
                         worst = Some((alert, w.app.alarm_tone()));
                     }
+                    dispatch_pending(w, now, delivery_tx.clone());
                 }
                 if let Some((_, tone)) = worst {
                     if !deferring(now) {
                         sound::alarm(tone);
                     }
+                }
+                // Reaction consumes notification/push latches and may start a
+                // stale episode. Persist that transition before a crash can
+                // turn it into a duplicate announcement or reset escalation.
+                let mut state = snapshot(&watched);
+                if let Err(e) = state.save_daemon_snapshot() {
+                    eprintln!("sugarrush watch: {e}");
+                }
+            }
+            Some(result) = delivery_rx.recv() => {
+                if let Some(w) = watched.iter_mut().find(|watched| watched.id == result.site_id) {
+                    w.push_in_flight = false;
+                    if result.accepted {
+                        w.pending_push = None;
+                        crate::alertlog::record_delivery(&w.name, "webhook", "accepted", result.state);
+                    } else if let Some(pending) = w.pending_push.as_mut() {
+                        pending.attempts = pending.attempts.saturating_add(1);
+                        if pending.attempts >= 3 {
+                            crate::alertlog::record_delivery(&w.name, "webhook", "rejected", result.state);
+                            eprintln!("sugarrush watch [{}]: push failed after 3 bounded attempts", w.name);
+                            w.pending_push = None;
+                        } else {
+                            pending.next_attempt_ms = now_ms() + (1_i64 << pending.attempts) * 30_000;
+                            crate::alertlog::record_delivery(&w.name, "webhook", "retrying", result.state);
+                        }
+                    }
+                    let mut state = snapshot(&watched);
+                    if let Err(e) = state.save_daemon_snapshot() { eprintln!("sugarrush watch: {e}"); }
                 }
             }
         }
@@ -616,6 +665,12 @@ fn snapshot(watched: &[Watched]) -> State {
         sites: watched
             .iter()
             .map(|w| (w.id.clone(), Episode::capture(&w.app)))
+            .map(|(id, mut episode)| {
+                if let Some(w) = watched.iter().find(|watched| watched.id == id) {
+                    episode.pending_push = w.pending_push.clone();
+                }
+                (id, episode)
+            })
             .collect(),
     }
 }
@@ -632,6 +687,14 @@ struct Watched {
     /// At most one network poll per site. Alarm ticks remain independent while
     /// the request is in flight.
     polling: bool,
+    pending_push: Option<PendingPush>,
+    push_in_flight: bool,
+}
+
+struct DeliveryResult {
+    site_id: String,
+    state: Alert,
+    accepted: bool,
 }
 
 /// True when the dashboard is up: it is already showing and sounding this, so
@@ -759,34 +822,58 @@ fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reaction {
     // An alarm that ends is news too: a journal with "URGENT LOW" and nothing
     // after it doesn't say whether it lasted two minutes or all night.
     if r.recovered {
+        // A queued escalation for an episode that ended must never arrive
+        // after its recovery and look like a new emergency.
         crate::alertlog::record(&w.name, "recovered", r.state, app.latest().map(|e| e.sgv));
         println!("{} · {who}recovered · {}", stamp(now_ms), r.state.label());
+        w.pending_push = None;
     }
     w.last_logged = Some(r.state);
 
-    if let Some((url, msg)) = r.push.clone() {
-        // Delivery has its own ten-second network timeout. Never await it in
-        // the reaction loop: simultaneous caregiver escalations must not turn
-        // the three-second alarm cadence into N × 10 seconds.
-        let site = w.name.clone();
-        let state = r.state;
-        tokio::spawn(async move {
-            let accepted = crate::push(&url, &msg).await;
-            crate::alertlog::record_delivery(
-                &site,
-                "webhook",
-                if accepted { "accepted" } else { "rejected" },
-                state,
-            );
-            if !accepted {
-                eprintln!("sugarrush watch [{site}]: push failed — check push_url");
-            }
+    if let Some((_url, message)) = r.push.clone() {
+        // Persist the payload but never its secret-bearing destination. The
+        // dispatcher resolves the current configured URL for every attempt.
+        w.pending_push = Some(PendingPush {
+            message,
+            state: r.state.class().to_string(),
+            attempts: 0,
+            next_attempt_ms: now_ms,
         });
     }
     if r.state == Alert::Stale && !w.app.online() {
         println!("{} · {who}offline", stamp(now_ms));
     }
     r
+}
+
+fn dispatch_pending(w: &mut Watched, now: i64, tx: mpsc::UnboundedSender<DeliveryResult>) {
+    let Some(pending) = w.pending_push.as_ref() else {
+        return;
+    };
+    if w.push_in_flight || now < pending.next_attempt_ms {
+        return;
+    }
+    let Some(url) = w
+        .app
+        .alerts
+        .push_url
+        .clone()
+        .filter(|_| w.app.alerts.push_enabled)
+    else {
+        return;
+    };
+    let message = pending.message.clone();
+    let state = alert_from_class(&pending.state).unwrap_or(Alert::Stale);
+    let site_id = w.id.clone();
+    w.push_in_flight = true;
+    tokio::spawn(async move {
+        let accepted = crate::push(&url, &message).await;
+        let _ = tx.send(DeliveryResult {
+            site_id,
+            state,
+            accepted,
+        });
+    });
 }
 
 /// A one-line "still here, and here's what I can see" summary, so an otherwise
@@ -909,6 +996,12 @@ mod tests {
             escalated: false,
             snooze_until: Some(NOW + 300_000),
             episode_kind: Some(Alert::UrgentLow.class().to_string()),
+            pending_push: Some(PendingPush {
+                message: "generic alert".into(),
+                state: Alert::UrgentLow.class().into(),
+                attempts: 1,
+                next_attempt_ms: NOW + 60_000,
+            }),
         };
         // Stored per site, so two people's episodes never collide.
         let mut state = State::default();
@@ -954,6 +1047,7 @@ mod tests {
             pushed_episode: true,
             snooze_until: Some(NOW + 300_000),
             episode_kind: Some(Alert::UrgentLow.class().to_string()),
+            pending_push: None,
             ..Episode::default()
         };
         episode.restore(&mut app);
@@ -967,6 +1061,8 @@ mod tests {
             app,
             last_logged: None,
             polling: false,
+            pending_push: None,
+            push_in_flight: false,
         }];
         assert_eq!(snapshot(&watched).sites["default"], episode);
     }
@@ -1013,6 +1109,7 @@ mod tests {
             escalated: false,
             snooze_until: Some(NOW + 300_000),
             episode_kind: Some(Alert::UrgentLow.class().to_string()),
+            pending_push: None,
         }
         .restore(&mut app);
 
@@ -1126,6 +1223,8 @@ mod tests {
             app,
             last_logged: None,
             polling: false,
+            pending_push: None,
+            push_in_flight: false,
         }];
 
         let line = liveness(&watched, NOW);
@@ -1153,6 +1252,8 @@ mod tests {
             app,
             last_logged: None,
             polling: false,
+            pending_push: None,
+            push_in_flight: false,
         }];
         assert!(liveness(&watched, NOW).contains("offline"));
     }

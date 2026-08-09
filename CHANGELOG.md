@@ -50,6 +50,11 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Fast alarm transitions and watcher webhooks now survive restarts.** The
+  three-second reaction path persists episode latches immediately, while a
+  bounded owner-only webhook outbox retries outside the alarm loop, resolves
+  destinations from current config, and cancels obsolete sends on recovery.
+
 - **Private cache opt-out is now durable across running processes.** Cache
   merges and deletion are serialized, disabling writes a persistent boundary
   that stale dashboards cannot cross, and write/deletion failures are surfaced
