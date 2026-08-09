@@ -456,9 +456,9 @@ async fn poll(app: &mut App, client: &Client, now_ms: i64) -> Result<()> {
             app.mark_online(now_ms);
         }
         Err(e) => {
-            let permanent = e.downcast_ref::<crate::nightscout::FetchError>().is_some();
+            let permanent = e.is_permanent();
             app.mark_offline(now_ms, e.to_string(), permanent);
-            return Err(e);
+            return Err(e.into());
         }
     }
     let published = client.device_status().await.ok().and_then(|(status, p)| {

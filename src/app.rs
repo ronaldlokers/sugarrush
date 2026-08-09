@@ -2399,9 +2399,7 @@ mod tests {
         let mut a = app();
         for _ in 0..3 {
             let err = client.entries_range(0, 1, 1).await.unwrap_err();
-            let permanent = err
-                .downcast_ref::<crate::nightscout::FetchError>()
-                .is_some();
+            let permanent = err.is_permanent();
             a.mark_offline(NOW, err.to_string(), permanent);
         }
         assert!(a.fetch_paused, "a rejected token should stop the retries");
@@ -2412,9 +2410,7 @@ mod tests {
         let mut b = app();
         for _ in 0..5 {
             let err = client.entries_range(0, 1, 1).await.unwrap_err();
-            let permanent = err
-                .downcast_ref::<crate::nightscout::FetchError>()
-                .is_some();
+            let permanent = err.is_permanent();
             b.mark_offline(NOW, err.to_string(), permanent);
         }
         assert!(

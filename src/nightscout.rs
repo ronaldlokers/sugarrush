@@ -3,7 +3,6 @@
 //! Reads sensor glucose values (SGV) from `/api/v1/entries/sgv.json`, authed
 //! with a read-only token passed as a query parameter.
 
-use anyhow::{Context, Result};
 use chrono::DateTime;
 use serde::Deserialize;
 use serde_json::Value;
@@ -16,6 +15,8 @@ const PRED_STEP_MS: i64 = 5 * 60_000;
 /// sensor errors as small codes (0–12); anything below a physiological floor is
 /// noise, not a hypo. CGMs themselves don't report below ~39.
 const MIN_PHYSIOLOGICAL_SGV: f64 = 39.0;
+
+pub type Result<T> = std::result::Result<T, NsError>;
 
 /// A single sensor glucose reading as returned by Nightscout.
 #[derive(Debug, Clone, Deserialize)]
@@ -61,7 +62,7 @@ impl Client {
             .timeout(std::time::Duration::from_secs(12))
             .connect_timeout(std::time::Duration::from_secs(6))
             .build()
-            .context("failed to build HTTP client")?;
+            .map_err(NsError::Client)?;
         Ok(Self {
             http,
             base_url: site.base_url().to_string(),
@@ -91,13 +92,16 @@ impl Client {
             ])
             .send()
             .await
-            .map_err(redact)
-            .context("can't reach Nightscout (check the URL and your connection)")?;
+            .map_err(|e| {
+                NsError::Request(
+                    "can't reach Nightscout (check the URL and your connection)",
+                    redact(e),
+                )
+            })?;
         let entries: Vec<Entry> = check_status(resp)?
             .json()
             .await
-            .map_err(redact)
-            .context("failed to parse Nightscout response")?;
+            .map_err(|e| NsError::Parse("failed to parse Nightscout response", redact(e)))?;
         Ok(clean_newest_first(entries))
     }
 
@@ -111,21 +115,17 @@ impl Client {
     /// halves coming from different records if the uploader posted in between.
     pub async fn device_status(&self) -> Result<(DeviceStatus, Option<Vec<Prediction>>)> {
         let url = format!("{}/api/v1/devicestatus.json", self.base_url);
-        let value: Value = self
+        let resp = self
             .http
             .get(&url)
             .query(&[("count", "1"), ("token", self.token.as_str())])
             .send()
             .await
-            .map_err(redact)
-            .context("devicestatus request failed")?
-            .error_for_status()
-            .map_err(redact)
-            .context("Nightscout returned an error status")?
+            .map_err(|e| NsError::Request("devicestatus request failed", redact(e)))?;
+        let value: Value = check_status(resp)?
             .json()
             .await
-            .map_err(redact)
-            .context("failed to parse devicestatus response")?;
+            .map_err(|e| NsError::Parse("failed to parse devicestatus response", redact(e)))?;
         let latest = value.as_array().and_then(|items| items.first());
         Ok((
             latest.map(parse_device_status).unwrap_or_default(),
@@ -136,7 +136,7 @@ impl Client {
     /// Epoch ms of the most recent sensor start/change treatment, if any.
     pub async fn sensor_start(&self) -> Result<Option<i64>> {
         let url = format!("{}/api/v1/treatments.json", self.base_url);
-        let value: Value = self
+        let resp = self
             .http
             .get(&url)
             // Filter server-side: a pump user logs 10-15 treatments a day, so
@@ -150,15 +150,11 @@ impl Client {
             ])
             .send()
             .await
-            .map_err(redact)
-            .context("treatments request failed")?
-            .error_for_status()
-            .map_err(redact)
-            .context("Nightscout returned an error status")?
+            .map_err(|e| NsError::Request("treatments request failed", redact(e)))?;
+        let value: Value = check_status(resp)?
             .json()
             .await
-            .map_err(redact)
-            .context("failed to parse treatments response")?;
+            .map_err(|e| NsError::Parse("failed to parse treatments response", redact(e)))?;
         Ok(parse_sensor_start(&value))
     }
 
@@ -169,7 +165,7 @@ impl Client {
             .map(|dt| dt.to_rfc3339())
             .unwrap_or_default();
         let url = format!("{}/api/v1/treatments.json", self.base_url);
-        let value: Value = self
+        let resp = self
             .http
             .get(&url)
             .query(&[
@@ -179,15 +175,11 @@ impl Client {
             ])
             .send()
             .await
-            .map_err(redact)
-            .context("treatments request failed")?
-            .error_for_status()
-            .map_err(redact)
-            .context("Nightscout returned an error status")?
+            .map_err(|e| NsError::Request("treatments request failed", redact(e)))?;
+        let value: Value = check_status(resp)?
             .json()
             .await
-            .map_err(redact)
-            .context("failed to parse treatments response")?;
+            .map_err(|e| NsError::Parse("failed to parse treatments response", redact(e)))?;
         Ok(parse_treatments(&value, start_ms, end_ms))
     }
 }
@@ -391,40 +383,65 @@ fn check_status(resp: reqwest::Response) -> Result<reqwest::Response> {
     use reqwest::StatusCode;
     match resp.status() {
         s if s.is_success() => Ok(resp),
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(FetchError::Auth.into()),
-        StatusCode::NOT_FOUND => Err(FetchError::NotFound.into()),
-        s => anyhow::bail!("Nightscout returned HTTP {}", s.as_u16()),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(NsError::Auth),
+        StatusCode::NOT_FOUND => Err(NsError::NotFound),
+        s => Err(NsError::Http(s.as_u16())),
     }
 }
 
-/// A failure that repeating the request cannot fix — the site config is wrong.
-/// Callers downcast to this (`err.downcast_ref::<FetchError>()`) to stop
-/// retrying instead of hammering the server forever with a bad token or URL.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FetchError {
+/// A typed Nightscout failure. Callers can make retry decisions directly;
+/// errors no longer cross the client boundary as `anyhow::Error` and require
+/// a runtime downcast to recover information the client already knew.
+#[derive(Debug)]
+pub enum NsError {
+    /// Building the shared HTTP client failed.
+    Client(reqwest::Error),
+    /// The request could not be completed.
+    Request(&'static str, reqwest::Error),
+    /// Nightscout returned malformed or unexpected JSON.
+    Parse(&'static str, reqwest::Error),
     /// 401/403 — the token is missing, wrong, or lacks the `readable` role.
     Auth,
     /// 404 — the base URL doesn't point at a Nightscout API.
     NotFound,
+    /// A transient server/proxy status.
+    Http(u16),
 }
 
-impl std::fmt::Display for FetchError {
+impl NsError {
+    /// A retry cannot repair authentication or an incorrect base URL.
+    pub fn is_permanent(&self) -> bool {
+        matches!(self, Self::Auth | Self::NotFound)
+    }
+}
+
+impl std::fmt::Display for NsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FetchError::Auth => write!(
+            NsError::Client(_) => write!(f, "failed to build HTTP client"),
+            NsError::Request(context, _) | NsError::Parse(context, _) => f.write_str(context),
+            NsError::Auth => write!(
                 f,
                 "authentication failed — check your read-only token (a Nightscout \
                  Subject token with the 'readable' role, not API_SECRET)"
             ),
-            FetchError::NotFound => write!(
+            NsError::NotFound => write!(
                 f,
                 "no Nightscout API at this URL (HTTP 404) — check the site URL"
             ),
+            NsError::Http(status) => write!(f, "Nightscout returned HTTP {status}"),
         }
     }
 }
 
-impl std::error::Error for FetchError {}
+impl std::error::Error for NsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Client(e) | Self::Request(_, e) | Self::Parse(_, e) => Some(e),
+            Self::Auth | Self::NotFound | Self::Http(_) => None,
+        }
+    }
+}
 
 /// Filter sensor-error codes and force newest-first ordering.
 ///
@@ -459,7 +476,7 @@ fn parse_iso(s: &str) -> Option<i64> {
 /// A minimal Nightscout stand-in, served over a real socket.
 ///
 /// The parser tests below cover shapes; this covers the wire — status codes,
-/// timeouts, and the `FetchError` classification the retry logic depends on.
+/// timeouts, and the `NsError` classification the retry logic depends on.
 /// It is deliberately hand-rolled over `TcpListener` rather than pulling in a
 /// test HTTP server: the crate ships no dev-dependencies, and a dependency in
 /// the alarm path's test harness is a dependency in the alarm path.
@@ -639,7 +656,8 @@ mod tests {
         let site = fake::serve(401, "unauthorized").await;
         let client = Client::for_site(&site).unwrap();
         let err = client.entries_range(0, 1, 1).await.unwrap_err();
-        assert_eq!(err.downcast_ref::<FetchError>(), Some(&FetchError::Auth));
+        assert!(matches!(&err, NsError::Auth));
+        assert!(err.is_permanent());
     }
 
     #[tokio::test]
@@ -647,10 +665,8 @@ mod tests {
         let site = fake::serve(404, "nope").await;
         let client = Client::for_site(&site).unwrap();
         let err = client.entries_range(0, 1, 1).await.unwrap_err();
-        assert_eq!(
-            err.downcast_ref::<FetchError>(),
-            Some(&FetchError::NotFound)
-        );
+        assert!(matches!(&err, NsError::NotFound));
+        assert!(err.is_permanent());
     }
 
     #[tokio::test]
@@ -658,8 +674,9 @@ mod tests {
         let site = fake::serve(500, "boom").await;
         let client = Client::for_site(&site).unwrap();
         let err = client.entries_range(0, 1, 1).await.unwrap_err();
-        // Not a FetchError: the site may simply be restarting.
-        assert!(err.downcast_ref::<FetchError>().is_none());
+        // The site may simply be restarting, so the typed error stays retryable.
+        assert!(matches!(&err, NsError::Http(500)));
+        assert!(!err.is_permanent());
         assert!(err.to_string().contains("500"), "{err}");
     }
 
