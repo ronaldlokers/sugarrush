@@ -8,6 +8,13 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Text prompts put the real cursor where you're typing.** The site URL, the
+  token and the date-jump prompt drew a fake blinking `_` and never positioned
+  the terminal cursor, so screen-reader caret tracking and braille cursor
+  routing had nothing to follow — worst on the token field, where the text is
+  bullets and the caret is the only cue. The blink is gone too: it could not be
+  turned off, which is a problem for anyone with a migraine or vestibular
+  trigger.
 - **The live dot now reports the connection, not the view.** A green `●` sat
   next to a red authentication error, because the dot belonged to the
   `live`/`history` view mode and knew nothing about the network. The dot is now
