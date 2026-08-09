@@ -88,6 +88,7 @@ predict_horizon_minutes = 30   # 0 disables
 # Multiple sites (optional). Provide one or more [[sites]] instead of the
 # top-level url/token above, and switch between them in-app with `n`.
 # [[sites]]
+# id = "018f3f7a-b492-7c2e-a851-2d0f4af43a20" # generated; immutable identity
 # name = "home"
 # url = "https://home.example.com"
 # token = "readonly-token-1"

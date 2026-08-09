@@ -213,7 +213,7 @@ fn is_fresh(stamp_ms: i64, now_ms: i64) -> bool {
     (0..HEARTBEAT_STALE_MS).contains(&(now_ms - stamp_ms))
 }
 
-/// Persisted episode state, keyed by site name — a caregiver watching three
+/// Persisted episode state, keyed by immutable site ID — a caregiver watching three
 /// people has three independent episodes, and a low for one of them must not
 /// silence the announcement for another.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -314,16 +314,33 @@ pub enum SnoozeTarget<'a> {
 pub fn set_snooze(until: Option<i64>, target: SnoozeTarget<'_>) -> Result<usize> {
     let _lock = acquire_state_lock()?;
     let mut state = State::load();
-    if state.sites.is_empty() {
-        // No episode file yet (a daemon that has never run, or never alarmed).
-        // Record it anyway under the configured site names, so the snooze is
-        // in place before the first alarm rather than after it.
-        let cfg = crate::config::Config::load()?;
-        for site in cfg.resolve_sites()? {
-            state.sites.entry(site.name).or_default();
+    let cfg = crate::config::Config::load()?;
+    let sites = cfg.resolve_sites()?;
+    // One-time migration from the legacy display-name keys. Only an exact
+    // current-name match is eligible; orphaned state is never assigned to a
+    // different person by guesswork.
+    for site in &sites {
+        if !state.sites.contains_key(&site.stable_id()) {
+            if let Some(episode) = state.sites.remove(&site.name) {
+                state.sites.insert(site.stable_id(), episode);
+            }
         }
+        state.sites.entry(site.stable_id()).or_default();
     }
-    let n = apply_snooze(&mut state, until, target)?;
+    let resolved = match target {
+        SnoozeTarget::All => SnoozeTarget::All,
+        SnoozeTarget::Site(name) => {
+            let id = sites
+                .iter()
+                .find(|site| site.name == name)
+                .with_context(|| format!("unknown site '{name}'"))?
+                .stable_id();
+            let n = apply_snooze(&mut state, until, SnoozeTarget::Site(&id))?;
+            state.save_unlocked()?;
+            return Ok(n);
+        }
+    };
+    let n = apply_snooze(&mut state, until, resolved)?;
     state.save_unlocked()?;
     Ok(n)
 }
@@ -363,7 +380,7 @@ pub fn snoozes() -> std::collections::HashMap<String, Option<i64>> {
     State::load()
         .sites
         .into_iter()
-        .map(|(name, episode)| (name, episode.snooze_until))
+        .map(|(id, episode)| (id, episode.snooze_until))
         .collect()
 }
 
@@ -446,17 +463,25 @@ pub async fn run() -> Result<()> {
     // independent episodes — hysteresis, escalation, snooze and all — so the
     // simplest correct thing is to run the same machinery per site rather than
     // inventing a second, thinner alert path for the multi-site case.
-    let state = State::load();
+    let mut state = State::load();
+    for site in &sites {
+        if !state.sites.contains_key(&site.stable_id()) {
+            if let Some(episode) = state.sites.remove(&site.name) {
+                state.sites.insert(site.stable_id(), episode);
+            }
+        }
+    }
     let mut watched: Vec<Watched> = sites
         .iter()
         .map(|site| {
             let alerts = site.resolve_alerts(&cfg.alerts, cfg.units).0;
             let mut app = App::new(&cfg, alerts, vec![site.clone()]);
-            if let Some(episode) = state.sites.get(&site.name) {
+            if let Some(episode) = state.sites.get(&site.stable_id()) {
                 episode.restore(&mut app);
             }
             Ok(Watched {
                 name: site.name.clone(),
+                id: site.stable_id(),
                 client: Client::for_site(site)?,
                 app,
                 last_logged: None,
@@ -510,7 +535,7 @@ pub async fn run() -> Result<()> {
                 // from what we last wrote came from outside and wins.
                 let on_disk = State::load();
                 for (index, w) in watched.iter_mut().enumerate() {
-                    adopt_external_snooze(&mut w.app, on_disk.sites.get(&w.name));
+                    adopt_external_snooze(&mut w.app, on_disk.sites.get(&w.id));
                     // The retry policy already exists on App and the TUI obeys
                     // it; the daemon was hammering a failing site at full rate
                     // and ignoring a paused-after-auth-failure state entirely.
@@ -590,7 +615,7 @@ fn snapshot(watched: &[Watched]) -> State {
     State {
         sites: watched
             .iter()
-            .map(|w| (w.name.clone(), Episode::capture(&w.app)))
+            .map(|w| (w.id.clone(), Episode::capture(&w.app)))
             .collect(),
     }
 }
@@ -599,6 +624,7 @@ fn snapshot(watched: &[Watched]) -> State {
 /// notion of what it last reported.
 struct Watched {
     name: String,
+    id: String,
     client: Client,
     app: App,
     /// What the journal last said about this site, so recoveries are logged.
@@ -936,6 +962,7 @@ mod tests {
 
         let watched = vec![Watched {
             name: "default".into(),
+            id: "default".into(),
             client: Client::for_site(&sites[0]).unwrap(),
             app,
             last_logged: None,
@@ -1094,6 +1121,7 @@ mod tests {
         app.evaluate_alert(NOW);
         let watched = vec![Watched {
             name: "default".into(),
+            id: "default".into(),
             client: Client::for_site(&sites[0]).unwrap(),
             app,
             last_logged: None,
@@ -1120,6 +1148,7 @@ mod tests {
         app.mark_offline(NOW, "connection refused".into(), false);
         let watched = vec![Watched {
             name: "default".into(),
+            id: "default".into(),
             client: Client::for_site(&sites[0]).unwrap(),
             app,
             last_logged: None,

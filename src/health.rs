@@ -76,7 +76,7 @@ pub async fn inspect(cfg: &Config) -> anyhow::Result<Report> {
             alarm_state: status
                 .map(|status| status.alert.class().to_string())
                 .unwrap_or_else(|| "stale".into()),
-            snoozed_until_ms: snoozes.get(&site.name).copied().flatten(),
+            snoozed_until_ms: snoozes.get(&site.stable_id()).copied().flatten(),
             last_delivery: delivery,
             error: status.and_then(|status| status.error.clone()),
         });

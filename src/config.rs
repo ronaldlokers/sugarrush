@@ -124,6 +124,10 @@ impl GraphStyle {
 /// A named Nightscout site.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Site {
+    /// Immutable internal identity. Names are editable labels and must never
+    /// key private data or alarm continuity.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
     #[serde(default = "default_site_name")]
     pub name: String,
     pub url: String,
@@ -143,6 +147,13 @@ pub struct Site {
 }
 
 impl Site {
+    pub fn stable_id(&self) -> String {
+        if uuid::Uuid::parse_str(&self.id).is_ok() {
+            self.id.clone()
+        } else {
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, self.base_url().as_bytes()).to_string()
+        }
+    }
     /// Trimmed base URL without a trailing slash.
     pub fn base_url(&self) -> &str {
         self.url.trim_end_matches('/')
@@ -667,6 +678,7 @@ impl Config {
         } else {
             match (&self.url, &self.token) {
                 (Some(url), Some(token)) => vec![Site {
+                    id: String::new(),
                     name: default_site_name(),
                     url: url.clone(),
                     token: token.clone(),
@@ -702,6 +714,11 @@ impl Config {
             }
             if let Ok(url) = normalize_site_url(&site.url) {
                 site.url = url;
+            }
+            if site.id.is_empty() {
+                site.id = site.stable_id();
+            } else if uuid::Uuid::parse_str(&site.id).is_err() {
+                bail!("site '{}': id must be a UUID", site.name);
             }
         }
         Ok(sites)
@@ -835,6 +852,7 @@ mod tests {
     #[test]
     fn insecure_only_for_remote_http() {
         let site = |url: &str| Site {
+            id: String::new(),
             name: "default".into(),
             url: url.into(),
             token: "t".into(),
@@ -987,10 +1005,26 @@ token = "b"
 "#,
         )
         .unwrap();
-        // Watcher episode state is keyed by name, so a duplicate would make
-        // one person's announced low mark the other's as announced.
+        // Names are still CLI selectors and human-facing labels, so ambiguity
+        // is refused even though persisted state uses immutable IDs.
         let err = cfg.resolve_sites().unwrap_err().to_string();
         assert!(err.contains("both named 'kid'"), "{err}");
+    }
+
+    #[test]
+    fn legacy_site_identity_survives_a_display_name_change() {
+        let mut site = Site {
+            id: String::new(),
+            name: "Alice".into(),
+            url: "https://alice.example".into(),
+            token: "read".into(),
+            write_token: None,
+            timezone: None,
+            alerts: None,
+        };
+        let identity = site.stable_id();
+        site.name = "A.".into();
+        assert_eq!(site.stable_id(), identity);
     }
 
     #[test]

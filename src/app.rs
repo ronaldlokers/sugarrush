@@ -1966,6 +1966,7 @@ mod tests {
         cfg.token = None;
         cfg.sites = vec![
             Site {
+                id: String::new(),
                 name: "alice".into(),
                 url: "https://alice.example".into(),
                 token: "a".into(),
@@ -1974,6 +1975,7 @@ mod tests {
                 alerts: None,
             },
             Site {
+                id: String::new(),
                 name: "bob".into(),
                 url: "https://bob.example".into(),
                 token: "b".into(),
@@ -2055,6 +2057,7 @@ mod tests {
         let mut a = app();
         a.alerts.push_url = Some("https://ntfy.sh/topic".into());
         a.sites.push(crate::config::Site {
+            id: String::new(),
             name: "bob".into(),
             url: "https://ns.example.com".into(),
             token: "t".into(),

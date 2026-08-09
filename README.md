@@ -398,6 +398,10 @@ and log line.
 Sites can be added, renamed, edited, and removed in the in-app settings screen;
 press `w` to persist the list. A newly added site deliberately starts without a
 token, so credentials are never copied from the person currently selected.
+Each person also has an immutable internal UUID: changing their display name
+does not move snoozes, alarm episodes, cached readings, or treatment receipts
+to somebody else. Legacy configurations derive this identity from the endpoint
+until Settings saves it explicitly.
 Each site can either inherit the global alert settings or have its own complete
 set of thresholds and alarm channels; select **Alert settings** on that site's
 settings screen to switch between the two.

@@ -466,7 +466,7 @@ async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
         Ok(entries) => {
             if cfg.history_cache.enabled {
                 let _ = history_cache::merge(
-                    &sites[0].name,
+                    &sites[0].stable_id(),
                     &entries,
                     now,
                     cfg.history_cache.retention_days,
@@ -475,7 +475,7 @@ async fn run_export(days: u32, dir: Option<String>) -> Result<()> {
             entries
         }
         Err(error) if cfg.history_cache.enabled => {
-            let cached = history_cache::load(&sites[0].name, start, now);
+            let cached = history_cache::load(&sites[0].stable_id(), start, now);
             if cached.is_empty() {
                 return Err(error.into());
             }
@@ -1378,7 +1378,7 @@ struct Plan {
     /// `Some((start, end, count))` when the heavy history buffer is due.
     agp: Option<(i64, i64, usize)>,
     followers: Option<Vec<(config::Site, config::Alerts)>>,
-    site_name: String,
+    cache_key: String,
     cache_enabled: bool,
     cache_days: u32,
 }
@@ -1434,7 +1434,7 @@ fn plan(app: &mut App, now: i64) -> Plan {
                 .map(|(i, site)| (site, app.alerts_for_site(i)))
                 .collect()
         }),
-        site_name: app.active_site().name.clone(),
+        cache_key: app.active_site().stable_id(),
         cache_enabled: app.cache_enabled,
         cache_days: app.cache_days,
     }
@@ -1562,7 +1562,7 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
     match g.entries {
         Some(Ok(entries)) => {
             if p.cache_enabled {
-                let _ = history_cache::merge(&p.site_name, &entries, now, p.cache_days);
+                let _ = history_cache::merge(&p.cache_key, &entries, now, p.cache_days);
             }
             if p.live {
                 let fresh = entries
@@ -1588,7 +1588,7 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
             let permanent = e.is_permanent();
             app.mark_offline(now, e.to_string(), permanent);
             if p.cache_enabled {
-                let cached = history_cache::load(&p.site_name, p.start, p.end);
+                let cached = history_cache::load(&p.cache_key, p.start, p.end);
                 if !cached.is_empty() {
                     if p.live {
                         app.live_edge = cached.first().cloned();
@@ -1642,7 +1642,7 @@ fn apply(app: &mut App, p: &Plan, g: Gathered) -> app::Reaction {
         match g.agp {
             Some(Ok(entries)) => {
                 if p.cache_enabled {
-                    let _ = history_cache::merge(&p.site_name, &entries, now, p.cache_days);
+                    let _ = history_cache::merge(&p.cache_key, &entries, now, p.cache_days);
                 }
                 app.agp_entries = entries;
                 app.agp_fetched_ms = now;
