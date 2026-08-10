@@ -8,6 +8,13 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **A lock left behind by a crash no longer disables treatment writes or the
+  history cache permanently.** Both used a lock file removed on clean exit, and
+  a `SIGKILL` or a power cut leaves it behind — with no staleness rule, every
+  later run waited out the timeout and failed, so one hard kill disabled the
+  feature until someone found and deleted a file nothing had told them about. An
+  abandoned lock is now reclaimed after 30 seconds, a live one is still
+  respected, and the timeout message names the file and what to do about it.
 - **A successful treatment write is no longer reported as a rejection.** The
   client read the array Nightscout returns on success — the documents it just
   stored — as a list of refusals. So a treatment that Nightscout accepted was

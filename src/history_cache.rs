@@ -143,6 +143,21 @@ pub fn purge_all() -> Result<()> {
     Ok(())
 }
 
+const STALE_LOCK: Duration = Duration::from_secs(30);
+
+/// A lock file that heals itself.
+///
+/// `create_new` plus `Drop` is only a lock while the process lives to run
+/// `Drop`. A `SIGKILL`, an OOM kill or a power cut leaves the file behind, and
+/// with no staleness rule that is permanent: every later run waits the timeout
+/// and fails, so one hard kill disabled the history cache until someone found and
+/// deleted a file nothing had told them about.
+///
+/// A lock older than `STALE` is treated as abandoned and removed. The window is
+/// far longer than the milliseconds a real holder needs, so a live holder is
+/// never stolen from; and stealing is safe here anyway, because the writes it
+/// guards are atomic replacements rather than read-modify-write sequences that
+/// could interleave.
 struct CacheLock(PathBuf);
 
 impl CacheLock {
@@ -162,8 +177,15 @@ impl CacheLock {
             match options.open(&path) {
                 Ok(_) => return Ok(Self(path)),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if steal_if_stale(&path) {
+                        continue;
+                    }
                     if Instant::now() >= deadline {
-                        anyhow::bail!("timed out waiting to update private history cache");
+                        anyhow::bail!(
+                            "timed out waiting to update the private history cache. If no \
+                             other sugarrush is running, remove {} and try again",
+                            path.display()
+                        );
                     }
                     std::thread::sleep(Duration::from_millis(10));
                 }
@@ -171,6 +193,17 @@ impl CacheLock {
             }
         }
     }
+}
+
+/// Remove a lock whose holder is plainly gone. Returns whether it did.
+fn steal_if_stale(path: &std::path::Path) -> bool {
+    let Ok(age) = std::fs::metadata(path).and_then(|m| m.modified()) else {
+        return false;
+    };
+    if age.elapsed().is_ok_and(|elapsed| elapsed > STALE_LOCK) {
+        return std::fs::remove_file(path).is_ok();
+    }
+    false
 }
 
 impl Drop for CacheLock {

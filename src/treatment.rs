@@ -443,6 +443,21 @@ fn compact(path: &Path) -> Result<()> {
     crate::config::Config::write_atomic(path, &out)
 }
 
+const STALE_LOCK: Duration = Duration::from_secs(30);
+
+/// A lock file that heals itself.
+///
+/// `create_new` plus `Drop` is only a lock while the process lives to run
+/// `Drop`. A `SIGKILL`, an OOM kill or a power cut leaves the file behind, and
+/// with no staleness rule that is permanent: every later run waits the timeout
+/// and fails, so one hard kill disabled treatment writes until someone found and
+/// deleted a file nothing had told them about.
+///
+/// A lock older than `STALE` is treated as abandoned and removed. The window is
+/// far longer than the milliseconds a real holder needs, so a live holder is
+/// never stolen from; and stealing is safe here anyway, because the writes it
+/// guards are atomic replacements rather than read-modify-write sequences that
+/// could interleave.
 struct FileLock(PathBuf);
 impl FileLock {
     fn acquire(path: &Path) -> Result<Self> {
@@ -458,8 +473,15 @@ impl FileLock {
             match options.open(path) {
                 Ok(_) => return Ok(Self(path.to_path_buf())),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if steal_if_stale(path) {
+                        continue;
+                    }
                     if Instant::now() >= deadline {
-                        bail!("timed out waiting to update treatment audit");
+                        bail!(
+                            "timed out waiting to update the treatment audit. If no other \
+                             sugarrush is running, remove {} and try again",
+                            path.display()
+                        );
                     }
                     std::thread::sleep(Duration::from_millis(10));
                 }
@@ -468,6 +490,18 @@ impl FileLock {
         }
     }
 }
+
+/// Remove a lock whose holder is plainly gone. Returns whether it did.
+fn steal_if_stale(path: &Path) -> bool {
+    let Ok(age) = std::fs::metadata(path).and_then(|m| m.modified()) else {
+        return false;
+    };
+    if age.elapsed().is_ok_and(|elapsed| elapsed > STALE_LOCK) {
+        return std::fs::remove_file(path).is_ok();
+    }
+    false
+}
+
 impl Drop for FileLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
@@ -477,6 +511,61 @@ impl Drop for FileLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `create_new` plus `Drop` is only a lock while the process lives to run
+    /// `Drop`. A SIGKILL or a power cut used to leave the file behind
+    /// permanently, so one hard kill disabled treatment writes until someone
+    /// found and deleted a file nothing had told them about.
+    #[test]
+    fn an_abandoned_lock_is_reclaimed() {
+        let dir = std::env::temp_dir().join(format!("sugarrush-locktest-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.lock");
+
+        // A lock a live holder owns is never stolen.
+        std::fs::write(&path, "").unwrap();
+        assert!(!steal_if_stale(&path), "a fresh lock must be respected");
+        assert!(path.exists());
+
+        // One older than the staleness window is abandoned, and reclaimed.
+        let old = std::time::SystemTime::now() - STALE_LOCK - Duration::from_secs(5);
+        set_mtime(&path, old);
+        assert!(steal_if_stale(&path), "an abandoned lock must be reclaimed");
+        assert!(!path.exists());
+
+        // And acquiring now succeeds rather than timing out.
+        let lock = FileLock::acquire(&path).expect("should acquire after reclaiming");
+        drop(lock);
+        assert!(!path.exists(), "Drop releases the lock");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The error a caller sees when a lock is genuinely held has to say what to
+    /// do about it; the old one named neither the file nor the remedy.
+    #[test]
+    fn a_held_lock_reports_the_path_to_remove() {
+        let dir =
+            std::env::temp_dir().join(format!("sugarrush-locktest-held-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("held.lock");
+        std::fs::write(&path, "").unwrap();
+
+        let error = match FileLock::acquire(&path) {
+            Ok(_) => panic!("a held lock must not be acquired"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains(&path.display().to_string()), "got {error:?}");
+        assert!(error.contains("remove"), "got {error:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    fn set_mtime(path: &Path, when: std::time::SystemTime) {
+        // No filetime crate here; go through the file's own handle.
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(when).unwrap();
+    }
+
     #[test]
     fn note_removes_terminal_and_bidi_controls() {
         assert_eq!(sanitize_note(" meal\n\u{202e}ok ").unwrap(), "mealok");
