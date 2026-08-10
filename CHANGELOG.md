@@ -8,6 +8,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **A successful treatment write is no longer reported as a rejection.** The
+  client read the array Nightscout returns on success — the documents it just
+  stored — as a list of refusals. So a treatment that Nightscout accepted was
+  reported as rejected, and following the retry advice wrote it again: two
+  identical carb or insulin records for one dose, both reported as failures.
+  Only a non-empty array now counts as accepted; every other response shape is
+  reported as *unknown*, which tells you to check Nightscout and retry with the
+  same operation ID rather than a new one — the one retry that cannot duplicate.
 - **Health and delivery joins survive person renames safely.** Concurrent
   follower results and new delivery receipts now carry immutable site IDs;
   legacy name-only receipts remain readable without letting a reused display
