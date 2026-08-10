@@ -189,7 +189,14 @@ pub async fn run(request: Request) -> Result<()> {
         bail!("refusing a health-data write over unencrypted HTTP");
     }
 
-    review(&request, &site.name, carbs, insulin, created)?;
+    review(
+        &request,
+        &site.name,
+        carbs,
+        insulin,
+        created,
+        cfg.allow_unattended_writes,
+    )?;
     let operation_id = match request.operation_id.as_deref() {
         Some(value) => uuid::Uuid::parse_str(value)
             .context("--operation-id must be a UUID")?
@@ -297,6 +304,7 @@ fn review(
     carbs: Option<f64>,
     insulin: Option<f64>,
     at: DateTime<Utc>,
+    allow_unattended: bool,
 ) -> Result<()> {
     println!("Review treatment write:");
     println!("  person:  {site}");
@@ -324,6 +332,21 @@ fn review(
     if request.non_interactive {
         if !request.confirm || request.operation_id.is_none() {
             bail!("--non-interactive requires both --confirm and a stable --operation-id UUID");
+        }
+        // The interactive path is guarded by typing the person's name; this one
+        // skips that by construction, so the grant has to exist at rest. A flag
+        // combination is available to anything that can compose a command line
+        // on this machine; a config key is a decision someone made once, in a
+        // file they own, and `sugarrush about` reports it.
+        if !allow_unattended {
+            bail!(
+                "unattended writes are not enabled for this install.\n\
+                 Add `allow_unattended_writes = true` to {} to permit \
+                 --non-interactive treatment writes.",
+                Config::path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "config.toml".into())
+            );
         }
         return Ok(());
     }
@@ -511,6 +534,55 @@ impl Drop for FileLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unattended(confirm: bool, id: Option<&str>) -> Request {
+        Request {
+            site: "Alex".into(),
+            carbs: Some(15.0),
+            insulin: None,
+            note: None,
+            at: None,
+            confirm,
+            non_interactive: true,
+            operation_id: id.map(str::to_string),
+        }
+    }
+
+    /// The interactive path is guarded by typing the person's name. The
+    /// unattended path skips that by construction, so the grant has to exist at
+    /// rest — a flag combination is available to anything that can compose a
+    /// command line on this machine.
+    #[test]
+    fn unattended_writes_need_a_grant_that_lives_in_the_config() {
+        let at = Utc::now();
+        let request = unattended(true, Some("11111111-2222-3333-4444-555555555555"));
+
+        let denied = review(&request, "Alex", Some(15.0), None, at, false)
+            .expect_err("no grant means no unattended write");
+        let denied = denied.to_string();
+        assert!(denied.contains("allow_unattended_writes"), "got {denied:?}");
+        assert!(denied.contains("not enabled"), "got {denied:?}");
+
+        review(&request, "Alex", Some(15.0), None, at, true)
+            .expect("with the grant, an unattended write proceeds");
+    }
+
+    /// The grant does not replace the other two requirements — it is added to
+    /// them, so a script still has to be explicit and still has to carry a
+    /// retry identity.
+    #[test]
+    fn a_grant_does_not_excuse_confirm_or_an_operation_id() {
+        let at = Utc::now();
+        for request in [
+            unattended(false, Some("11111111-2222-3333-4444-555555555555")),
+            unattended(true, None),
+        ] {
+            assert!(
+                review(&request, "Alex", Some(15.0), None, at, true).is_err(),
+                "the grant must not stand in for --confirm or --operation-id"
+            );
+        }
+    }
 
     /// `create_new` plus `Drop` is only a lock while the process lives to run
     /// `Drop`. A SIGKILL or a power cut used to leave the file behind

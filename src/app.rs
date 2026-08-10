@@ -143,6 +143,10 @@ pub struct App {
     pub settings_sel: usize,
     /// Auto-refresh interval; editable at runtime.
     pub refresh_secs: u64,
+    /// Whether unattended `treatment --non-interactive` writes are permitted.
+    /// Not editable in the settings screen on purpose — granting a machine the
+    /// ability to write to a health record should take opening the file.
+    pub allow_unattended_writes: bool,
     /// Set when `refresh_secs` changed so the run loop rebuilds its ticker.
     pub refresh_dirty: bool,
     /// Transient status line for the settings screen (e.g. "saved").
@@ -333,6 +337,7 @@ impl App {
             screen: Screen::Dashboard,
             settings_sel: 0,
             refresh_secs: cfg.refresh_secs,
+            allow_unattended_writes: cfg.allow_unattended_writes,
             refresh_dirty: false,
             status: None,
             theme: cfg.theme.resolve(),
@@ -1144,6 +1149,22 @@ mod tests {
             r.recovered,
             "the low that was running before the restart has ended"
         );
+    }
+
+    /// Saving from the settings screen must not silently revoke a grant made in
+    /// the config file. `build_config` rewrites the whole file, so anything it
+    /// forgets is deleted on the next `w`.
+    #[test]
+    fn saving_settings_does_not_revoke_the_unattended_write_grant() {
+        let mut a = app();
+        a.allow_unattended_writes = true;
+        assert!(
+            a.build_config().allow_unattended_writes,
+            "pressing w must not turn off unattended writes"
+        );
+
+        a.allow_unattended_writes = false;
+        assert!(!a.build_config().allow_unattended_writes);
     }
 
     /// The audible alarm and the notification channels used to run on separate

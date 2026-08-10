@@ -105,3 +105,12 @@ predict_horizon_minutes = 30   # 0 disables
 # name = "clinic"
 # url = "https://clinic.example.com"
 # token = "readonly-token-2"
+
+# Permit `sugarrush treatment --non-interactive` to write without a human.
+#
+# Off by default, and deliberately not editable in the settings screen. The
+# interactive write path is guarded by typing the person's name; the unattended
+# path skips that by construction, so the grant has to exist at rest. Turning
+# this on lets anything that can run a command on this machine write to that
+# person's health record. `sugarrush about` reports whether it is on.
+# allow_unattended_writes = false
