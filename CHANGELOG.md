@@ -30,6 +30,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Unattended treatment writes now need a grant in `config.toml`.**
+  `treatment --non-interactive` could write to someone's health record with no
+  human in the loop, on a flag combination alone — available to anything that
+  can compose a command line. It now also requires `allow_unattended_writes =
+  true`, off by default and deliberately not editable in the settings screen, so
+  the grant is a decision made once in a file you own. `sugarrush about` reports
+  whether it is on, and now also reports whether each site has a write token at
+  all — the presence, never the value.
 - **Treatment submissions have a privacy-safe receipt view.** `treatments`
   filters the bounded local audit by person and time, emits text/JSON/CSV, and
   exposes stable operation IDs for reconciliation without notes or credentials.

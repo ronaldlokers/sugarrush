@@ -715,6 +715,7 @@ impl App {
         self.global_alerts = fresh.global_alerts;
         self.site_alerts = fresh.site_alerts;
         self.refresh_secs = fresh.refresh_secs;
+        self.allow_unattended_writes = fresh.allow_unattended_writes;
         self.graph_style = fresh.graph_style;
         self.agp_days = fresh.agp_days;
         self.cache_enabled = fresh.cache_enabled;
@@ -770,6 +771,9 @@ impl App {
             url,
             token,
             sites,
+            // Carried through rather than defaulted: `w` in the settings screen
+            // must not silently revoke a grant made in the config file.
+            allow_unattended_writes: self.allow_unattended_writes,
             units: u,
             refresh_secs: self.refresh_secs,
             alerts: AlertsConfig::from_resolved(

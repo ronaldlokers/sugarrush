@@ -1151,13 +1151,22 @@ fn print_about() {
                             .nth(1)
                             .and_then(|r| r.split('/').next())
                             .unwrap_or("?");
+                        // The write token's *presence* is reported, never its
+                        // value. Whether an install can write to someone's
+                        // health record is the most consequential thing about
+                        // it, and it was the one capability `about` didn't
+                        // mention.
                         println!(
-                            "                {} · {host} · token {} · alerts {}",
+                            "                {} · {host} · token {} · write {} · alerts {}",
                             site.name,
                             if site.token.is_empty() {
                                 "not set"
                             } else {
                                 "set"
+                            },
+                            match site.write_token.as_deref() {
+                                Some(token) if !token.trim().is_empty() => "SET",
+                                _ => "not set",
                             },
                             if site.alerts.is_some() {
                                 "custom"
@@ -1188,6 +1197,17 @@ fn print_about() {
             }
         }
         Err(e) => println!("  load          failed: {e}"),
+    }
+
+    if let Ok(cfg) = Config::load() {
+        println!(
+            "  unattended      {}",
+            if cfg.allow_unattended_writes {
+                "ENABLED — treatment --non-interactive may write without a human"
+            } else {
+                "off"
+            }
+        );
     }
 
     println!("state");

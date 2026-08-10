@@ -41,6 +41,21 @@ pub struct Config {
     /// Optional private local history for outage context and instant startup.
     #[serde(default)]
     pub history_cache: HistoryCacheConfig,
+    /// Whether `treatment --non-interactive` may write without a human.
+    ///
+    /// Off by default, and deliberately a config key rather than a flag: the
+    /// interactive path is guarded by typing the person's name, and the
+    /// unattended path skips that by construction. Requiring the grant to exist
+    /// at rest means a careless script — or anything that can compose a command
+    /// line on this machine — cannot reach a health-record write just because
+    /// the binary is installed. Turning it on is a decision someone makes once,
+    /// in a file they own, and `sugarrush about` reports it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_unattended_writes: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -585,6 +600,7 @@ impl Config {
             url: Some("http://demo.invalid".to_string()),
             token: Some("demo".to_string()),
             sites: Vec::new(),
+            allow_unattended_writes: false,
             units: default_units(),
             refresh_secs: 5,
             alerts: AlertsConfig::default(),
@@ -1066,6 +1082,7 @@ desktop = false
         // A config with every optional field populated, so nothing is skipped
         // by `skip_serializing_if`.
         let cfg = Config {
+            allow_unattended_writes: false,
             url: Some("https://ns.example.com".into()),
             token: Some("t".into()),
             sites: Vec::new(),

@@ -53,9 +53,23 @@ sugarrush treatment --site Alex --insulin 1.5 --at 2026-08-09T14:30:00+02:00
 ```
 
 The interactive command shows a summary and requires typing the person's name.
-Automation must additionally provide `--non-interactive --confirm` and a stable
-`--operation-id UUID`; reuse that UUID after an unknown outcome so Nightscout
-can deduplicate the retry. This records what someone reports having taken; it does not recommend a dose,
+
+Unattended writes are **off by default**. Automation must provide
+`--non-interactive --confirm` and a stable `--operation-id UUID`, *and* the
+install must grant it in `config.toml`:
+
+```toml
+allow_unattended_writes = true
+```
+
+That grant is deliberately not editable in the settings screen. The interactive
+path is guarded by typing the person's name; the unattended path skips that by
+construction, so permitting it should take opening the file — otherwise anything
+that can run a command on this machine can write to that person's health record.
+`sugarrush about` reports whether it is on.
+
+Reuse the operation UUID after an unknown outcome so Nightscout can deduplicate
+the retry. This records what someone reports having taken; it does not recommend a dose,
 deliver insulin, or verify that a treatment was clinically correct. Confirm the
 accepted entry in Nightscout. Create the write token as a Nightscout Subject
 with the `careportal` role, keep the existing `readable` token separate, and
