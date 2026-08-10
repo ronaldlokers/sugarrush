@@ -8,6 +8,10 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **`--help` fits a terminal again.** The new command signatures outgrew the
+  fixed column, so every row past it ran to 138 characters and the description
+  column stopped existing. Long signatures now put their description on the
+  next line; the widest row is 97 columns.
 - **A lock left behind by a crash no longer disables treatment writes or the
   history cache permanently.** Both used a lock file removed on clean exit, and
   a `SIGKILL` or a power cut leaves it behind — with no staleness rule, every

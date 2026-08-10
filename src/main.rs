@@ -906,6 +906,28 @@ const OPTIONS: &[(&str, &str)] = &[
     ("-V, --version", "print the version"),
 ];
 
+/// Column widths for `--help`. A signature wider than its pad gets its
+/// description on the next line rather than pushing it off the screen.
+const USAGE_PAD: usize = 40;
+const OPTION_PAD: usize = 22;
+
+/// Print one `left  right` row, wrapping to a second line when `left` is too
+/// wide for the column.
+///
+/// The command signatures outgrew a fixed pad — `sugarrush treatment --site
+/// NAME [--carbs G] …` alone is 86 characters — so every row past the pad ran
+/// to 138 columns and the description column stopped existing. In a tool whose
+/// entire audience is in a terminal, `--help` is the last place that should
+/// wrap badly.
+fn two_column(left: &str, right: &str, pad: usize) {
+    if left.chars().count() <= pad {
+        println!("    {left:<pad$} {right}");
+    } else {
+        println!("    {left}");
+        println!("    {:<pad$} {right}", "");
+    }
+}
+
 fn print_help() {
     println!(
         "sugarrush {} — your Nightscout CGM data, in the terminal\n",
@@ -913,15 +935,16 @@ fn print_help() {
     );
     println!("USAGE:");
     for (usage, what) in COMMANDS {
-        println!("    {usage:<40} {what}");
+        two_column(usage, what, USAGE_PAD);
     }
     println!("\nOPTIONS:");
     for (flag, what) in OPTIONS {
-        if *flag == "--format FORMAT" {
-            println!("    {flag:<22} {}", status::Format::NAMES);
+        let what = if *flag == "--format FORMAT" {
+            status::Format::NAMES
         } else {
-            println!("    {flag:<22} {what}");
-        }
+            what
+        };
+        two_column(flag, what, OPTION_PAD);
     }
     println!("\nConfig lives at ~/.config/sugarrush/config.toml; the first run sets it up.");
     println!("sugarrush is not a medical device — don't use it for treatment decisions.");
@@ -2475,6 +2498,41 @@ mod tests {
         assert_eq!(roff("--demo"), "\\-\\-demo");
         for (usage, _) in COMMANDS {
             assert!(!roff(usage).contains(" -"), "unescaped dash in {usage:?}");
+        }
+    }
+
+    /// `--help` is read in a terminal, so it has to fit one. The command
+    /// signatures outgrew the fixed pad and every row past it ran to 138
+    /// columns, which is past the wrap point of any normal terminal.
+    #[test]
+    fn help_rows_fit_a_terminal() {
+        // The widest thing we render, without capturing stdout: same inputs,
+        // same rule as `two_column`.
+        let widest = COMMANDS
+            .iter()
+            .map(|(usage, what)| row_width(usage, what, USAGE_PAD))
+            .chain(
+                OPTIONS
+                    .iter()
+                    .map(|(flag, what)| row_width(flag, what, OPTION_PAD)),
+            )
+            .max()
+            .unwrap_or(0);
+        assert!(
+            widest <= 100,
+            "the widest --help row is {widest} columns; wrap it or shorten the description"
+        );
+    }
+
+    /// What `two_column` will print, in columns.
+    fn row_width(left: &str, right: &str, pad: usize) -> usize {
+        let left_len = left.chars().count();
+        let indent = 4;
+        if left_len <= pad {
+            indent + pad + 1 + right.chars().count()
+        } else {
+            // Two lines; the wider is the description row.
+            (indent + left_len).max(indent + pad + 1 + right.chars().count())
         }
     }
 
