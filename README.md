@@ -42,6 +42,58 @@ can understand and revisit the arrangement as their independence changes.
 
 ## What it does
 
+**History & forecast**
+- Switchable **graph views** (`Tab`) — a 3h or 24h timeline, or an **AGP**
+  (ambulatory glucose profile) folding days of readings into a percentile band
+  (median + IQR + 5/95), which also **names the pattern** it finds — e.g.
+  `⚠ lows 02:00–05:00 (down to 3.1 mmol/L)`
+- Live braille/dot graph you can **pan** (`h`/`l`), **zoom** (`+`/`-`,
+  1h–24h), step **day by day** (`[`/`]`), and **jump to a date** (`g`)
+- A 24h **minimap** you click or drag to move the window
+- Short-term **forecast cone** (uploader predictions or a local AR2 fallback)
+  showing the high/low uncertainty band, with a "now" line and a
+  *time-to-low/high* ETA
+
+**Alerts & safety**
+- A **headless watcher** (`sugarrush watch`) that keeps alarming with no
+  terminal open — the 3am case — and hands a single-site alarm to the dashboard
+  while it is up
+- In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows),
+  switchable to **content-free** so nothing readable lands on a lock screen
+- **Audible alarm** for urgent lows/highs with snooze, per-level tones,
+  **quiet hours**, and unacknowledged-alarm **escalation** (incl. phone push)
+- Predictive alerts before a threshold is crossed; offline vs. sensor-gap
+  distinction so you know *why* data stopped
+
+**Share it**
+- **Export** the clinical window (`e`, or `sugarrush export`) as a CSV of every
+  reading plus a plain-text summary — time in range across the five bands, mean,
+  GMI, CV, and an hour-by-hour profile — to send to a clinician or open in a
+  spreadsheet
+
+**Yours to shape**
+- In-app **settings screen** (`s`) — edit units, thresholds, alarms, theme,
+  and more live, then save back to `config.toml`; the **site URL and token** are
+  editable there too, so a bad token is fixed without leaving the app. A detail
+  pane explains the selected field and the list shows when more rows are above
+  or below the viewport
+- Optional **private offline history cache** for instant startup, outage
+  context, and cached exports. It is off by default, owner-only, bounded to
+  1–90 days, isolated per site, visibly labelled when used, and deleted when
+  disabled
+- Configurable colours (incl. a colorblind-safe preset), graph style, and
+  **multiple sites** — `n` to switch between them, `m` for a **follower view**
+  that lists everyone you watch at once, worst first. Each site can carry the
+  person's IANA timezone so AGP patterns and clinical exports describe their
+  day rather than the viewer's clock
+- **Status-bar output** for Waybar, tmux, polybar, i3blocks, or anything that
+  takes plain text (see [Status bars](#status-bars))
+- Optionally, **logging carbs and insulin** back to Nightscout — off by default,
+  behind a separate token and an explicit confirmation
+  (see [Writing treatments](#writing-treatments))
+
+## Writing treatments
+
 Treatment logging is optional and read-only remains the default. A separate
 Nightscout `careportal` token can authorize an explicitly confirmed command;
 Sugarrush checks its exact treatment-create permission before each write and
@@ -97,53 +149,6 @@ sugarrush cache clear --all --confirm
   (glycaemic variability) over a fixed clinical window (last 14 days by
   default), plus device status (battery, sensor age, last seen)
 - Insulin-on-board / carbs-on-board, with carb & bolus markers on the graph
-
-**History & forecast**
-- Switchable **graph views** (`Tab`) — a 3h or 24h timeline, or an **AGP**
-  (ambulatory glucose profile) folding days of readings into a percentile band
-  (median + IQR + 5/95), which also **names the pattern** it finds — e.g.
-  `⚠ lows 02:00–05:00 (down to 3.1 mmol/L)`
-- Live braille/dot graph you can **pan** (`h`/`l`), **zoom** (`+`/`-`,
-  1h–24h), step **day by day** (`[`/`]`), and **jump to a date** (`g`)
-- A 24h **minimap** you click or drag to move the window
-- Short-term **forecast cone** (uploader predictions or a local AR2 fallback)
-  showing the high/low uncertainty band, with a "now" line and a
-  *time-to-low/high* ETA
-
-**Alerts & safety**
-- A **headless watcher** (`sugarrush watch`) that keeps alarming with no
-  terminal open — the 3am case — and hands a single-site alarm to the dashboard
-  while it is up
-- In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows),
-  switchable to **content-free** so nothing readable lands on a lock screen
-- **Audible alarm** for urgent lows/highs with snooze, per-level tones,
-  **quiet hours**, and unacknowledged-alarm **escalation** (incl. phone push)
-- Predictive alerts before a threshold is crossed; offline vs. sensor-gap
-  distinction so you know *why* data stopped
-
-**Share it**
-- **Export** the clinical window (`e`, or `sugarrush export`) as a CSV of every
-  reading plus a plain-text summary — time in range across the five bands, mean,
-  GMI, CV, and an hour-by-hour profile — to send to a clinician or open in a
-  spreadsheet
-
-**Yours to shape**
-- In-app **settings screen** (`s`) — edit units, thresholds, alarms, theme,
-  and more live, then save back to `config.toml`; the **site URL and token** are
-  editable there too, so a bad token is fixed without leaving the app. A detail
-  pane explains the selected field and the list shows when more rows are above
-  or below the viewport
-- Optional **private offline history cache** for instant startup, outage
-  context, and cached exports. It is off by default, owner-only, bounded to
-  1–90 days, isolated per site, visibly labelled when used, and deleted when
-  disabled
-- Configurable colours (incl. a colorblind-safe preset), graph style, and
-  **multiple sites** — `n` to switch between them, `m` for a **follower view**
-  that lists everyone you watch at once, worst first. Each site can carry the
-  person's IANA timezone so AGP patterns and clinical exports describe their
-  day rather than the viewer's clock
-- **Status-bar output** for Waybar, tmux, polybar, i3blocks, or anything that
-  takes plain text (see [Status bars](#status-bars))
 
 ## Install
 
