@@ -147,15 +147,7 @@ impl Client {
                     "Nightscout returned an unreadable success response".into(),
                 )
             })?;
-        if result
-            .as_array()
-            .is_some_and(|rejected| !rejected.is_empty())
-        {
-            return Err(TreatmentWriteError::Definitive(
-                "Nightscout rejected the treatment payload".into(),
-            ));
-        }
-        Ok(())
+        classify_v1_write(&result)
     }
 
     /// Fetch SGV entries whose `date` falls within `[start_ms, end_ms]`, newest
@@ -261,6 +253,32 @@ impl Client {
         let value: Value =
             bounded_json(check_status(resp)?, "failed to parse treatments response").await?;
         Ok(parse_treatments(&value, start_ms, end_ms))
+    }
+}
+
+/// Decide what a `200 OK` from `POST /api/v1/treatments.json` actually means.
+///
+/// This used to read a non-empty array as "these entries were refused", which
+/// is backwards: Nightscout's v1 treatments route answers `res.json(created)`,
+/// so the array *is* the documents it stored. A successful write was therefore
+/// reported as a definitive rejection — and because a rejection tells the
+/// caller to retry under a fresh operation ID, every retry stored another copy
+/// of the same carbs or insulin.
+///
+/// The classification is deliberately asymmetric. Only a non-empty array is
+/// claimed as accepted; every other shape is `Unknown` rather than `Definitive`
+/// or `Ok`, because those are the two answers that cause harm when wrong.
+/// `Unknown` tells the caller to look in Nightscout and, if the entry is
+/// absent, retry with the *same* operation ID — which cannot duplicate.
+fn classify_v1_write(result: &Value) -> std::result::Result<(), TreatmentWriteError> {
+    match result.as_array() {
+        Some(created) if !created.is_empty() => Ok(()),
+        Some(_) => Err(TreatmentWriteError::Unknown(
+            "Nightscout accepted the request but reported no created treatment".into(),
+        )),
+        None => Err(TreatmentWriteError::Unknown(
+            "Nightscout returned an unexpected success body".into(),
+        )),
     }
 }
 
@@ -742,6 +760,43 @@ mod tests {
             sgv,
             date,
             direction: None,
+        }
+    }
+
+    /// Nightscout's v1 treatments route answers `res.json(created)` — the
+    /// documents it just stored. Reading that array as a list of *refusals*
+    /// meant a successful write was reported as a definitive rejection, and
+    /// because a rejection tells the caller to retry under a fresh operation
+    /// ID, every retry stored another copy of the same carbs or insulin.
+    #[test]
+    fn a_v1_success_body_is_accepted_not_rejected() {
+        let created = serde_json::json!([{
+            "_id": "66b2f0a1c3d4e5f600112233",
+            "eventType": "Carb Correction",
+            "carbs": 15.0,
+            "enteredBy": "sugarrush"
+        }]);
+        assert!(
+            classify_v1_write(&created).is_ok(),
+            "the array Nightscout returns on success must not read as a rejection"
+        );
+    }
+
+    /// The two answers that cause harm when wrong are "accepted" and
+    /// "definitively rejected" — the first loses a record, the second
+    /// duplicates one. Every shape we do not positively recognise is neither.
+    #[test]
+    fn an_unrecognised_success_body_is_unknown_not_a_verdict() {
+        for body in [
+            serde_json::json!([]),
+            serde_json::json!({"status": 200}),
+            serde_json::json!("ok"),
+            serde_json::Value::Null,
+        ] {
+            match classify_v1_write(&body) {
+                Err(TreatmentWriteError::Unknown(_)) => {}
+                other => panic!("{body:?} should be Unknown, got {other:?}"),
+            }
         }
     }
 
