@@ -9,8 +9,8 @@
 
 use serde::Serialize;
 
-use crate::config::Alerts;
-use crate::nightscout::Entry;
+use crate::config::{Alerts, Config, Site};
+use crate::nightscout::{Client, Entry};
 use crate::theme::Theme;
 use crate::units::Units;
 
@@ -248,6 +248,64 @@ pub fn error_doc(now_ms: i64, message: &str) -> Snapshot {
     }
 }
 
+/// The range and row count for the multi-day history fetch, or `None` when the
+/// caller asked for none. Separate from `fetch` so the "no history means no
+/// query" rule is testable without a Nightscout.
+pub fn history_window(days: u32, now_ms: i64) -> Option<(i64, i64, usize)> {
+    if days == 0 {
+        return None;
+    }
+    let start = now_ms - i64::from(days) * 24 * 3_600_000;
+    let want = days as usize * 288 + 288;
+    Some((start, now_ms, want))
+}
+
+/// Fetch and assemble. Never returns an error: a failure becomes a document
+/// carrying the message, so the caller always has something to print.
+pub async fn fetch(cfg: &Config, site: &Site, hours: u32, days: u32) -> Snapshot {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    match collect(cfg, site, hours, days, now_ms).await {
+        Ok(snapshot) => snapshot,
+        Err(e) => error_doc(now_ms, &e.to_string()),
+    }
+}
+
+async fn collect(
+    cfg: &Config,
+    site: &Site,
+    hours: u32,
+    days: u32,
+    now_ms: i64,
+) -> anyhow::Result<Snapshot> {
+    let client = Client::for_site(site)?;
+    let (alerts, _warnings) = site.resolve_alerts(&cfg.alerts, cfg.units);
+
+    let hours = hours.max(1);
+    let recent_from = now_ms - i64::from(hours) * 3_600_000;
+    let recent = client
+        .entries_range(recent_from, now_ms, hours as usize * 12 + 12)
+        .await?;
+
+    let history = match history_window(days, now_ms) {
+        Some((start, end, want)) => client.entries_range(start, end, want).await?,
+        None => Vec::new(),
+    };
+
+    Ok(build(BuildInput {
+        now_ms,
+        units: cfg.units,
+        alerts,
+        theme: cfg.theme.resolve(),
+        timezone: site
+            .timezone
+            .as_deref()
+            .and_then(|name| name.parse::<chrono_tz::Tz>().ok()),
+        recent,
+        history,
+        stats_window_h: 24,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,5 +463,19 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("lows 02:00–03:15"));
+    }
+
+    #[test]
+    fn asking_for_no_history_means_no_history_query() {
+        // `--days 0` is how a caller says "chart only" — it must not turn into
+        // a four-thousand-entry query with a zero-length range.
+        assert!(history_window(0, NOW).is_none());
+
+        let (start, end, want) = history_window(14, NOW).unwrap();
+        assert_eq!(end, NOW);
+        assert_eq!(start, NOW - 14 * 24 * 3_600_000);
+        // 288 readings a day at five minutes apart, plus a day of slack so a
+        // dense sensor doesn't get truncated at the far end.
+        assert_eq!(want, 14 * 288 + 288);
     }
 }
