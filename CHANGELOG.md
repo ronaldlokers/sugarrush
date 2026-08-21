@@ -8,6 +8,17 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The Quickshell widget has a popup panel.** Clicking the bar pill opens a
+  panel with the last hours as a chart, the five time-in-range bands, and the
+  pattern insights — the parts of the dashboard worth a glance without opening
+  the TUI. Right click still opens the full app. It fetches only while open,
+  and reuses its last reading for a few minutes, so the multi-day history the
+  patterns need is paid for only when someone is looking.
+- **`sugarrush snapshot` prints the whole picture as JSON.** One document with
+  the current reading, a series for a chart, time in range and patterns, in
+  your display units. Built for the panel; useful to anything that wants
+  sugarrush's numbers without scraping a bar line. `--demo` renders it from
+  synthetic data with no site configured.
 - **A bar widget for Quickshell.** Omarchy 4 replaced Waybar with a Quickshell
   bar, so [`quickshell/`](quickshell/) now ships a widget for it alongside the
   Waybar examples: the reading, trend and delta in your theme's state colour,

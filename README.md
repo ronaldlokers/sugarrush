@@ -87,7 +87,8 @@ can understand and revisit the arrangement as their independence changes.
   person's IANA timezone so AGP patterns and clinical exports describe their
   day rather than the viewer's clock
 - **Status-bar output** for Waybar, Quickshell, tmux, polybar, i3blocks, or
-  anything that takes plain text (see [Status bars](#status-bars))
+  anything that takes plain text — with a Quickshell panel carrying the chart,
+  time in range and patterns (see [Status bars](#status-bars))
 - Optionally, **logging carbs and insulin** back to Nightscout — off by default,
   behind a separate token and an explicit confirmation
   (see [Writing treatments](#writing-treatments))
@@ -419,8 +420,22 @@ interval=60
 The JSON also carries a `color` — the state colour from your theme — which
 Waybar ignores and a bar with no stylesheet can use. [`quickshell/`](quickshell/)
 is one such bar: a widget for the Omarchy 4 shell that colours itself from that
-field, shows the tooltip on hover, and opens the TUI or its settings screen on
-click.
+field, shows the tooltip on hover, and opens a panel with the last hours as a
+chart, the time-in-range bands and the pattern insights.
+
+That panel is fed by `sugarrush snapshot`, which prints the whole picture as one
+JSON document — current reading, a series for a chart, stats and patterns, all
+in your display units:
+
+```bash
+sugarrush snapshot --hours 6 --days 14   # everything
+sugarrush snapshot --hours 3 --days 0    # chart only, no history query
+sugarrush snapshot --demo                # synthetic, no site needed
+```
+
+It always prints valid JSON and exits 0 — a failure comes back as
+`{"schema":1,…,"error":"no site configured"}` — so whatever consumes it always
+has something to render.
 
 ## Always-on alarm
 

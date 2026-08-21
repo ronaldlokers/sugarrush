@@ -7,14 +7,37 @@ widgets as plugins. Quickshell on its own has no bar to add a widget to — a
 shell has to provide one — so a widget is only as portable as its host.
 
 It shows the reading, trend arrow and delta, coloured by alert state, with the
-full sugarrush tooltip on hover:
+full sugarrush tooltip on hover, and opens a panel with the rest of the day:
 
 | Interaction | What happens |
 |---|---|
-| left click | opens the sugarrush TUI in a floating terminal |
-| right click | opens the TUI on the settings screen |
+| left click | opens the panel — chart, time in range, patterns |
+| right click | opens the sugarrush TUI in a floating terminal |
 | middle click | fetches now, without waiting for the next poll |
 | hover | tooltip: reading, trend, age, and the last hour as a sparkline |
+
+On a vertical bar the pill stacks the reading over its trend arrow and drops
+the delta, which does not fit 28 pixels.
+
+## The panel
+
+Clicking the pill opens a panel carrying what the bar line has no room for:
+
+- the last few hours as a chart, with the target range shaded and the urgent
+  bounds marked;
+- the five time-in-range bands, with mean, GMI and CV for the window they
+  cover;
+- the pattern insights — the times of day where lows or highs keep happening;
+- buttons to refetch and to open the full TUI.
+
+The panel calls `sugarrush snapshot`, which needs a sugarrush new enough to
+have that command; the pill does not, and keeps working either way. If the
+command is missing or too old the panel says so instead of drawing an empty
+frame.
+
+It fetches when opened, not on a timer, and reuses its last document for
+`panelCacheMinutes`. So the heavy part — the multi-day history the patterns
+need — is paid for only when someone is actually looking.
 
 ## Install
 
@@ -38,10 +61,14 @@ Set with `omarchy bar set <widget> <key> <value>`:
 
 | Key | Default | What it does |
 |---|---|---|
-| `interval` | `60` | seconds between fetches |
-| `command` | `sugarrush waybar` | the command to read a reading from |
-| `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | left click |
+| `interval` | `60` | seconds between pill fetches |
+| `command` | `sugarrush waybar` | the command the pill reads a reading from |
+| `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
 | `onRightClick` | the same, plus `--screen settings` | right click |
+| `panelHours` | `6` | the panel chart's window |
+| `insightDays` | `14` | history behind the patterns; `0` hides the section and skips the query |
+| `panelCacheMinutes` | `5` | how stale the panel's document may be when it opens |
+| `snapshotCommand` | `sugarrush snapshot` | the command the panel reads its document from |
 
 ```bash
 omarchy bar set sugarrush.glucose interval 30
