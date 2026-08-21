@@ -122,6 +122,46 @@ Item {
     onTriggered: root.refresh()
   }
 
+  // The panel is loaded by path, and its failure is survivable: every
+  // Omarchy-internal import lives in Panel.qml, so a shell that moves them
+  // costs the popup while the pill goes on working.
+  readonly property bool panelReady: panelLoader.status === Loader.Ready && panelLoader.item !== null
+  readonly property bool opened: panelReady ? panelLoader.item.opened === true : false
+  readonly property bool popoutSwitchClosing: panelReady ? panelLoader.item.popoutSwitchClosing === true : false
+
+  function injectPanel() {
+    if (!panelReady) return
+    var target = panelLoader.item
+    // `bar` is typed QtObject on the panel, and the widget's own `bar` is
+    // undefined until the slot injects it — assigning that undefined is an
+    // error, not a no-op.
+    if ("bar" in target && root.bar) target.bar = root.bar
+    if ("settings" in target && root.settings) target.settings = root.settings
+    if ("anchorItem" in target) target.anchorItem = root
+    if ("hostWidget" in target) target.hostWidget = root
+  }
+
+  function open() { if (panelReady) panelLoader.item.open() }
+  function close() { if (panelReady) panelLoader.item.close() }
+  function closeForPopoutSwitch() { if (panelReady) panelLoader.item.closeForPopoutSwitch() }
+
+  onBarChanged: injectPanel()
+  onSettingsChanged: injectPanel()
+
+  Loader {
+    id: panelLoader
+    active: true
+    source: Qt.resolvedUrl("Panel.qml")
+    visible: false
+    onLoaded: {
+      root.injectPanel()
+      Qt.callLater(root.injectPanel)
+    }
+    onStatusChanged: if (status === Loader.Error) {
+      console.warn("sugarrush: panel failed to load; the pill still works")
+    }
+  }
+
   Text {
     id: valueText
     anchors.centerIn: parent
@@ -147,7 +187,12 @@ Item {
         root.refresh()
       } else if (mouse.button === Qt.RightButton) {
         if (root.onRightClick !== "") root.bar.run(root.onRightClick)
+      } else if (root.panelReady) {
+        panelLoader.item.toggle()
       } else if (root.onClick !== "") {
+        // No panel — an older shell, or one that moved the internals it is
+        // built on. Left click falls back to what it did before the panel
+        // existed rather than doing nothing.
         root.bar.run(root.onClick)
       }
     }
