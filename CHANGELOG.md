@@ -10,8 +10,7 @@ All notable changes to sugarrush are documented here. The format is based on
 
 - **sugarrush has a face.** The running sugar cube is now the app icon
   (`assets/icon.png`), the wordmark opens the README and leads the Quickshell
-  panel, and a line-art version of the cube rides in the bar beside the
-  reading.
+  panel, and a silhouette of the cube rides in the bar beside the reading.
 - **The Quickshell widget has a popup panel.** Clicking the bar pill opens a
   panel of labelled cards: the reading now, the last hours as a chart — your
   line over a typical day for the same hours, changing colour as it crosses a

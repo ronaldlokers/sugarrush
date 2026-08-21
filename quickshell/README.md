@@ -55,7 +55,7 @@ need — is paid for only when someone is actually looking.
 
 ```bash
 mkdir -p ~/.config/omarchy/plugins/sugarrush
-cp manifest.json *.png *.qml ~/.config/omarchy/plugins/sugarrush/
+cp manifest.json *.png *.svg *.qml ~/.config/omarchy/plugins/sugarrush/
 omarchy-shell shell rescanPlugins
 omarchy plugin enable sugarrush.glucose
 ```

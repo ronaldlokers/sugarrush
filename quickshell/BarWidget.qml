@@ -166,14 +166,18 @@ Item {
     }
   }
 
-  // The mascot rides in front of the reading. Line art rather than the full
-  // colour icon: at the height a bar allows, the colour version is a blob.
+  // The mascot rides in front of the reading — a silhouette, because detail
+  // is what a bar-height icon cannot keep. Vector rather than bitmap: it is
+  // asked for at whatever height the bar happens to be, and rasterises at
+  // exactly that size instead of being resampled from a fixed one.
   Image {
     id: mascot
-    source: Qt.resolvedUrl("pill.png")
-    height: Math.round((root.bar ? root.bar.barSize : 26) * 0.74)
-    width: height
-    sourceSize.height: height * 3
+    source: Qt.resolvedUrl("mascot.svg")
+    height: Math.round((root.bar ? root.bar.barSize : 26) * 0.72)
+    // The artwork is wider than it is tall; squaring it would letterbox the
+    // shape into a smaller drawing than the space allows.
+    width: Math.round(height * 1051 / 908)
+    sourceSize.height: height * 2
     fillMode: Image.PreserveAspectFit
     smooth: true
     visible: !root.compact
