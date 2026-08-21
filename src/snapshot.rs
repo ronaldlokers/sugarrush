@@ -53,6 +53,8 @@ pub struct Snapshot {
     pub stats: Option<Stats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub insights: Option<Vec<InsightDoc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub band: Option<BandDoc>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,6 +95,20 @@ pub struct TirDoc {
     pub in_range: f64,
     pub high: f64,
     pub very_high: f64,
+}
+
+/// The shape of a typical day across the charted window: the median with the
+/// interquartile band around it, one point per `agp` bucket.
+///
+/// Absolute timestamps rather than times of day, because the profile is
+/// bucketed in the followed person's timezone and a consumer plotting it
+/// should not have to redo that conversion to line the band up with the line.
+#[derive(Debug, Clone, Serialize)]
+pub struct BandDoc {
+    /// Distinct local dates behind the percentiles.
+    pub days: usize,
+    /// `[epoch_ms, p25, p50, p75]`, oldest first, in display units.
+    pub points: Vec<(i64, f64, f64, f64)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -184,6 +200,8 @@ pub fn build(input: BuildInput) -> Snapshot {
         })
         .collect();
 
+    let band = band_for(&history, &series, timezone, units);
+
     Snapshot {
         schema: 1,
         units: units.label(),
@@ -199,7 +217,72 @@ pub fn build(input: BuildInput) -> Snapshot {
         series: Some(series),
         stats,
         insights: Some(insights),
+        band,
     }
+}
+
+/// A band is a claim about a typical day, so it needs several days behind it.
+/// Same bar `agp::insights` sets before it will name a pattern: below this the
+/// percentiles describe one or two nights, not a habit.
+const BAND_MIN_DAYS: usize = 3;
+
+/// The profile sampled across the window `series` covers, one point per bucket.
+fn band_for(
+    history: &[Entry],
+    series: &[(i64, f64)],
+    timezone: Option<chrono_tz::Tz>,
+    units: Units,
+) -> Option<BandDoc> {
+    let (first, last) = (series.first()?.0, series.last()?.0);
+    let bands = crate::agp::profile_in(history, timezone);
+    if bands.is_empty() {
+        return None;
+    }
+    let days = bands.iter().map(|b| b.days).max().unwrap_or(0);
+    if days < BAND_MIN_DAYS {
+        return None;
+    }
+
+    let step = crate::agp::BUCKET_MIN * 60_000;
+    let mut points = Vec::new();
+    let mut at = first - first.rem_euclid(step);
+    while at <= last {
+        if let Some(band) = bucket_at(&bands, at, timezone) {
+            points.push((
+                at,
+                scaled(units, band.p25),
+                scaled(units, band.p50),
+                scaled(units, band.p75),
+            ));
+        }
+        at += step;
+    }
+    (!points.is_empty()).then_some(BandDoc { days, points })
+}
+
+/// The profile bucket covering `at`, by local time of day.
+fn bucket_at(
+    bands: &[crate::agp::Band],
+    at: i64,
+    timezone: Option<chrono_tz::Tz>,
+) -> Option<&crate::agp::Band> {
+    use chrono::{TimeZone, Timelike};
+    let minute = match timezone {
+        Some(tz) => {
+            let local = tz.timestamp_millis_opt(at).single()?;
+            i64::from(local.hour() * 60 + local.minute())
+        }
+        None => {
+            let local = chrono::Local.timestamp_millis_opt(at).single()?;
+            i64::from(local.hour() * 60 + local.minute())
+        }
+    };
+    // Buckets carry their centre minute, and `profile_in` omits empty ones, so
+    // this matches on the bucket index rather than assuming a dense slice.
+    let index = minute / crate::agp::BUCKET_MIN;
+    bands
+        .iter()
+        .find(|b| b.minute / crate::agp::BUCKET_MIN == index)
 }
 
 /// Stats over `entries`, labelled with the window they actually cover.
@@ -255,6 +338,7 @@ pub fn error_doc(now_ms: i64, message: &str) -> Snapshot {
         series: None,
         stats: None,
         insights: None,
+        band: None,
     }
 }
 
@@ -550,5 +634,52 @@ mod tests {
         // Six hours of five-minute readings, so a chart has something to draw.
         assert!(json["series"].as_array().unwrap().len() > 50);
         assert!(json["stats"]["tir"]["in_range"].is_number());
+    }
+
+    #[test]
+    fn the_band_describes_a_typical_day_across_the_chart_window() {
+        let mut with_history = input(
+            vec![
+                entry(115.0, NOW - 5 * MIN, "Flat"),
+                entry(113.0, NOW - 65 * MIN, "Flat"),
+            ],
+            nightly_lows(),
+        );
+        with_history.timezone = Some(chrono_tz::UTC);
+        let json = serde_json::to_value(build(with_history)).unwrap();
+
+        assert_eq!(json["band"]["days"], 4);
+        let points = json["band"]["points"].as_array().unwrap();
+        // One point per 15-minute bucket across the charted window, so the
+        // band lines up with the line drawn over it.
+        assert!(points.len() >= 4, "got {} points", points.len());
+        let first = points[0].as_array().unwrap();
+        assert_eq!(first.len(), 4, "each point is [ts, p25, p50, p75]");
+        // Display units, like every other value in the document.
+        let p50 = first[2].as_f64().unwrap();
+        assert!((2.0..=12.0).contains(&p50), "p50 {p50} is not mmol/L");
+        // Ordered percentiles, ordered timestamps.
+        assert!(first[1].as_f64().unwrap() <= p50);
+        assert!(p50 <= first[3].as_f64().unwrap());
+        assert!(
+            points[0].as_array().unwrap()[0].as_i64().unwrap()
+                < points[1].as_array().unwrap()[0].as_i64().unwrap()
+        );
+    }
+
+    #[test]
+    fn one_days_history_is_not_a_typical_day() {
+        // A band drawn from a day or two describes those days, not a habit —
+        // the same bar `agp` sets before it will name a pattern.
+        let day = 24 * 3_600_000i64;
+        let mut one_day: Vec<Entry> = (0..288)
+            .map(|i| entry(110.0, NOW - day - i * 5 * MIN, "Flat"))
+            .collect();
+        one_day.reverse();
+        let mut short = input(vec![entry(115.0, NOW - 5 * MIN, "Flat")], one_day);
+        short.timezone = Some(chrono_tz::UTC);
+        let json = serde_json::to_value(build(short)).unwrap();
+
+        assert!(json.get("band").is_none());
     }
 }
