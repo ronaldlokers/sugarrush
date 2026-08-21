@@ -113,6 +113,44 @@ Panel {
     }
   }
 
+
+  // A card: a labelled box saying which window its contents describe. The
+  // panel used to stack a 6-hour chart under 24-hour statistics with nothing
+  // saying so; naming each section is the whole point of this layout.
+  component Card: Rectangle {
+    id: card
+    property string label: ""
+    default property alias content: cardContent.data
+
+    width: parent ? parent.width : 0
+    implicitHeight: cardColumn.implicitHeight + Style.space(18)
+    color: "transparent"
+    radius: Style.cornerRadius
+    border.width: 1
+    border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.16)
+
+    Column {
+      id: cardColumn
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.top: parent.top
+      anchors.margins: Style.space(9)
+      spacing: Style.space(7)
+
+      PanelSectionHeader {
+        text: card.label
+        foreground: root.barForeground
+        fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+      }
+
+      Column {
+        id: cardContent
+        width: parent.width
+        spacing: Style.space(6)
+      }
+    }
+  }
+
   KeyboardPanel {
     id: surface
     anchorItem: root.anchorItem
@@ -129,131 +167,178 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function (direction) { root.switchPanel(direction) }
 
-      Column {
-        id: column
-        width: parent.width
-        spacing: Style.space(10)
+      // Content can outgrow the room a popup is allowed — a patterns card on
+      // top of the other three does it on a short screen — and a capped
+      // KeyboardPanel would simply clip the overflow. Scroll it instead, the
+      // way the shell's own panels do.
+      Flickable {
+        id: panelFlick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: column.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height
 
-        // The wordmark leads, and everything else sits under it. The cube in
-        // the lockup is the mark, so the hero below carries no icon of its
-        // own — one character per panel is plenty.
-        Image {
-          width: Math.round(parent.width / 2)
-          source: Qt.resolvedUrl("logo.png")
-          sourceSize.width: parent.width * 1.5
-          fillMode: Image.PreserveAspectFit
-          smooth: true
-        }
+        Column {
+          id: column
+          width: panelFlick.width
+          spacing: Style.space(10)
 
-        // The reading, its trend, and the panel's controls — the shape
-        // tailscale and dropbox give their headers.
+        // Wordmark left, controls right, on one line.
         Item {
-          id: header
           width: parent.width
-          implicitHeight: hero.implicitHeight
+          implicitHeight: Math.max(mark.height, controls.height)
 
-          PanelHero {
-            id: hero
-            width: parent.width
-            title: root.reading ? root.reading.value + " " + (root.doc ? root.doc.units : "") : "—"
-            meta: root.reading
-              ? root.reading.arrow + "  " + root.trendWords(root.reading.direction)
-              : root.loadError
-            detail: root.reading
-              ? "Δ " + root.reading.delta + " · " + root.reading.age_min + "m ago"
-              : ""
-            // The bar's own foreground, not the alert colour: the chart
-            // carries the state in the line itself, and a hero that changed
-            // colour under the reading made the number harder to read than
-            // the colour was worth.
-            foreground: root.barForeground
-            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+          Image {
+            id: mark
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.round(parent.width / 2)
+            source: Qt.resolvedUrl("logo.png")
+            sourceSize.width: parent.width * 1.5
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+          }
 
-            trailingControl: Component {
-              Row {
-                spacing: Style.space(4)
+          Row {
+            id: controls
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(4)
 
-                PanelActionButton {
-                  iconText: "\uf021"
-                  tooltipText: "Fetch now"
-                  foreground: hero.foreground
-                  fontFamily: hero.fontFamily
-                  onClicked: root.refresh(true)
-                }
+            PanelActionButton {
+              iconText: ""
+              tooltipText: "Fetch now"
+              foreground: root.barForeground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.refresh(true)
+            }
 
-                PanelActionButton {
-                  iconText: "\uf120"
-                  tooltipText: "Open the dashboard"
-                  foreground: hero.foreground
-                  fontFamily: hero.fontFamily
-                  onClicked: {
-                    root.close()
-                    if (root.bar) {
-                      root.bar.run(root.setting("onClick", "omarchy-launch-floating-terminal-with-presentation sugarrush"))
-                    }
-                  }
+            PanelActionButton {
+              iconText: ""
+              tooltipText: "Open the dashboard"
+              foreground: root.barForeground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: {
+                root.close()
+                if (root.bar) {
+                  root.bar.run(root.setting("onClick", "omarchy-launch-floating-terminal-with-presentation sugarrush"))
                 }
               }
             }
           }
         }
 
-        PanelSeparator {
-          foreground: root.barForeground
-        }
-
-        Chart {
-          width: parent.width
-          height: Style.space(140)
-          doc: root.doc
-          foreground: root.barForeground
-          // On an error the hero already says what went wrong; an empty plot
-          // saying "no readings" underneath it just repeats the bad news in
-          // less useful words.
-          visible: root.loadError === ""
-        }
-
-        PanelSectionHeader {
-          text: "Time in range"
-          foreground: root.barForeground
-          visible: root.stats !== null
-        }
-
-        TirBar {
-          width: parent.width
-          height: Style.space(14)
-          stats: root.stats
-        }
-
+        // Whatever went wrong replaces the cards: there is nothing to put in
+        // them, and three empty boxes explain less than one sentence does.
         Text {
-          visible: root.stats !== null
+          visible: root.loadError !== "" || !root.reading
           width: parent.width
+          wrapMode: Text.WordWrap
           color: root.barForeground
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-          // One decimal, explicitly: JSON's 7.0 arrives in JS as 7, and a GMI
-          // printed as "7%" next to a mean printed as "8.7" reads like two
-          // different precisions of measurement.
-          text: root.stats
-            ? root.stats.window_h + "h · mean " + root.stats.mean.toFixed(1)
-              + " · GMI " + root.stats.gmi.toFixed(1) + "%"
-              + " · CV " + (root.stats.cv === undefined ? "—" : root.stats.cv.toFixed(1) + "%")
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.body
+          text: root.loadError !== "" ? root.loadError : "waiting for the first reading"
+        }
+
+        Card {
+          label: "Now"
+          visible: root.reading !== null && root.loadError === ""
+
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(nowRead.implicitHeight, nowPill.implicitHeight)
+
+            Column {
+              id: nowRead
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(1)
+
+              Text {
+                color: root.barForeground
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.title
+                text: root.reading
+                  ? root.reading.value + " " + (root.doc ? root.doc.units : "")
+                  : ""
+              }
+
+              Text {
+                color: Qt.darker(root.barForeground, 1.35)
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                text: root.reading
+                  ? root.reading.arrow + "  " + root.trendWords(root.reading.direction)
+                  : ""
+              }
+            }
+
+            Rectangle {
+              id: nowPill
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              implicitWidth: pillText.implicitWidth + Style.space(14)
+              implicitHeight: pillText.implicitHeight + Style.space(6)
+              radius: height / 2
+              color: "transparent"
+              border.width: 1
+              border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.28)
+
+              Text {
+                id: pillText
+                anchors.centerIn: parent
+                color: Qt.darker(root.barForeground, 1.2)
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                text: root.reading
+                  ? "Δ " + root.reading.delta + " · " + root.reading.age_min + "m ago"
+                  : ""
+              }
+            }
+          }
+        }
+
+        Card {
+          label: "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
+          visible: root.loadError === ""
+
+          Chart {
+            width: parent.width
+            height: Style.space(130)
+            doc: root.doc
+            foreground: root.barForeground
+          }
+        }
+
+        Card {
+          label: root.stats
+            ? "Last " + root.stats.window_h + (root.stats.window_h === 1 ? " hour" : " hours")
             : ""
+          visible: root.stats !== null && root.loadError === ""
+
+          TirBar {
+            width: parent.width
+            height: Style.space(12)
+            stats: root.stats
+          }
+
+          Text {
+            width: parent.width
+            color: Qt.darker(root.barForeground, 1.2)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: root.stats
+              ? "mean " + root.stats.mean.toFixed(1)
+                + " · GMI " + root.stats.gmi.toFixed(1) + "%"
+                + " · CV " + (root.stats.cv === undefined ? "—" : root.stats.cv.toFixed(1) + "%")
+              : ""
+          }
         }
 
-        PanelSectionHeader {
-          text: "Patterns"
-          foreground: root.barForeground
-          // The section exists only when it has something to say. An empty
-          // one asked the reader to interpret a blank, and its old caption —
-          // "not enough history yet" — was wrong whenever the history was
-          // there and simply held no repeating low or high.
-          visible: root.hasInsights
-        }
-
-        Column {
-          width: parent.width
-          spacing: Style.space(4)
+        Card {
+          label: "Patterns · last " + root.insightDays + " days"
           visible: root.hasInsights
 
           Repeater {
@@ -261,13 +346,14 @@ Panel {
 
             Text {
               required property var modelData
-              width: column.width
+              width: column.width - Style.space(24)
               wrapMode: Text.WordWrap
               color: root.barForeground
-              font.family: Style.font.family
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
               text: modelData.text
             }
+          }
           }
         }
       }

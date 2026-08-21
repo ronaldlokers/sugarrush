@@ -21,20 +21,25 @@ the delta, which does not fit 28 pixels.
 
 ## The panel
 
-Clicking the pill opens a panel carrying what the bar line has no room for:
+Clicking the pill opens a panel carrying what the bar line has no room for.
+The wordmark leads, with refetch and open-the-dashboard on the right, and the
+rest is a stack of cards that each name the window they describe — because
+"mean 8.8" under a six-hour chart is a 24-hour figure, and a panel that does
+not say so invites the wrong reading:
 
-- the last few hours as a chart: your reading over a typical day for the same
-  hours — the median dashed, the 25–75% band shaded — with each alert threshold
-  drawn in its own colour and labelled on the value axis, and the clock along
-  the bottom. The line itself carries the state, changing colour as it crosses
-  a threshold. Seeing tonight sit above the band is the point of it;
-- the five time-in-range bands, with mean, GMI and CV for the window they
-  cover;
-- the pattern insights — the times of day where lows or highs keep happening.
-  The section appears only when there is a pattern to name: no repeating low or
-  high means no section, rather than an empty one;
-- the wordmark across the top, then the reading, its trend, and two icon
-  buttons on the trailing edge: refetch now, and open the full TUI.
+- **Now** — the reading, its trend in words, and how long ago it arrived;
+- **Last N hours** — the chart: your reading over a typical day for the same
+  hours, the median dashed and the 25–75% band shaded, each alert threshold in
+  its own colour and labelled on the value axis, the clock along the bottom.
+  The line carries the state, changing colour as it crosses a threshold, and
+  seeing tonight sit above the band is the point of it;
+- **Last 24 hours** — the five time-in-range bands, with mean, GMI and CV;
+- **Patterns · last N days** — the times of day where lows or highs keep
+  happening. The card appears only when there is a pattern to name: no
+  repeating low or high means no card, rather than an empty one.
+
+The stack scrolls if it outgrows the room a popup is allowed, which four cards
+can do on a short screen.
 
 The panel calls `sugarrush snapshot`, which needs a sugarrush new enough to
 have that command; the pill does not, and keeps working either way. If the
