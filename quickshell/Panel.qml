@@ -146,6 +146,43 @@ Panel {
           font.bold: true
         }
 
+        Row {
+          spacing: Style.space(8)
+
+          // Ui.Button, not PanelActionButton: the latter is an icon button
+          // (`iconText`) with no text label.
+          Button {
+            text: "Refresh"
+            foreground: root.barForeground
+            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+            fontSize: Style.font.bodySmall
+            horizontalPadding: Style.spacing.controlPaddingX
+            verticalPadding: Style.spacing.controlPaddingY
+            bordered: true
+            onClicked: root.refresh(true)
+          }
+
+          Button {
+            text: "Open dashboard"
+            foreground: root.barForeground
+            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+            fontSize: Style.font.bodySmall
+            horizontalPadding: Style.spacing.controlPaddingX
+            verticalPadding: Style.spacing.controlPaddingY
+            bordered: true
+            onClicked: {
+              root.close()
+              if (root.bar) {
+                root.bar.run(root.setting("onClick", "omarchy-launch-floating-terminal-with-presentation sugarrush"))
+              }
+            }
+          }
+        }
+
+        PanelSeparator {
+          foreground: root.barForeground
+        }
+
         PanelHero {
           title: root.reading ? root.reading.value + " " + (root.doc ? root.doc.units : "") : "—"
           meta: root.reading ? root.reading.arrow + "  " + root.trendWords(root.reading.direction) : ""
@@ -224,40 +261,6 @@ Panel {
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               text: modelData.text
-            }
-          }
-
-        }
-
-        Row {
-          spacing: Style.space(8)
-
-          // Ui.Button, not PanelActionButton: the latter is an icon button
-          // (`iconText`) with no text label.
-          Button {
-            text: "Refresh"
-            foreground: root.barForeground
-            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-            fontSize: Style.font.bodySmall
-            horizontalPadding: Style.spacing.controlPaddingX
-            verticalPadding: Style.spacing.controlPaddingY
-            bordered: true
-            onClicked: root.refresh(true)
-          }
-
-          Button {
-            text: "Open dashboard"
-            foreground: root.barForeground
-            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-            fontSize: Style.font.bodySmall
-            horizontalPadding: Style.spacing.controlPaddingX
-            verticalPadding: Style.spacing.controlPaddingY
-            bordered: true
-            onClicked: {
-              root.close()
-              if (root.bar) {
-                root.bar.run(root.setting("onClick", "omarchy-launch-floating-terminal-with-presentation sugarrush"))
-              }
             }
           }
         }
