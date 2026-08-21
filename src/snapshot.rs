@@ -229,6 +229,25 @@ fn stats_for(entries: &[Entry], units: Units, alerts: &Alerts, window_h: i64) ->
     })
 }
 
+/// A document that says only what went wrong. Exit code stays 0 and the shape
+/// stays parseable, so a bar renders the message instead of a parse failure —
+/// the same promise `status` makes.
+pub fn error_doc(now_ms: i64, message: &str) -> Snapshot {
+    Snapshot {
+        schema: 1,
+        // Nominal: there is no reading to express in any unit, and a consumer
+        // that got this far reads `error` before anything else.
+        units: Units::Mmol.label(),
+        generated_at: now_ms,
+        error: Some(message.to_string()),
+        now: None,
+        range: None,
+        series: None,
+        stats: None,
+        insights: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +316,94 @@ mod tests {
         assert!(json["now"]["color"].as_str().unwrap().starts_with('#'));
         // No error key on a healthy document — consumers check for it first.
         assert!(json.get("error").is_none());
+    }
+
+    #[test]
+    fn every_value_is_in_the_display_unit() {
+        let mmol = build(input(vec![entry(115.0, NOW - MIN, "Flat")], vec![]));
+        let mmol_json = serde_json::to_value(&mmol).unwrap();
+        assert_eq!(mmol_json["series"][0][1], 6.4);
+        assert_eq!(mmol_json["range"]["low"], 3.9);
+        assert_eq!(mmol_json["range"]["high"], 10.0);
+
+        let mut mgdl_input = input(vec![entry(115.0, NOW - MIN, "Flat")], vec![]);
+        mgdl_input.units = Units::Mgdl;
+        let mgdl_json = serde_json::to_value(build(mgdl_input)).unwrap();
+        assert_eq!(mgdl_json["units"], "mg/dL");
+        assert_eq!(mgdl_json["series"][0][1], 115.0);
+        assert_eq!(mgdl_json["range"]["low"], 70.0);
+        assert_eq!(mgdl_json["range"]["high"], 180.0);
+    }
+
+    #[test]
+    fn no_readings_gives_empty_collections_rather_than_a_failure() {
+        let json = serde_json::to_value(build(input(vec![], vec![]))).unwrap();
+
+        assert_eq!(json["schema"], 1);
+        assert_eq!(json["series"].as_array().unwrap().len(), 0);
+        assert_eq!(json["insights"].as_array().unwrap().len(), 0);
+        // Fewer than two readings: no mean worth printing, and the panel hides
+        // the row rather than drawing zeroes.
+        assert!(json.get("stats").is_none());
+        assert!(json.get("now").is_none());
+        assert!(json.get("error").is_none());
+    }
+
+    #[test]
+    fn an_error_is_still_a_document() {
+        let json = serde_json::to_value(error_doc(NOW, "no site configured")).unwrap();
+
+        assert_eq!(json["schema"], 1);
+        assert_eq!(json["generated_at"], NOW);
+        assert_eq!(json["error"], "no site configured");
+        // Absent, not null: a consumer checks for `error` first and never has
+        // to tell "missing" from "null" to know there is nothing to draw.
+        assert!(json.get("now").is_none());
+        assert!(json.get("series").is_none());
+        assert!(json.get("stats").is_none());
+        assert!(json.get("insights").is_none());
+    }
+
+    /// Four days of readings: 60 mg/dL between 02:00 and 03:00 local, 110 the
+    /// rest of the time. That clears `agp`'s two bars for a pattern — a run of
+    /// at least 45 minutes, on at least three separate days.
+    fn nightly_lows() -> Vec<Entry> {
+        let day = 24 * 3_600_000i64;
+        let mut out = Vec::new();
+        for d in 1..=4i64 {
+            let start = NOW - d * day;
+            let midnight = start - start.rem_euclid(day);
+            for minute in (0..24 * 60).step_by(5) {
+                let at = midnight + minute as i64 * 60_000;
+                let sgv = if (120..=180).contains(&minute) {
+                    60.0
+                } else {
+                    110.0
+                };
+                out.push(entry(sgv, at, "Flat"));
+            }
+        }
+        out.reverse(); // newest first, as Nightscout returns them
+        out
+    }
+
+    #[test]
+    fn a_pattern_becomes_an_insight_row() {
+        let mut with_history = input(vec![], nightly_lows());
+        // The fixture's clock times are UTC, and `agp` buckets by local time —
+        // so without pinning this the window would move with the machine's
+        // timezone and the assertion would only hold in one place.
+        with_history.timezone = Some(chrono_tz::UTC);
+        let json = serde_json::to_value(build(with_history)).unwrap();
+        let first = &json["insights"][0];
+
+        assert_eq!(first["kind"], "lows");
+        assert_eq!(first["window"], "02:00–03:15");
+        // Display units here too — the panel prints this without converting.
+        assert_eq!(first["extreme"], 3.3);
+        assert!(first["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("lows 02:00–03:15"));
     }
 }
