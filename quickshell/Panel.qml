@@ -31,6 +31,23 @@ Panel {
   property double fetchedAt: 0
 
   readonly property var reading: doc && doc.now ? doc.now : null
+
+  // Nightscout's trend names are machine words — "FortyFiveDown" reads as
+  // FORTYFIVEDOWN once the hero styles it. The arrow already carries the
+  // shape; this gives the same thing in words for anyone reading rather than
+  // glancing.
+  function trendWords(direction) {
+    switch (String(direction)) {
+      case "DoubleUp": return "rising fast"
+      case "SingleUp": return "rising"
+      case "FortyFiveUp": return "drifting up"
+      case "Flat": return "steady"
+      case "FortyFiveDown": return "drifting down"
+      case "SingleDown": return "falling"
+      case "DoubleDown": return "falling fast"
+      default: return "trend unknown"
+    }
+  }
   readonly property var stats: doc && doc.stats ? doc.stats : null
 
   function stale() {
@@ -39,11 +56,26 @@ Panel {
 
   function refresh(force) {
     if (!force && !stale()) return
-    if (snapProc.running) return
-    snapProc.running = true
+    // Drop whatever is in flight and start again, deferred: setting `running`
+    // false and true in one pass is not a change at all, and skipping the
+    // fetch whenever the property happens to read true loses refreshes for
+    // good. The pill's fetch has the same shape for the same reason.
+    snapProc.running = false
+    Qt.callLater(function () { snapProc.running = true })
   }
 
   onOpenedChanged: if (opened) refresh(false)
+
+  // A cached document belongs to the command that produced it. When the
+  // command changes the cache is about something else, so drop it rather than
+  // showing the old source's numbers for up to panelCacheMinutes.
+  onSnapshotCommandChanged: {
+    if (!doc && loadError === "") return
+    doc = null
+    loadError = ""
+    fetchedAt = 0
+    if (opened) refresh(true)
+  }
 
   function apply(out) {
     var parsed
@@ -54,7 +86,9 @@ Panel {
       return
     }
     if (parsed.schema !== 1) {
-      root.loadError = "this sugarrush speaks snapshot schema " + parsed.schema + ", the panel speaks 1"
+      // Kept short: the hero's detail is a single line that clips rather
+      // than wraps, and a clipped explanation explains nothing.
+      root.loadError = "snapshot schema " + parsed.schema + ", panel needs 1"
       return
     }
     root.doc = parsed
@@ -100,7 +134,7 @@ Panel {
 
         PanelHero {
           title: root.reading ? root.reading.value + " " + (root.doc ? root.doc.units : "") : "—"
-          meta: root.reading ? root.reading.arrow + "  " + root.reading.direction : ""
+          meta: root.reading ? root.reading.arrow + "  " + root.trendWords(root.reading.direction) : ""
           detail: root.reading
             ? "Δ " + root.reading.delta + " · " + root.reading.age_min + "m ago"
             : root.loadError
@@ -112,6 +146,10 @@ Panel {
           height: Style.space(120)
           doc: root.doc
           foreground: root.barForeground
+          // On an error the hero already says what went wrong; an empty plot
+          // saying "no readings" underneath it just repeats the bad news in
+          // less useful words.
+          visible: root.loadError === ""
         }
 
         PanelSectionHeader {
@@ -132,23 +170,29 @@ Panel {
           color: root.barForeground
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
+          // One decimal, explicitly: JSON's 7.0 arrives in JS as 7, and a GMI
+          // printed as "7%" next to a mean printed as "8.7" reads like two
+          // different precisions of measurement.
           text: root.stats
-            ? root.stats.window_h + "h · mean " + root.stats.mean
-              + " · GMI " + root.stats.gmi + "%"
-              + " · CV " + (root.stats.cv === undefined ? "—" : root.stats.cv + "%")
+            ? root.stats.window_h + "h · mean " + root.stats.mean.toFixed(1)
+              + " · GMI " + root.stats.gmi.toFixed(1) + "%"
+              + " · CV " + (root.stats.cv === undefined ? "—" : root.stats.cv.toFixed(1) + "%")
             : ""
         }
 
         PanelSectionHeader {
           text: "Patterns"
           foreground: root.barForeground
-          visible: root.insightDays > 0
+          // Hidden on an error: "not enough history yet" would be a claim
+          // about the data, and on an error there is no data to claim
+          // anything about.
+          visible: root.insightDays > 0 && root.loadError === ""
         }
 
         Column {
           width: parent.width
           spacing: Style.space(4)
-          visible: root.insightDays > 0
+          visible: root.insightDays > 0 && root.loadError === ""
 
           Repeater {
             model: root.doc && root.doc.insights ? root.doc.insights : []

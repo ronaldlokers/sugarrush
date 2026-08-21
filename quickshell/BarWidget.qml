@@ -48,12 +48,14 @@ Item {
   // so this is part of the contract, not a convenience.
   readonly property bool tooltipHovered: pointer.containsMouse
 
-  // A vertical bar is 28px wide, so drop the delta and keep value and trend.
+  // A vertical bar is 28px wide — narrower than "6.1 →" renders — so the
+  // delta goes and what is left stacks, one line each, the way the clock
+  // stacks its hours over its minutes.
   readonly property bool compact: bar ? bar.vertical === true : false
   readonly property string shownText: {
     if (!compact) return label
     var parts = label.split(" ")
-    return parts.length > 2 ? parts.slice(0, parts.length - 1).join(" ") : label
+    return parts.length > 2 ? parts.slice(0, parts.length - 1).join("\n") : label
   }
 
   readonly property color foreground: {
@@ -65,7 +67,9 @@ Item {
   }
 
   implicitWidth: compact ? (bar ? bar.barSize : 28) : valueText.implicitWidth + 12
-  implicitHeight: bar ? bar.barSize : 26
+  implicitHeight: compact
+    ? Math.max(bar ? bar.barSize : 26, valueText.implicitHeight + 6)
+    : (bar ? bar.barSize : 26)
 
   // Any run still in flight is dropped first: a fetch that outlives its poll
   // interval has nothing to say that the next one won't. The restart is
@@ -166,6 +170,8 @@ Item {
     id: valueText
     anchors.centerIn: parent
     text: root.shownText
+    horizontalAlignment: Text.AlignHCenter
+    lineHeight: 0.95
     color: root.foreground
     font.family: root.bar ? root.bar.fontFamily : "monospace"
     font.pixelSize: 12
