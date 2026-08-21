@@ -13,6 +13,10 @@ mod nightscout;
 mod predict;
 mod selftest;
 mod service;
+// Unused until the `snapshot` subcommand is wired up; the allow comes off
+// in that same commit.
+#[allow(dead_code)]
+mod snapshot;
 mod sound;
 mod stats;
 mod status;

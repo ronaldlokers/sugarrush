@@ -156,8 +156,48 @@ pub fn parse_color(s: &str) -> Option<Color> {
     })
 }
 
+/// A `#rrggbb` string for a colour. Bars want hex, and the terminal's own
+/// palette isn't available to them — so named colours map to their conventional
+/// values rather than to whatever the terminal would have drawn.
+pub fn hex(color: Color) -> String {
+    let (r, g, b) = match color {
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Black => (0, 0, 0),
+        Color::Red => (0xcc, 0x24, 0x1d),
+        Color::Green => (0x98, 0x97, 0x1a),
+        Color::Yellow => (0xd7, 0x99, 0x21),
+        Color::Blue => (0x45, 0x85, 0x88),
+        Color::Magenta => (0xb1, 0x62, 0x86),
+        Color::Cyan => (0x68, 0x9d, 0x6a),
+        Color::Gray | Color::DarkGray => (0x92, 0x83, 0x74),
+        Color::LightRed => (0xfb, 0x49, 0x34),
+        Color::LightGreen => (0xb8, 0xbb, 0x26),
+        Color::LightYellow => (0xfa, 0xbd, 0x2f),
+        Color::LightBlue => (0x83, 0xa5, 0x98),
+        Color::LightMagenta => (0xd3, 0x86, 0x9b),
+        Color::LightCyan => (0x8e, 0xc0, 0x7c),
+        Color::White => (0xff, 0xff, 0xff),
+        // Indexed and Reset carry no colour we can name; white reads on every
+        // bar background, which a guess might not.
+        _ => (0xff, 0xff, 0xff),
+    };
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn named_colours_become_hex_for_bars() {
+        use super::hex;
+        use ratatui::style::Color;
+
+        assert_eq!(hex(Color::Rgb(0, 0x80, 0xff)), "#0080ff");
+        assert_eq!(hex(Color::Red), "#cc241d");
+        // A colour with no nameable value falls back to something readable
+        // rather than a guess.
+        assert_eq!(hex(Color::Reset), "#ffffff");
+    }
+
     use super::*;
 
     #[test]
