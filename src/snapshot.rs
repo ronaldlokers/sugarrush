@@ -316,6 +316,38 @@ async fn collect(
     }))
 }
 
+/// Synthetic data in the real document's shape: a panel to look at with no
+/// site configured, and the screenshots the README needs.
+pub fn demo(
+    units: Units,
+    alerts: Alerts,
+    theme: Theme,
+    hours: u32,
+    days: u32,
+    now_ms: i64,
+) -> Snapshot {
+    let hours = hours.max(1);
+    let recent_from = now_ms - i64::from(hours) * 3_600_000;
+    // demo::entries already returns newest first, as Nightscout does, so the
+    // rest of this module reads it unchanged.
+    let recent = crate::demo::entries(recent_from, now_ms);
+    let history = match history_window(days, now_ms) {
+        Some((start, end, _)) => crate::demo::entries(start, end),
+        None => Vec::new(),
+    };
+
+    build(BuildInput {
+        now_ms,
+        units,
+        alerts,
+        theme,
+        timezone: None,
+        recent,
+        history,
+        stats_window_h: 24,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,5 +537,18 @@ mod tests {
             .collect();
         let json = serde_json::to_value(build(input(vec![], full_day))).unwrap();
         assert_eq!(json["stats"]["window_h"], 24);
+    }
+
+    #[test]
+    fn the_demo_document_has_the_same_shape_as_a_real_one() {
+        let json = serde_json::to_value(demo(Units::Mmol, alerts(), Theme::default(), 6, 14, NOW))
+            .unwrap();
+
+        assert_eq!(json["schema"], 1);
+        assert!(json.get("error").is_none());
+        assert!(json["now"]["value"].is_string());
+        // Six hours of five-minute readings, so a chart has something to draw.
+        assert!(json["series"].as_array().unwrap().len() > 50);
+        assert!(json["stats"]["tir"]["in_range"].is_number());
     }
 }

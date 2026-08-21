@@ -68,6 +68,9 @@ enum Mode {
         hours: u32,
         days: u32,
         site: Option<String>,
+        /// Synthetic data, so the document renders with no config and no
+        /// network — the same escape hatch the dashboard has.
+        demo: bool,
     },
     /// Print version/about info (and a desktop notification) and exit.
     About,
@@ -207,6 +210,7 @@ fn parse_args() -> Mode {
                     hours: 6,
                     days: 14,
                     site: None,
+                    demo: false,
                 })
             }
             "--hours" => {
@@ -517,6 +521,7 @@ fn parse_args() -> Mode {
             hours: snapshot_hours.unwrap_or(6).clamp(1, 72),
             days: snapshot_days.unwrap_or(14).clamp(0, 90),
             site: snooze_site,
+            demo,
         },
         Some(Mode::Status { .. }) => Mode::Status {
             format: status_format
@@ -596,7 +601,43 @@ async fn main() -> Result<()> {
             println!("{}", waybar::line(&cfg).await);
             Ok(())
         }
-        Mode::Snapshot { hours, days, site } => {
+        Mode::Snapshot {
+            hours,
+            days,
+            demo: true,
+            ..
+        } => {
+            // A demo run must work with no config file at all, so the three
+            // settings fall back to their own defaults rather than to a
+            // Config that cannot be constructed without one.
+            let (units, alerts, theme) = match Config::load() {
+                Ok(cfg) => (
+                    cfg.units,
+                    cfg.alerts.resolve_checked(cfg.units).0,
+                    cfg.theme.resolve(),
+                ),
+                Err(_) => (
+                    units::Units::Mmol,
+                    config::Alerts::default(),
+                    theme::Theme::default(),
+                ),
+            };
+            println!(
+                "{}",
+                serde_json::to_string(&snapshot::demo(
+                    units,
+                    alerts,
+                    theme,
+                    hours,
+                    days,
+                    chrono::Utc::now().timestamp_millis(),
+                ))?
+            );
+            Ok(())
+        }
+        Mode::Snapshot {
+            hours, days, site, ..
+        } => {
             let cfg = Config::load()?;
             let sites = cfg.resolve_sites()?;
             let chosen = match snapshot_site(&sites, site.as_deref()) {
@@ -948,7 +989,7 @@ const COMMANDS: &[(&str, &str)] = &[
 const OPTIONS: &[(&str, &str)] = &[
     (
         "--demo",
-        "synthetic data, no config and no network (dashboard only)",
+        "synthetic data, no config and no network (dashboard and snapshot)",
     ),
     ("--screen settings", "open straight to the settings screen"),
     (
