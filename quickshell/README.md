@@ -33,7 +33,9 @@ Clicking the pill opens a panel carrying what the bar line has no room for:
 - the pattern insights — the times of day where lows or highs keep happening.
   The section appears only when there is a pattern to name: no repeating low or
   high means no section, rather than an empty one;
-- buttons to refetch and to open the full TUI.
+- a header built like the shell's own panels — the mark, the reading, its
+  trend, and two icon buttons on the trailing edge: refetch now, and open the
+  full TUI.
 
 The panel calls `sugarrush snapshot`, which needs a sugarrush new enough to
 have that command; the pill does not, and keeps working either way. If the

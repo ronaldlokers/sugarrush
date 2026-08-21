@@ -134,65 +134,69 @@ Panel {
         width: parent.width
         spacing: Style.space(10)
 
-        // A wordmark rather than a mark: the project ships no logo asset, and
-        // a text lockup needs nothing installed beside the QML and reads on
-        // any theme.
-        Text {
+        // The house header: an icon that names the panel, the reading as the
+        // title, and its controls on the hero's trailing edge — the shape
+        // tailscale and dropbox use. The wordmark is gone with it; the mark
+        // carries the identity now.
+        Item {
+          id: header
           width: parent.width
-          text: "sugarrush"
-          color: Qt.darker(root.barForeground, 1.5)
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.caption
-          font.bold: true
-        }
+          implicitHeight: hero.implicitHeight
 
-        Row {
-          spacing: Style.space(8)
-
-          // Ui.Button, not PanelActionButton: the latter is an icon button
-          // (`iconText`) with no text label.
-          Button {
-            text: "Refresh"
+          PanelHero {
+            id: hero
+            width: parent.width
+            title: root.reading ? root.reading.value + " " + (root.doc ? root.doc.units : "") : "—"
+            meta: root.reading
+              ? root.reading.arrow + "  " + root.trendWords(root.reading.direction)
+              : root.loadError
+            detail: root.reading
+              ? "Δ " + root.reading.delta + " · " + root.reading.age_min + "m ago"
+              : ""
+            // The bar's own foreground, not the alert colour: the chart
+            // carries the state in the line itself, and a hero that changed
+            // colour under the reading made the number harder to read than
+            // the colour was worth.
             foreground: root.barForeground
             fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-            fontSize: Style.font.bodySmall
-            horizontalPadding: Style.spacing.controlPaddingX
-            verticalPadding: Style.spacing.controlPaddingY
-            bordered: true
-            onClicked: root.refresh(true)
-          }
 
-          Button {
-            text: "Open dashboard"
-            foreground: root.barForeground
-            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-            fontSize: Style.font.bodySmall
-            horizontalPadding: Style.spacing.controlPaddingX
-            verticalPadding: Style.spacing.controlPaddingY
-            bordered: true
-            onClicked: {
-              root.close()
-              if (root.bar) {
-                root.bar.run(root.setting("onClick", "omarchy-launch-floating-terminal-with-presentation sugarrush"))
+            iconComponent: Component {
+              SugarIcon {
+                iconSize: Style.font.display
+                color: hero.foreground
+              }
+            }
+
+            trailingControl: Component {
+              Row {
+                spacing: Style.space(4)
+
+                PanelActionButton {
+                  iconText: "\uf021"
+                  tooltipText: "Fetch now"
+                  foreground: hero.foreground
+                  fontFamily: hero.fontFamily
+                  onClicked: root.refresh(true)
+                }
+
+                PanelActionButton {
+                  iconText: "\uf120"
+                  tooltipText: "Open the dashboard"
+                  foreground: hero.foreground
+                  fontFamily: hero.fontFamily
+                  onClicked: {
+                    root.close()
+                    if (root.bar) {
+                      root.bar.run(root.setting("onClick", "omarchy-launch-floating-terminal-with-presentation sugarrush"))
+                    }
+                  }
+                }
               }
             }
           }
         }
 
         PanelSeparator {
-          foreground: root.barForeground
-        }
-
-        PanelHero {
-          title: root.reading ? root.reading.value + " " + (root.doc ? root.doc.units : "") : "—"
-          meta: root.reading ? root.reading.arrow + "  " + root.trendWords(root.reading.direction) : ""
-          detail: root.reading
-            ? "Δ " + root.reading.delta + " · " + root.reading.age_min + "m ago"
-            : root.loadError
-          // The bar's own foreground, not the alert colour: the chart now
-          // carries the state in the line itself, and a hero that changes
-          // colour under the reading made the number harder to read than the
-          // colour was worth.
           foreground: root.barForeground
         }
 
