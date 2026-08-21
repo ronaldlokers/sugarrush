@@ -32,7 +32,9 @@ not say so invites the wrong reading:
   hours, the median dashed and the 25–75% band shaded, each alert threshold in
   its own colour and labelled on the value axis, the clock along the bottom.
   The line carries the state, changing colour as it crosses a threshold, and
-  seeing tonight sit above the band is the point of it;
+  seeing tonight sit above the band is the point of it. Hovering the chart
+  drops a crosshair on the nearest reading and prints its value and time —
+  the reading itself, never an interpolation between two of them;
 - **Last 24 hours** — the five time-in-range bands, with mean, GMI and CV;
 - **Patterns · last N days** — the times of day where lows or highs keep
   happening. The card appears only when there is a pattern to name: no

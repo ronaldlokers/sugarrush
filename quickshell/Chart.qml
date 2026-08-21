@@ -4,6 +4,10 @@
 //
 // The axes are drawn rather than labelled with a legend box: the value ticks
 // sit at the thresholds themselves, so a coloured line is its own label.
+//
+// The scale lives in properties rather than inside onPaint, because the hover
+// crosshair has to land on the same pixels the line was drawn at — two copies
+// of that arithmetic would drift the moment either changed.
 
 import QtQuick
 import qs.Commons
@@ -37,6 +41,65 @@ Item {
   readonly property int gutterLeft: 34
   readonly property int gutterBottom: 14
 
+  readonly property real plotX: gutterLeft
+  readonly property real plotW: Math.max(1, width - gutterLeft)
+  readonly property real plotH: Math.max(1, height - gutterBottom)
+
+  readonly property real firstAt: series.length > 0 ? series[0][0] : 0
+  readonly property real lastAt: series.length > 0 ? series[series.length - 1][0] : 1
+  readonly property real span: Math.max(1, lastAt - firstAt)
+
+  // The scale always covers the alert bounds, so the thresholds are on screen
+  // even on a flat day well inside them, and always covers the band, so a wide
+  // typical day is not clipped.
+  readonly property var bounds: {
+    if (!range || series.length === 0) return { lo: 0, hi: 1 }
+    var lo = range.urgent_low
+    var hi = range.urgent_high
+    for (var i = 0; i < series.length; i++) {
+      lo = Math.min(lo, series[i][1])
+      hi = Math.max(hi, series[i][1])
+    }
+    if (band) {
+      for (var b = 0; b < band.points.length; b++) {
+        lo = Math.min(lo, band.points[b][1])
+        hi = Math.max(hi, band.points[b][3])
+      }
+    }
+    var pad = (hi - lo) * 0.08 || 1
+    return { lo: lo - pad, hi: hi + pad }
+  }
+
+  function xOf(t) { return plotX + (t - firstAt) / span * plotW }
+  function yOf(v) { return plotH - (v - bounds.lo) / (bounds.hi - bounds.lo) * plotH }
+
+  // The reading under the pointer, or -1. Snapped to a real reading rather
+  // than interpolated: the panel should never show a number the sensor did
+  // not report.
+  property int hoverIndex: -1
+  readonly property var hovered: hoverIndex >= 0 && hoverIndex < series.length
+    ? series[hoverIndex]
+    : null
+
+  function nearestIndex(px) {
+    if (series.length === 0) return -1
+    var best = 0
+    var bestGap = Number.MAX_VALUE
+    for (var i = 0; i < series.length; i++) {
+      var gap = Math.abs(xOf(series[i][0]) - px)
+      if (gap < bestGap) {
+        bestGap = gap
+        best = i
+      }
+    }
+    return best
+  }
+
+  function clockAt(ms) {
+    var when = new Date(ms)
+    return ("0" + when.getHours()).slice(-2) + ":" + ("0" + when.getMinutes()).slice(-2)
+  }
+
   onDocChanged: canvas.requestPaint()
   onWidthChanged: canvas.requestPaint()
   onHeightChanged: canvas.requestPaint()
@@ -60,35 +123,8 @@ Item {
       ctx.reset()
       if (root.series.length === 0 || !root.range) return
 
-      var plotX = root.gutterLeft
-      var plotW = Math.max(1, width - root.gutterLeft)
-      var plotH = Math.max(1, height - root.gutterBottom)
-
-      // The scale always covers the alert bounds, so the thresholds are on
-      // screen even on a flat day well inside them, and always covers the
-      // band, so a wide typical day is not clipped.
-      var lo = root.range.urgent_low
-      var hi = root.range.urgent_high
-      for (var i = 0; i < root.series.length; i++) {
-        lo = Math.min(lo, root.series[i][1])
-        hi = Math.max(hi, root.series[i][1])
-      }
-      if (root.band) {
-        for (var b = 0; b < root.band.points.length; b++) {
-          lo = Math.min(lo, root.band.points[b][1])
-          hi = Math.max(hi, root.band.points[b][3])
-        }
-      }
-      var pad = (hi - lo) * 0.08 || 1
-      lo -= pad
-      hi += pad
-
-      var t0 = root.series[0][0]
-      var t1 = root.series[root.series.length - 1][0]
-      var span = Math.max(1, t1 - t0)
-      function x(t) { return plotX + (t - t0) / span * plotW }
-      function y(v) { return plotH - (v - lo) / (hi - lo) * plotH }
-
+      var plotX = root.plotX
+      var plotH = root.plotH
       var dim = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.55)
       ctx.font = "10px " + Style.font.family
 
@@ -97,9 +133,9 @@ Item {
         var pts = root.band.points
         ctx.fillStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.13)
         ctx.beginPath()
-        ctx.moveTo(x(pts[0][0]), y(pts[0][3]))
-        for (var u = 1; u < pts.length; u++) ctx.lineTo(x(pts[u][0]), y(pts[u][3]))
-        for (var d = pts.length - 1; d >= 0; d--) ctx.lineTo(x(pts[d][0]), y(pts[d][1]))
+        ctx.moveTo(root.xOf(pts[0][0]), root.yOf(pts[0][3]))
+        for (var u = 1; u < pts.length; u++) ctx.lineTo(root.xOf(pts[u][0]), root.yOf(pts[u][3]))
+        for (var d = pts.length - 1; d >= 0; d--) ctx.lineTo(root.xOf(pts[d][0]), root.yOf(pts[d][1]))
         ctx.closePath()
         ctx.fill()
 
@@ -107,8 +143,8 @@ Item {
         ctx.lineWidth = 1
         ctx.setLineDash([3, 3])
         ctx.beginPath()
-        ctx.moveTo(x(pts[0][0]), y(pts[0][2]))
-        for (var m = 1; m < pts.length; m++) ctx.lineTo(x(pts[m][0]), y(pts[m][2]))
+        ctx.moveTo(root.xOf(pts[0][0]), root.yOf(pts[0][2]))
+        for (var m = 1; m < pts.length; m++) ctx.lineTo(root.xOf(pts[m][0]), root.yOf(pts[m][2]))
         ctx.stroke()
         ctx.setLineDash([])
       }
@@ -122,13 +158,10 @@ Item {
       ]
       ctx.lineWidth = 1
       for (var l = 0; l < levels.length; l++) {
-        var ly = y(levels[l].value)
+        var ly = root.yOf(levels[l].value)
         if (ly < 0 || ly > plotH) continue
-        ctx.strokeStyle = Qt.rgba(
-          Qt.color(levels[l].color).r,
-          Qt.color(levels[l].color).g,
-          Qt.color(levels[l].color).b,
-          0.55)
+        var lc = Qt.color(levels[l].color)
+        ctx.strokeStyle = Qt.rgba(lc.r, lc.g, lc.b, 0.55)
         ctx.beginPath()
         ctx.moveTo(plotX, ly)
         ctx.lineTo(width, ly)
@@ -142,20 +175,18 @@ Item {
       }
 
       // ---- the clock, every two hours on the hour
-      var step = 2 * 3_600_000
-      var firstTick = t0 - (t0 % step) + step
+      var step = 2 * 3600000
+      var firstTick = root.firstAt - (root.firstAt % step) + step
       ctx.fillStyle = dim
       ctx.textAlign = "center"
       ctx.strokeStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
-      for (var tick = firstTick; tick <= t1; tick += step) {
-        var tx = x(tick)
+      for (var tick = firstTick; tick <= root.lastAt; tick += step) {
+        var tx = root.xOf(tick)
         ctx.beginPath()
         ctx.moveTo(tx, 0)
         ctx.lineTo(tx, plotH)
         ctx.stroke()
-        var when = new Date(tick)
-        var label = ("0" + when.getHours()).slice(-2) + ":" + ("0" + when.getMinutes()).slice(-2)
-        ctx.fillText(label, tx, height - 2)
+        ctx.fillText(root.clockAt(tick), tx, height - 2)
       }
 
       // ---- today, one segment at a time so the line carries its own state
@@ -168,10 +199,84 @@ Item {
         // into the low band should already look low when it gets there.
         ctx.strokeStyle = root.colorFor(to[1])
         ctx.beginPath()
-        ctx.moveTo(x(from[0]), y(from[1]))
-        ctx.lineTo(x(to[0]), y(to[1]))
+        ctx.moveTo(root.xOf(from[0]), root.yOf(from[1]))
+        ctx.lineTo(root.xOf(to[0]), root.yOf(to[1]))
         ctx.stroke()
       }
     }
+  }
+
+  // ---- hover: a crosshair on the reading under the pointer
+  Rectangle {
+    id: crosshair
+    visible: root.hovered !== null
+    width: 1
+    height: root.plotH
+    y: 0
+    x: root.hovered ? Math.round(root.xOf(root.hovered[0])) : 0
+    color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.45)
+  }
+
+  Rectangle {
+    id: marker
+    visible: root.hovered !== null
+    width: 7
+    height: 7
+    radius: width / 2
+    x: root.hovered ? Math.round(root.xOf(root.hovered[0])) - width / 2 : 0
+    y: root.hovered ? Math.round(root.yOf(root.hovered[1])) - height / 2 : 0
+    color: root.hovered ? root.colorFor(root.hovered[1]) : "transparent"
+    border.width: 1
+    border.color: Qt.rgba(0, 0, 0, 0.5)
+  }
+
+  Rectangle {
+    id: readout
+    visible: root.hovered !== null
+    radius: 3
+    color: Qt.rgba(0, 0, 0, 0.72)
+    border.width: 1
+    border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.25)
+    implicitWidth: readoutText.implicitWidth + 10
+    implicitHeight: readoutText.implicitHeight + 6
+    width: implicitWidth
+    height: implicitHeight
+    // Kept inside the plot, and flipped below the point when the reading sits
+    // near the top — a label clipped by the card explains nothing.
+    x: root.hovered
+      ? Math.max(root.plotX, Math.min(root.width - width, root.xOf(root.hovered[0]) - width / 2))
+      : 0
+    y: {
+      if (!root.hovered) return 0
+      var above = root.yOf(root.hovered[1]) - height - 8
+      return above < 0 ? root.yOf(root.hovered[1]) + 8 : above
+    }
+
+    Text {
+      id: readoutText
+      anchors.centerIn: parent
+      color: root.foreground
+      font.family: Style.font.family
+      font.pixelSize: Style.font.caption
+      text: root.hovered
+        ? root.hovered[1].toFixed(1) + "  " + root.clockAt(root.hovered[0])
+        : ""
+    }
+  }
+
+  MouseArea {
+    id: probe
+    anchors.fill: parent
+    anchors.leftMargin: root.gutterLeft
+    anchors.bottomMargin: root.gutterBottom
+    hoverEnabled: true
+    // No buttons: the panel scrolls under this, and a MouseArea that accepted
+    // presses would swallow the drag.
+    acceptedButtons: Qt.NoButton
+
+    onPositionChanged: function (mouse) {
+      root.hoverIndex = root.nearestIndex(mouse.x + root.gutterLeft)
+    }
+    onExited: root.hoverIndex = -1
   }
 }
