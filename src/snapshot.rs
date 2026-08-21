@@ -202,10 +202,20 @@ pub fn build(input: BuildInput) -> Snapshot {
     }
 }
 
+/// Stats over `entries`, labelled with the window they actually cover.
+///
+/// `window_h` is what the caller asked for, not what the readings span: with
+/// `--days 0` the only entries are the chart's few hours, and reporting
+/// "100% in range" over three hours as a 24-hour figure is a claim the data
+/// does not support. So the label is the covered span, capped at the request.
 fn stats_for(entries: &[Entry], units: Units, alerts: &Alerts, window_h: i64) -> Option<Stats> {
     if entries.len() < 2 {
         return None;
     }
+    let newest = entries.iter().map(|e| e.date).max()?;
+    let oldest = entries.iter().map(|e| e.date).min()?;
+    let covered_h = ((newest - oldest) as f64 / 3_600_000.0).ceil() as i64;
+    let window_h = covered_h.clamp(1, window_h);
     let mean = crate::stats::mean_mgdl(entries)?;
     let tir = crate::stats::tir(
         entries,
@@ -477,5 +487,23 @@ mod tests {
         // 288 readings a day at five minutes apart, plus a day of slack so a
         // dense sensor doesn't get truncated at the far end.
         assert_eq!(want, 14 * 288 + 288);
+    }
+
+    #[test]
+    fn stats_are_labelled_with_the_window_they_actually_cover() {
+        // Three hours of readings and no history: the figures describe three
+        // hours, so they may not be labelled as a day.
+        let three_hours: Vec<Entry> = (0..36)
+            .map(|i| entry(110.0, NOW - i * 5 * MIN, "Flat"))
+            .collect();
+        let json = serde_json::to_value(build(input(three_hours, vec![]))).unwrap();
+        assert_eq!(json["stats"]["window_h"], 3);
+
+        // A full day of history is labelled as the 24 hours it covers.
+        let full_day: Vec<Entry> = (0..288)
+            .map(|i| entry(110.0, NOW - i * 5 * MIN, "Flat"))
+            .collect();
+        let json = serde_json::to_value(build(input(vec![], full_day))).unwrap();
+        assert_eq!(json["stats"]["window_h"], 24);
     }
 }
