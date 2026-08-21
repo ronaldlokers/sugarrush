@@ -23,11 +23,15 @@ the delta, which does not fit 28 pixels.
 
 Clicking the pill opens a panel carrying what the bar line has no room for:
 
-- the last few hours as a chart, with the target range shaded and the urgent
-  bounds marked;
+- the last few hours as a chart: your reading over a typical day for the same
+  hours — the median dashed, the 25–75% band shaded — with each alert threshold
+  drawn in its own colour and labelled on the value axis, and the clock along
+  the bottom. Seeing tonight sit above the band is the point of it;
 - the five time-in-range bands, with mean, GMI and CV for the window they
   cover;
-- the pattern insights — the times of day where lows or highs keep happening;
+- the pattern insights — the times of day where lows or highs keep happening.
+  The section appears only when there is a pattern to name: no repeating low or
+  high means no section, rather than an empty one;
 - buttons to refetch and to open the full TUI.
 
 The panel calls `sugarrush snapshot`, which needs a sugarrush new enough to
@@ -66,7 +70,7 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
 | `onRightClick` | the same, plus `--screen settings` | right click |
 | `panelHours` | `6` | the panel chart's window |
-| `insightDays` | `14` | history behind the patterns; `0` hides the section and skips the query |
+| `insightDays` | `14` | history behind the patterns and the chart's typical-day band; `0` hides the patterns and skips the query |
 | `panelCacheMinutes` | `5` | how stale the panel's document may be when it opens |
 | `snapshotCommand` | `sugarrush snapshot` | the command the panel reads its document from |
 

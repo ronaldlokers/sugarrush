@@ -49,6 +49,8 @@ Panel {
     }
   }
   readonly property var stats: doc && doc.stats ? doc.stats : null
+  readonly property bool hasInsights: insightDays > 0 && loadError === ""
+    && doc && doc.insights && doc.insights.length > 0
 
   function stale() {
     return !doc || (Date.now() - fetchedAt) > cacheMinutes * 60000
@@ -143,7 +145,7 @@ Panel {
 
         Chart {
           width: parent.width
-          height: Style.space(120)
+          height: Style.space(140)
           doc: root.doc
           foreground: root.barForeground
           // On an error the hero already says what went wrong; an empty plot
@@ -183,16 +185,17 @@ Panel {
         PanelSectionHeader {
           text: "Patterns"
           foreground: root.barForeground
-          // Hidden on an error: "not enough history yet" would be a claim
-          // about the data, and on an error there is no data to claim
-          // anything about.
-          visible: root.insightDays > 0 && root.loadError === ""
+          // The section exists only when it has something to say. An empty
+          // one asked the reader to interpret a blank, and its old caption —
+          // "not enough history yet" — was wrong whenever the history was
+          // there and simply held no repeating low or high.
+          visible: root.hasInsights
         }
 
         Column {
           width: parent.width
           spacing: Style.space(4)
-          visible: root.insightDays > 0 && root.loadError === ""
+          visible: root.hasInsights
 
           Repeater {
             model: root.doc && root.doc.insights ? root.doc.insights : []
@@ -208,13 +211,6 @@ Panel {
             }
           }
 
-          Text {
-            visible: !root.doc || !root.doc.insights || root.doc.insights.length === 0
-            color: Qt.darker(root.barForeground, 1.4)
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            text: "not enough history yet for patterns"
-          }
         }
 
         Row {
