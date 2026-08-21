@@ -33,9 +33,8 @@ Clicking the pill opens a panel carrying what the bar line has no room for:
 - the pattern insights — the times of day where lows or highs keep happening.
   The section appears only when there is a pattern to name: no repeating low or
   high means no section, rather than an empty one;
-- a header built like the shell's own panels — the sugarrush icon, the reading, its
-  trend, and two icon buttons on the trailing edge: refetch now, and open the
-  full TUI.
+- the wordmark across the top, then the reading, its trend, and two icon
+  buttons on the trailing edge: refetch now, and open the full TUI.
 
 The panel calls `sugarrush snapshot`, which needs a sugarrush new enough to
 have that command; the pill does not, and keeps working either way. If the
@@ -50,7 +49,7 @@ need — is paid for only when someone is actually looking.
 
 ```bash
 mkdir -p ~/.config/omarchy/plugins/sugarrush
-cp manifest.json icon.png *.qml ~/.config/omarchy/plugins/sugarrush/
+cp manifest.json logo.png *.qml ~/.config/omarchy/plugins/sugarrush/
 omarchy-shell shell rescanPlugins
 omarchy plugin enable sugarrush.glucose
 ```

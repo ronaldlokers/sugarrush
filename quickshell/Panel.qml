@@ -134,10 +134,19 @@ Panel {
         width: parent.width
         spacing: Style.space(10)
 
-        // The house header: an icon that names the panel, the reading as the
-        // title, and its controls on the hero's trailing edge — the shape
-        // tailscale and dropbox use. The wordmark is gone with it; the mark
-        // carries the identity now.
+        // The wordmark leads, and everything else sits under it. The cube in
+        // the lockup is the mark, so the hero below carries no icon of its
+        // own — one character per panel is plenty.
+        Image {
+          width: Math.round(parent.width / 2)
+          source: Qt.resolvedUrl("logo.png")
+          sourceSize.width: parent.width * 1.5
+          fillMode: Image.PreserveAspectFit
+          smooth: true
+        }
+
+        // The reading, its trend, and the panel's controls — the shape
+        // tailscale and dropbox give their headers.
         Item {
           id: header
           width: parent.width
@@ -159,21 +168,6 @@ Panel {
             // the colour was worth.
             foreground: root.barForeground
             fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-
-            // The app icon itself. It is a drawn character rather than a
-            // glyph, so it ships as a bitmap beside the QML and is asked for
-            // at twice its drawn size to stay sharp on a scaled display.
-            iconComponent: Component {
-              Image {
-                source: Qt.resolvedUrl("icon.png")
-                width: Style.font.display
-                height: Style.font.display
-                sourceSize.width: Style.font.display * 2
-                sourceSize.height: Style.font.display * 2
-                smooth: true
-                fillMode: Image.PreserveAspectFit
-              }
-            }
 
             trailingControl: Component {
               Row {
