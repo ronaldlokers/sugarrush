@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "sugarrush.glucose",
+  "name": "sugarrush",
+  "version": "1.0.0",
+  "author": "sugarrush",
+  "description": "Blood glucose, trend and delta from Nightscout",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "sugarrush",
+    "description": "Blood glucose, trend and delta from Nightscout",
+    "category": "Info",
+    "allowMultiple": false
+  }
+}

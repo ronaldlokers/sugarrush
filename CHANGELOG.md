@@ -6,6 +6,23 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A bar widget for Quickshell.** Omarchy 4 replaced Waybar with a Quickshell
+  bar, so [`quickshell/`](quickshell/) now ships a widget for it alongside the
+  Waybar examples: the reading, trend and delta in your theme's state colour,
+  the usual tooltip on hover, and a click that opens the TUI (right click for
+  its settings screen). Its README also covers the no-plugin route, running
+  `sugarrush waybar` through the bar's own command module.
+
+### Changed
+
+- **`--format waybar` also reports the state colour.** The JSON now carries a
+  `color` field holding the hex colour of the alert state, from your configured
+  theme. Waybar ignores it and keeps styling the module from the CSS class;
+  it is there for bars that style themselves from the payload instead of a
+  stylesheet.
+
 ### Fixed
 
 - **`--help` fits a terminal again.** The new command signatures outgrew the
