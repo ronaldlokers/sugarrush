@@ -26,7 +26,8 @@ Clicking the pill opens a panel carrying what the bar line has no room for:
 - the last few hours as a chart: your reading over a typical day for the same
   hours — the median dashed, the 25–75% band shaded — with each alert threshold
   drawn in its own colour and labelled on the value axis, and the clock along
-  the bottom. Seeing tonight sit above the band is the point of it;
+  the bottom. The line itself carries the state, changing colour as it crosses
+  a threshold. Seeing tonight sit above the band is the point of it;
 - the five time-in-range bands, with mean, GMI and CV for the window they
   cover;
 - the pattern insights — the times of day where lows or highs keep happening.

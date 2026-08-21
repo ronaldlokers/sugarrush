@@ -10,7 +10,8 @@ All notable changes to sugarrush are documented here. The format is based on
 
 - **The Quickshell widget has a popup panel.** Clicking the bar pill opens a
   panel with the last hours as a chart — your line over a typical day for the
-  same hours, thresholds in their own colours, values and clock on the axes —
+  same hours, changing colour as it crosses a threshold, thresholds in their
+  own colours, values and clock on the axes —
   plus the five time-in-range bands, and the pattern insights — the parts of the dashboard worth a glance without opening
   the TUI. Right click still opens the full app. It fetches only while open,
   and reuses its last reading for a few minutes, so the multi-day history the

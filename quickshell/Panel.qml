@@ -132,7 +132,19 @@ Panel {
       Column {
         id: column
         width: parent.width
-        spacing: Style.space(12)
+        spacing: Style.space(10)
+
+        // A wordmark rather than a mark: the project ships no logo asset, and
+        // a text lockup needs nothing installed beside the QML and reads on
+        // any theme.
+        Text {
+          width: parent.width
+          text: "sugarrush"
+          color: Qt.darker(root.barForeground, 1.5)
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
 
         PanelHero {
           title: root.reading ? root.reading.value + " " + (root.doc ? root.doc.units : "") : "—"
@@ -140,7 +152,11 @@ Panel {
           detail: root.reading
             ? "Δ " + root.reading.delta + " · " + root.reading.age_min + "m ago"
             : root.loadError
-          foreground: root.reading ? root.reading.color : root.barForeground
+          // The bar's own foreground, not the alert colour: the chart now
+          // carries the state in the line itself, and a hero that changes
+          // colour under the reading made the number harder to read than the
+          // colour was worth.
+          foreground: root.barForeground
         }
 
         Chart {

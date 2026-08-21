@@ -22,6 +22,16 @@ Item {
   // the same thing whatever the theme is.
   readonly property color urgentColor: "#cc241d"
   readonly property color warnColor: "#d79921"
+  readonly property color inRangeColor: "#98971a"
+
+  // The colour a reading is drawn in — the same ladder `alert.rs` classifies
+  // by, so a segment of the line means what the pill means.
+  function colorFor(value) {
+    if (!range) return foreground
+    if (value <= range.urgent_low || value >= range.urgent_high) return urgentColor
+    if (value < range.low || value > range.high) return warnColor
+    return inRangeColor
+  }
 
   // Room for the value ticks on the left and the clock on the bottom.
   readonly property int gutterLeft: 34
@@ -148,15 +158,20 @@ Item {
         ctx.fillText(label, tx, height - 2)
       }
 
-      // ---- today
-      ctx.strokeStyle = root.doc && root.doc.now ? root.doc.now.color : root.foreground
+      // ---- today, one segment at a time so the line carries its own state
       ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.moveTo(x(root.series[0][0]), y(root.series[0][1]))
+      ctx.lineCap = "round"
       for (var j = 1; j < root.series.length; j++) {
-        ctx.lineTo(x(root.series[j][0]), y(root.series[j][1]))
+        var from = root.series[j - 1]
+        var to = root.series[j]
+        // The segment takes the colour of where it arrives: a line crossing
+        // into the low band should already look low when it gets there.
+        ctx.strokeStyle = root.colorFor(to[1])
+        ctx.beginPath()
+        ctx.moveTo(x(from[0]), y(from[1]))
+        ctx.lineTo(x(to[0]), y(to[1]))
+        ctx.stroke()
       }
-      ctx.stroke()
     }
   }
 }
