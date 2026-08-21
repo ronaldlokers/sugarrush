@@ -227,18 +227,26 @@ Item {
     y: root.hovered ? Math.round(root.yOf(root.hovered[1])) - height / 2 : 0
     color: root.hovered ? root.colorFor(root.hovered[1]) : "transparent"
     border.width: 1
-    border.color: Qt.rgba(0, 0, 0, 0.5)
+    // The panel's own ground, so the dot reads as lifted off the line rather
+    // than outlined in a colour the theme never asked for.
+    border.color: Color.popups.background
   }
 
+  // Styled from the theme's tooltip tokens — the same ones PanelToolTip uses —
+  // rather than a black box of its own: this is a tooltip in everything but
+  // its trigger, and it should look like the rest of the shell's.
+  // A plain Rectangle rather than the shell's BorderSurface: that lives in
+  // qs.Ui, and this file stays on qs.Commons so the chart keeps working if the
+  // shell moves its widgets around. The colours are the theme's either way.
   Rectangle {
     id: readout
     visible: root.hovered !== null
-    radius: 3
-    color: Qt.rgba(0, 0, 0, 0.72)
-    border.width: 1
-    border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.25)
-    implicitWidth: readoutText.implicitWidth + 10
-    implicitHeight: readoutText.implicitHeight + 6
+    color: Color.tooltip.background
+    border.width: Style.normalBorderWidth
+    border.color: Color.tooltip.border
+    radius: Style.cornerRadius
+    implicitWidth: readoutText.implicitWidth + Style.spacing.controlPaddingX * 2
+    implicitHeight: readoutText.implicitHeight + Style.spacing.controlPaddingY * 2
     width: implicitWidth
     height: implicitHeight
     // Kept inside the plot, and flipped below the point when the reading sits
@@ -255,9 +263,9 @@ Item {
     Text {
       id: readoutText
       anchors.centerIn: parent
-      color: root.foreground
+      color: Color.tooltip.text
       font.family: Style.font.family
-      font.pixelSize: Style.font.caption
+      font.pixelSize: Style.font.bodySmall
       text: root.hovered
         ? root.hovered[1].toFixed(1) + "  " + root.clockAt(root.hovered[0])
         : ""
