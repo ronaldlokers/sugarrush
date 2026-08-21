@@ -9,8 +9,9 @@ All notable changes to sugarrush are documented here. The format is based on
 ### Added
 
 - **sugarrush has a face.** The running sugar cube is now the app icon
-  (`assets/icon.png`), the wordmark opens the README, and the panel header
-  wears the icon.
+  (`assets/icon.png`), the wordmark opens the README and leads the Quickshell
+  panel, and a line-art version of the cube rides in the bar beside the
+  reading.
 - **The Quickshell widget has a popup panel.** Clicking the bar pill opens a
   panel of labelled cards: the reading now, the last hours as a chart — your
   line over a typical day for the same hours, changing colour as it crosses a
@@ -37,6 +38,10 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Changed
 
+- **The Quickshell bar widget no longer pops up a tooltip.** Hovering the
+  reading used to show a second copy of it with a text sparkline; clicking
+  opens a panel with the real chart, so the tooltip was answering a question
+  that already had a better answer.
 - **`--format waybar` also reports the state colour.** The JSON now carries a
   `color` field holding the hex colour of the alert state, from your configured
   theme. Waybar ignores it and keeps styling the module from the CSS class;

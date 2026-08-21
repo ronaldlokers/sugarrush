@@ -40,13 +40,11 @@ Item {
   // show before the first fetch returns, and keeps the last good reading if a
   // later fetch fails — a stale number is readable, an empty slot is not.
   property string label: "—"
+  // Still parsed, and still the one place a fetch failure is described — the
+  // panel reads it. The pill no longer pops it up on hover.
   property string tooltip: "sugarrush: waiting for the first reading"
   property string stateClass: "stale"
   property string stateColor: ""
-
-  // The bar's shared tooltip only shows for a target that says it is hovered,
-  // so this is part of the contract, not a convenience.
-  readonly property bool tooltipHovered: pointer.containsMouse
 
   // A vertical bar is 28px wide — narrower than "6.1 →" renders — so the
   // delta goes and what is left stacks, one line each, the way the clock
@@ -66,7 +64,9 @@ Item {
     return (stateClass === "urgent-low" || stateClass === "urgent-high") ? bar.urgent : bar.foreground
   }
 
-  implicitWidth: compact ? (bar ? bar.barSize : 28) : valueText.implicitWidth + 12
+  implicitWidth: compact
+    ? (bar ? bar.barSize : 28)
+    : mascot.width + valueText.implicitWidth + 14
   implicitHeight: compact
     ? Math.max(bar ? bar.barSize : 26, valueText.implicitHeight + 6)
     : (bar ? bar.barSize : 26)
@@ -166,9 +166,28 @@ Item {
     }
   }
 
+  // The mascot rides in front of the reading. Line art rather than the full
+  // colour icon: at the height a bar allows, the colour version is a blob.
+  Image {
+    id: mascot
+    source: Qt.resolvedUrl("pill.png")
+    height: Math.round((root.bar ? root.bar.barSize : 26) * 0.74)
+    width: height
+    sourceSize.height: height * 3
+    fillMode: Image.PreserveAspectFit
+    smooth: true
+    visible: !root.compact
+    anchors.left: parent.left
+    anchors.leftMargin: 3
+    anchors.verticalCenter: parent.verticalCenter
+  }
+
   Text {
     id: valueText
-    anchors.centerIn: parent
+    anchors.verticalCenter: parent.verticalCenter
+    anchors.horizontalCenter: root.compact ? parent.horizontalCenter : undefined
+    anchors.left: root.compact ? undefined : mascot.right
+    anchors.leftMargin: root.compact ? 0 : 5
     text: root.shownText
     horizontalAlignment: Text.AlignHCenter
     lineHeight: 0.95
@@ -181,11 +200,7 @@ Item {
   MouseArea {
     id: pointer
     anchors.fill: parent
-    hoverEnabled: true
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-
-    onEntered: if (root.bar && root.tooltip !== "") root.bar.showTooltip(root, root.tooltip)
-    onExited: if (root.bar) root.bar.hideTooltip(root)
 
     onClicked: function (mouse) {
       if (!root.bar) return

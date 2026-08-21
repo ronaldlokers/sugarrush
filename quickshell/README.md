@@ -7,14 +7,13 @@ widgets as plugins. Quickshell on its own has no bar to add a widget to — a
 shell has to provide one — so a widget is only as portable as its host.
 
 It shows the reading, trend arrow and delta, coloured by alert state, with the
-full sugarrush tooltip on hover, and opens a panel with the rest of the day:
+sugarrush mascot beside it, and opens a panel with the rest of the day:
 
 | Interaction | What happens |
 |---|---|
 | left click | opens the panel — chart, time in range, patterns |
 | right click | opens the sugarrush TUI in a floating terminal |
 | middle click | fetches now, without waiting for the next poll |
-| hover | tooltip: reading, trend, age, and the last hour as a sparkline |
 
 On a vertical bar the pill stacks the reading over its trend arrow and drops
 the delta, which does not fit 28 pixels.
@@ -56,7 +55,7 @@ need — is paid for only when someone is actually looking.
 
 ```bash
 mkdir -p ~/.config/omarchy/plugins/sugarrush
-cp manifest.json logo.png *.qml ~/.config/omarchy/plugins/sugarrush/
+cp manifest.json *.png *.qml ~/.config/omarchy/plugins/sugarrush/
 omarchy-shell shell rescanPlugins
 omarchy plugin enable sugarrush.glucose
 ```

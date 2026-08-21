@@ -422,7 +422,7 @@ interval=60
 The JSON also carries a `color` — the state colour from your theme — which
 Waybar ignores and a bar with no stylesheet can use. [`quickshell/`](quickshell/)
 is one such bar: a widget for the Omarchy 4 shell that colours itself from that
-field, shows the tooltip on hover, and opens a panel with the last hours as a
+field, carries the sugarrush mascot, and opens a panel with the last hours as a
 chart, the time-in-range bands and the pattern insights.
 
 That panel is fed by `sugarrush snapshot`, which prints the whole picture as one
