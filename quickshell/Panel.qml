@@ -160,10 +160,18 @@ Panel {
             foreground: root.barForeground
             fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
 
+            // The app icon itself. It is a drawn character rather than a
+            // glyph, so it ships as a bitmap beside the QML and is asked for
+            // at twice its drawn size to stay sharp on a scaled display.
             iconComponent: Component {
-              SugarIcon {
-                iconSize: Style.font.display
-                color: hero.foreground
+              Image {
+                source: Qt.resolvedUrl("icon.png")
+                width: Style.font.display
+                height: Style.font.display
+                sourceSize.width: Style.font.display * 2
+                sourceSize.height: Style.font.display * 2
+                smooth: true
+                fillMode: Image.PreserveAspectFit
               }
             }
 

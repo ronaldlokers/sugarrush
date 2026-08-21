@@ -1,4 +1,6 @@
-# sugarrush
+<p align="center">
+  <img src="assets/logo.png" alt="sugarrush" width="520">
+</p>
 
 **Your [Nightscout](https://nightscout.github.io/) CGM data, in the terminal.**
 A fast, keyboard-driven TUI for glanceable blood glucose — live value, history,
