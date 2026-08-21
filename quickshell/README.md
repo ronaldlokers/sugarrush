@@ -29,9 +29,8 @@ omarchy plugin enable sugarrush.glucose
 `omarchy bar move sugarrush.glucose --after omarchy.clock`, and remove it again
 with `omarchy plugin disable sugarrush.glucose`.
 
-The widget calls `sugarrush status --format json`, so it needs `sugarrush` on
-`PATH` and a configured site (`~/.config/sugarrush/config.toml`) — the same
-prerequisites as `sugarrush waybar`.
+The widget calls `sugarrush waybar`, so it needs `sugarrush` on `PATH` and a
+configured site (`~/.config/sugarrush/config.toml`).
 
 ## Options
 
@@ -40,7 +39,7 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | Key | Default | What it does |
 |---|---|---|
 | `interval` | `60` | seconds between fetches |
-| `command` | `sugarrush status --format json` | the command to read a reading from |
+| `command` | `sugarrush waybar` | the command to read a reading from |
 | `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | left click |
 | `onRightClick` | the same, plus `--screen settings` | right click |
 
@@ -59,8 +58,8 @@ Two notes on those:
 
 ## Colours
 
-The widget paints itself from the `color` field of `sugarrush status --format
-json`, which is the state colour from your sugarrush theme — including the
+The widget paints itself from the `color` field of `sugarrush waybar`, which is
+the state colour from your sugarrush theme — including the
 colourblind palette. Nothing to theme here, and no stylesheet to keep in sync,
 unlike the Waybar module's CSS classes.
 

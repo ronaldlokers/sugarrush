@@ -6,9 +6,10 @@
 // this file) and as a `type: "qml"` bar module, and across shell versions
 // that move their internals around.
 //
-// It shells out to `sugarrush status --format json`, which prints the Waybar
-// object plus a `color` key holding the state colour from the user's own
-// sugarrush theme.
+// It shells out to `sugarrush waybar`, which prints the Waybar object plus a
+// `color` key holding the state colour from the user's own sugarrush theme.
+// That alias, rather than `status --format json`, because it is the spelling
+// every released sugarrush understands.
 
 import QtQuick
 import Quickshell.Io
@@ -27,7 +28,7 @@ Item {
   // `type` off the layout entry to decide a slot is a built-in command or QML
   // module, and setting any of them would stop this widget from loading at all.
   readonly property int refreshInterval: (settings && settings.interval > 0 ? settings.interval : 60) * 1000
-  readonly property string command: settings && settings.command ? settings.command : "sugarrush status --format json"
+  readonly property string command: settings && settings.command ? settings.command : "sugarrush waybar"
   readonly property string onClick: settings && settings.onClick !== undefined
     ? settings.onClick
     : "omarchy-launch-floating-terminal-with-presentation sugarrush"
