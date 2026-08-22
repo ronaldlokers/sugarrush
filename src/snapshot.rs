@@ -64,6 +64,8 @@ pub struct Snapshot {
     pub sensor: Option<SensorDoc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forecast: Option<ForecastDoc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overview: Option<OverviewDoc>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -118,6 +120,19 @@ pub struct BandDoc {
     pub days: usize,
     /// `[epoch_ms, p25, p50, p75]`, oldest first, in display units.
     pub points: Vec<(i64, f64, f64, f64)>,
+}
+
+/// The history the band was built from, at a step a panel can scroll across.
+///
+/// It costs nothing extra: those readings were already fetched for the
+/// percentiles and the patterns, and were being thrown away. One point per
+/// quarter hour is finer than a strip a few hundred pixels wide can show, and
+/// a fourteen-day window is about 1300 of them.
+#[derive(Debug, Clone, Serialize)]
+pub struct OverviewDoc {
+    pub step_min: i64,
+    /// `[epoch_ms, value]`, oldest first, in display units.
+    pub points: Vec<(i64, f64)>,
 }
 
 /// Where the reading is heading, from the same AR2 projection the dashboard
@@ -238,6 +253,7 @@ pub fn build(input: BuildInput) -> Snapshot {
     let band = band_for(&history, &series, timezone, units);
     let sensor = sensor_for(sensor_start_ms, sensor_days, now_ms);
     let forecast = forecast_for(&recent, &alerts, units);
+    let overview = overview_for(&history, units);
 
     Snapshot {
         schema: 1,
@@ -257,7 +273,40 @@ pub fn build(input: BuildInput) -> Snapshot {
         band,
         sensor,
         forecast,
+        overview,
     }
+}
+
+/// One point per quarter hour across the history, newest value in each bucket.
+///
+/// The newest rather than the mean: a mean smooths away the peak that made
+/// someone scroll back to look at it in the first place.
+const OVERVIEW_STEP_MIN: i64 = 15;
+
+fn overview_for(history: &[Entry], units: Units) -> Option<OverviewDoc> {
+    if history.is_empty() {
+        return None;
+    }
+    let step = OVERVIEW_STEP_MIN * 60_000;
+    let mut points: Vec<(i64, f64)> = Vec::new();
+    let mut last_bucket = i64::MIN;
+    // History arrives newest first; walking it in reverse keeps the output
+    // oldest first without a sort.
+    for entry in history.iter().rev() {
+        let bucket = entry.date / step * step;
+        if bucket == last_bucket {
+            if let Some(point) = points.last_mut() {
+                point.1 = scaled(units, entry.sgv);
+            }
+            continue;
+        }
+        last_bucket = bucket;
+        points.push((bucket, scaled(units, entry.sgv)));
+    }
+    (!points.is_empty()).then_some(OverviewDoc {
+        step_min: OVERVIEW_STEP_MIN,
+        points,
+    })
 }
 
 /// The end of the AR2 projection, in display units.
@@ -420,6 +469,7 @@ pub fn error_doc(now_ms: i64, message: &str) -> Snapshot {
         band: None,
         sensor: None,
         forecast: None,
+        overview: None,
     }
 }
 
@@ -866,5 +916,51 @@ mod tests {
             serde_json::to_value(build(input(vec![entry(150.0, NOW - MIN, "Flat")], vec![])))
                 .unwrap();
         assert!(json.get("forecast").is_none());
+    }
+
+    #[test]
+    fn the_overview_covers_the_history_at_a_coarser_step() {
+        // Two days of five-minute readings: 576 points fine, 192 at a quarter
+        // of an hour. The panel scrolls across the coarse ones and never pays
+        // for a second fetch.
+        let day = 24 * 3_600_000i64;
+        // Newest first, as Nightscout returns them: the loop counts backwards
+        // from now, so it is already in that order.
+        let history: Vec<Entry> = (0..576)
+            .map(|i| entry(110.0 + (i % 40) as f64, NOW - i * 5 * MIN, "Flat"))
+            .collect();
+        let json =
+            serde_json::to_value(build(input(vec![entry(115.0, NOW - MIN, "Flat")], history)))
+                .unwrap();
+
+        assert_eq!(json["overview"]["step_min"], 15);
+        let points = json["overview"]["points"].as_array().unwrap();
+        assert!(
+            (180..=200).contains(&points.len()),
+            "two days at 15 minutes is about 192 points, got {}",
+            points.len()
+        );
+        // Oldest first, in display units, like every other series here.
+        let first = points[0].as_array().unwrap();
+        let second = points[1].as_array().unwrap();
+        assert!(first[0].as_i64().unwrap() < second[0].as_i64().unwrap());
+        let value = first[1].as_f64().unwrap();
+        assert!((5.0..9.0).contains(&value), "{value} is not mmol/L");
+        // It reaches back further than the chart's own window.
+        let span_h = (points[points.len() - 1].as_array().unwrap()[0]
+            .as_i64()
+            .unwrap()
+            - first[0].as_i64().unwrap())
+            / 3_600_000;
+        assert!(span_h >= 47, "got {span_h}h");
+        let _ = day;
+    }
+
+    #[test]
+    fn no_history_means_no_overview() {
+        let json =
+            serde_json::to_value(build(input(vec![entry(115.0, NOW - MIN, "Flat")], vec![])))
+                .unwrap();
+        assert!(json.get("overview").is_none());
     }
 }

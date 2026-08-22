@@ -42,7 +42,9 @@ not say so invites the wrong reading:
   seeing tonight sit above the band is the point of it. Hovering the chart
   drops a crosshair on the nearest reading and prints its value and time —
   the reading itself, never an interpolation between two of them. Scroll the
-  chart to pan back through the fetched window; the strip underneath is that
+  chart to pan back through the history — days of it, at a quarter-hour step
+  once you pass the finely-drawn window, from readings the snapshot already
+  fetched for the patterns rather than a second request; the strip underneath is that
   whole window with a box showing where you are, and clicking or dragging it
   jumps. Once panned, the card names the hours on screen and returns to live
   when tapped, so a chart showing 3am never claims to be showing now;
@@ -100,7 +102,8 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
 | `onRightClick` | the same, plus `--screen settings` | right click |
 | `panelHours` | `6` | how much of the overview the chart shows at once |
-| `overviewHours` | `24` | how far back the chart can be scrolled, and the span of the strip under it (6-72) |
+| `overviewHours` | `24` | how much history is drawn at full resolution (6-72) |
+| `insightDays` | `14` | also sets how far back the chart scrolls, at a quarter-hour step |
 | `insightDays` | `14` | history behind the patterns and the chart's typical-day band; `0` hides the patterns and skips the query |
 | `panelCacheMinutes` | `5` | how stale the panel's document may be when it opens |
 | `snapshotCommand` | `sugarrush snapshot` | the command the panel reads its document from |

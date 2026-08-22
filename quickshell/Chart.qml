@@ -27,7 +27,12 @@ Item {
   readonly property bool live: viewStartMs < 0
 
   readonly property real viewSpanMs: Math.min(viewHours * 3600000, dataSpanMs)
-  readonly property real dataFirstMs: series.length > 0 ? series[0][0] : 0
+  readonly property real seriesFirstMs: series.length > 0 ? series[0][0] : 0
+  // Panning reaches back as far as the coarse history, not just the window
+  // drawn at full resolution.
+  readonly property real dataFirstMs: overview.length > 0
+    ? Math.min(overview[0][0], seriesFirstMs)
+    : seriesFirstMs
   readonly property real dataLastMs: series.length > 0 ? series[series.length - 1][0] : 1
   readonly property real dataSpanMs: Math.max(1, dataLastMs - dataFirstMs)
 
@@ -52,6 +57,17 @@ Item {
   readonly property var series: doc && doc.series ? doc.series : []
   readonly property var range: doc && doc.range ? doc.range : null
   readonly property var band: doc && doc.band ? doc.band : null
+  // The history the band came from, one point per quarter hour. It is what
+  // makes scrolling past the fetched window possible without a second
+  // request: those readings were fetched for the percentiles anyway.
+  readonly property var overview: doc && doc.overview ? doc.overview.points : []
+
+  // What the chart draws: the fine series while the viewport is inside it,
+  // the coarse history once panned past its start. Fine detail where it can
+  // be seen, reach where it cannot.
+  readonly property var plotted: (overview.length > 1 && windowStart < seriesFirstMs)
+    ? overview
+    : series
 
   // Conventional CGM colours, matching the time-in-range bar: the bands mean
   // the same thing whatever the theme is.
@@ -90,10 +106,10 @@ Item {
     if (!range || series.length === 0) return { lo: 0, hi: 1 }
     var lo = range.urgent_low
     var hi = range.urgent_high
-    for (var i = 0; i < series.length; i++) {
-      if (series[i][0] < windowStart || series[i][0] > windowEnd) continue
-      lo = Math.min(lo, series[i][1])
-      hi = Math.max(hi, series[i][1])
+    for (var i = 0; i < plotted.length; i++) {
+      if (plotted[i][0] < windowStart || plotted[i][0] > windowEnd) continue
+      lo = Math.min(lo, plotted[i][1])
+      hi = Math.max(hi, plotted[i][1])
     }
     if (band) {
       for (var b = 0; b < band.points.length; b++) {
@@ -265,9 +281,10 @@ Item {
       ctx.clip()
       ctx.lineWidth = 2
       ctx.lineCap = "round"
-      for (var j = 1; j < root.series.length; j++) {
-        var from = root.series[j - 1]
-        var to = root.series[j]
+      var line = root.plotted
+      for (var j = 1; j < line.length; j++) {
+        var from = line[j - 1]
+        var to = line[j]
         // The segment takes the colour of where it arrives: a line crossing
         // into the low band should already look low when it gets there.
         ctx.strokeStyle = root.colorFor(to[1])
@@ -290,34 +307,39 @@ Item {
     width: Math.max(1, root.width - root.gutterLeft)
     height: root.minimapHeight
     y: root.plotH + root.gutterBottom + root.minimapGap
-    visible: root.series.length > 1 && root.dataSpanMs > root.viewSpanMs + 60000
+    visible: points.length > 1 && root.dataSpanMs > root.viewSpanMs + 60000
 
     function xOfAll(t) {
       return (t - root.dataFirstMs) / root.dataSpanMs * width
     }
 
+    // The coarse history when there is one: the strip is a map of everywhere
+    // the chart can go, not only of the part drawn at full resolution.
+    readonly property var points: root.overview.length > 1 ? root.overview : root.series
+
     onPaint: {
       var ctx = getContext("2d")
       ctx.reset()
-      if (root.series.length < 2) return
+      if (points.length < 2) return
 
+      var pts = points
       var lo = root.range ? root.range.urgent_low : 0
       var hi = root.range ? root.range.urgent_high : 1
-      for (var i = 0; i < root.series.length; i++) {
-        lo = Math.min(lo, root.series[i][1])
-        hi = Math.max(hi, root.series[i][1])
+      for (var i = 0; i < pts.length; i++) {
+        lo = Math.min(lo, pts[i][1])
+        hi = Math.max(hi, pts[i][1])
       }
       var yOfAll = function (v) { return height - (v - lo) / Math.max(0.1, hi - lo) * height }
 
       // Decimated: at a couple of hundred pixels wide, every fifth reading
       // draws the same shape for a fifth of the work.
-      var stride = Math.max(1, Math.floor(root.series.length / width * 2))
+      var stride = Math.max(1, Math.floor(pts.length / width * 2))
       ctx.strokeStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.5)
       ctx.lineWidth = 1
       ctx.beginPath()
-      ctx.moveTo(xOfAll(root.series[0][0]), yOfAll(root.series[0][1]))
-      for (var j = stride; j < root.series.length; j += stride) {
-        ctx.lineTo(xOfAll(root.series[j][0]), yOfAll(root.series[j][1]))
+      ctx.moveTo(xOfAll(pts[0][0]), yOfAll(pts[0][1]))
+      for (var j = stride; j < pts.length; j += stride) {
+        ctx.lineTo(xOfAll(pts[j][0]), yOfAll(pts[j][1]))
       }
       ctx.stroke()
 

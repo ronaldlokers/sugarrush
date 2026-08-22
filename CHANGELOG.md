@@ -30,6 +30,11 @@ All notable changes to sugarrush are documented here. The format is based on
   repaired is refused instead: crossed thresholds print what is wrong and write
   nothing, because an alarm watching a band nobody chose is worse than an
   error.
+- **The panel scrolls back through days, not hours.** `sugarrush snapshot`
+  now carries an `overview` — the multi-day history it already fetched for the
+  percentiles, at one point per quarter hour — so the chart can be panned
+  across a fortnight without a second request or a wait. Fine detail inside the
+  drawn window, the coarse history beyond it.
 - **The panel's chart scrolls, over an overview strip.** The panel now fetches
   a wider window than it draws — 24 hours by default, `overviewHours` — so the
   chart can be scrolled back through it with the wheel, and the strip beneath
