@@ -555,6 +555,7 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush export [--days N] [--out DIR] [--site NAME\|--all]` | CSV + a clinical summary |
 | `sugarrush status [--format FORMAT]` | one line for a status bar |
 | `sugarrush snapshot [--hours N] [--days N]` | one JSON document: reading, series, stats, insights |
+| `sugarrush config [KEY [VALUE]]` | read or write one setting |
 | `sugarrush waybar` | alias for --format json |
 | `sugarrush about` | version, config and a health check |
 

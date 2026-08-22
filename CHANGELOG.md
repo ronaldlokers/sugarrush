@@ -16,6 +16,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **`sugarrush config` reads and writes settings from the shell.** `sugarrush
+  config` lists them, `sugarrush config alerts.low` prints one, and
+  `sugarrush config alerts.low 4.2` sets it — through the same serializer and
+  atomic owner-only write the settings screen uses. Thresholds are in your
+  display unit, as the file stores them. A value the app would have quietly
+  repaired is refused instead: crossed thresholds print what is wrong and write
+  nothing, because an alarm watching a band nobody chose is worse than an
+  error.
 - **The panel leads with the reading, and says where it is heading.** The
   current value is three times its old size, beside the AR2 projection for
   half an hour out — a 9.6 rising to 10.4 is a different evening from a 9.6

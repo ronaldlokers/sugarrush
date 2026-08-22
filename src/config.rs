@@ -596,7 +596,117 @@ fn is_default_theme(t: &ThemeConfig) -> bool {
         .unwrap_or(false)
 }
 
+fn unknown_key(key: &str) -> String {
+    format!(
+        "unknown setting {key:?}. Known settings: {}",
+        Config::KEYS.join(", ")
+    )
+}
+
 impl Config {
+    /// The keys `sugarrush config` will read and write.
+    ///
+    /// A curated list rather than every serialisable field: these are the ones
+    /// the settings screen edits, so a value set here is one the app already
+    /// knows how to validate and round-trip. Site URLs and tokens are absent
+    /// on purpose — a token belongs in the wizard or the settings screen, not
+    /// in a shell history.
+    pub const KEYS: &[&str] = &[
+        "units",
+        "refresh_secs",
+        "agp_days",
+        "sensor_days",
+        "alerts.urgent_low",
+        "alerts.low",
+        "alerts.high",
+        "alerts.urgent_high",
+        "alerts.stale_minutes",
+        "alerts.snooze_minutes",
+        "alerts.escalate_minutes",
+        "alerts.desktop",
+        "alerts.sound",
+        "alerts.quiet_urgent_low",
+    ];
+
+    /// The value of `key` as it would be written to the file, or `None` for a
+    /// key that has never been set (the default applies).
+    pub fn get_key(&self, key: &str) -> std::result::Result<Option<String>, String> {
+        let a = &self.alerts;
+        let out = match key {
+            "units" => Some(match self.units {
+                Units::Mmol => "mmol".to_string(),
+                Units::Mgdl => "mgdl".to_string(),
+            }),
+            "refresh_secs" => Some(self.refresh_secs.to_string()),
+            "agp_days" => Some(self.agp_days.to_string()),
+            "sensor_days" => Some(self.sensor_days.to_string()),
+            "alerts.urgent_low" => a.urgent_low.map(|v| v.to_string()),
+            "alerts.low" => a.low.map(|v| v.to_string()),
+            "alerts.high" => a.high.map(|v| v.to_string()),
+            "alerts.urgent_high" => a.urgent_high.map(|v| v.to_string()),
+            "alerts.stale_minutes" => a.stale_minutes.map(|v| v.to_string()),
+            "alerts.snooze_minutes" => a.snooze_minutes.map(|v| v.to_string()),
+            "alerts.escalate_minutes" => a.escalate_minutes.map(|v| v.to_string()),
+            "alerts.desktop" => a.desktop.map(|v| v.to_string()),
+            "alerts.sound" => a.sound.map(|v| v.to_string()),
+            "alerts.quiet_urgent_low" => a.quiet_urgent_low.map(|v| v.to_string()),
+            _ => return Err(unknown_key(key)),
+        };
+        Ok(out)
+    }
+
+    /// Set `key` to `value`, or say why not.
+    ///
+    /// Thresholds are in the display unit, exactly as the file stores them, so
+    /// what you type is what the settings screen would show. The caller is
+    /// expected to run [`AlertsConfig::resolve_checked`] afterwards and refuse
+    /// a change that produces a warning: repairing a value someone asked for
+    /// silently is worse than refusing it.
+    pub fn set_key(&mut self, key: &str, value: &str) -> std::result::Result<(), String> {
+        let number = |what: &str| -> std::result::Result<f64, String> {
+            value
+                .parse::<f64>()
+                .map_err(|_| format!("{what} needs a number, got {value:?}"))
+        };
+        let whole = |what: &str| -> std::result::Result<i64, String> {
+            value
+                .parse::<i64>()
+                .map_err(|_| format!("{what} needs a whole number, got {value:?}"))
+        };
+        let flag = |what: &str| -> std::result::Result<bool, String> {
+            match value {
+                "true" | "on" | "yes" => Ok(true),
+                "false" | "off" | "no" => Ok(false),
+                _ => Err(format!("{what} is on or off, got {value:?}")),
+            }
+        };
+
+        match key {
+            "units" => {
+                self.units = match value {
+                    "mmol" | "mmol/L" => Units::Mmol,
+                    "mgdl" | "mg/dL" => Units::Mgdl,
+                    _ => return Err(format!("units is mmol or mgdl, got {value:?}")),
+                }
+            }
+            "refresh_secs" => self.refresh_secs = whole(key)?.clamp(5, 600) as u64,
+            "agp_days" => self.agp_days = whole(key)?.clamp(1, 90) as u32,
+            "sensor_days" => self.sensor_days = whole(key)?.clamp(0, 30) as u32,
+            "alerts.urgent_low" => self.alerts.urgent_low = Some(number(key)?),
+            "alerts.low" => self.alerts.low = Some(number(key)?),
+            "alerts.high" => self.alerts.high = Some(number(key)?),
+            "alerts.urgent_high" => self.alerts.urgent_high = Some(number(key)?),
+            "alerts.stale_minutes" => self.alerts.stale_minutes = Some(whole(key)?.max(1)),
+            "alerts.snooze_minutes" => self.alerts.snooze_minutes = Some(whole(key)?.max(1)),
+            "alerts.escalate_minutes" => self.alerts.escalate_minutes = Some(whole(key)?.max(0)),
+            "alerts.desktop" => self.alerts.desktop = Some(flag(key)?),
+            "alerts.sound" => self.alerts.sound = Some(flag(key)?),
+            "alerts.quiet_urgent_low" => self.alerts.quiet_urgent_low = Some(flag(key)?),
+            _ => return Err(unknown_key(key)),
+        }
+        Ok(())
+    }
+
     pub fn path() -> Result<PathBuf> {
         let dir = dirs::config_dir().context("could not resolve user config dir")?;
         Ok(dir.join("sugarrush").join("config.toml"))
@@ -1087,6 +1197,79 @@ desktop = false
     /// `graph_style`, `agp_days`, `sites` and the whole `[minimap]` table went
     /// unchecked — the gate reported success while covering about half of what
     /// it claimed. Serializing a Config is exhaustive by construction.
+    #[test]
+    fn a_setting_reads_back_as_it_was_written() {
+        let mut cfg = Config::demo();
+        cfg.set_key("alerts.low", "4.2").unwrap();
+        cfg.set_key("sensor_days", "14").unwrap();
+        cfg.set_key("alerts.sound", "off").unwrap();
+
+        assert_eq!(cfg.get_key("alerts.low").unwrap().as_deref(), Some("4.2"));
+        assert_eq!(cfg.get_key("sensor_days").unwrap().as_deref(), Some("14"));
+        assert_eq!(
+            cfg.get_key("alerts.sound").unwrap().as_deref(),
+            Some("false")
+        );
+    }
+
+    #[test]
+    fn a_setting_nobody_has_touched_reads_as_unset() {
+        let cfg = Config::demo();
+        // Unset is not the same as zero: the default applies, and the file
+        // says nothing.
+        assert_eq!(cfg.get_key("alerts.escalate_minutes").unwrap(), None);
+    }
+
+    #[test]
+    fn a_bad_key_or_value_is_refused_with_the_alternatives() {
+        let mut cfg = Config::demo();
+
+        let err = cfg.set_key("alerts.lo", "4.2").unwrap_err();
+        assert!(err.contains("unknown setting"), "got {err}");
+        assert!(
+            err.contains("alerts.low"),
+            "the message lists what is known: {err}"
+        );
+
+        let err = cfg.set_key("alerts.low", "quite low").unwrap_err();
+        assert!(err.contains("needs a number"), "got {err}");
+
+        let err = cfg.set_key("alerts.sound", "loud").unwrap_err();
+        assert!(err.contains("on or off"), "got {err}");
+
+        let err = cfg.set_key("units", "mmol/l/L").unwrap_err();
+        assert!(err.contains("mmol or mgdl"), "got {err}");
+    }
+
+    #[test]
+    fn every_settable_key_round_trips() {
+        // A key that cannot be read back is a key the panel would show blank
+        // after setting it.
+        let mut cfg = Config::demo();
+        for key in Config::KEYS {
+            let value = match *key {
+                "units" => "mmol",
+                k if k.ends_with("desktop")
+                    || k.ends_with("sound")
+                    || k.ends_with("urgent_low") && k.starts_with("alerts.quiet") =>
+                {
+                    "on"
+                }
+                "alerts.urgent_low" => "3.2",
+                "alerts.low" => "4.1",
+                "alerts.high" => "9.9",
+                "alerts.urgent_high" => "14.2",
+                _ => "7",
+            };
+            cfg.set_key(key, value)
+                .unwrap_or_else(|e| panic!("{key} rejected {value}: {e}"));
+            assert!(
+                cfg.get_key(key).unwrap().is_some(),
+                "{key} does not read back"
+            );
+        }
+    }
+
     #[test]
     fn every_persisted_key_is_documented() {
         // A config with every optional field populated, so nothing is skipped
