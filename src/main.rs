@@ -63,6 +63,11 @@ enum Mode {
     Status {
         format: status::Format,
     },
+    /// Read or write one setting in `config.toml`, and exit.
+    Config {
+        key: Option<String>,
+        value: Option<String>,
+    },
     /// Print one JSON document describing the current state, and exit.
     Snapshot {
         hours: u32,
@@ -204,6 +209,16 @@ fn parse_args() -> Mode {
                     eprintln!("sugarrush: --format needs a value");
                     std::process::exit(2)
                 }));
+            }
+            "config" => {
+                // `config`, `config KEY`, `config KEY VALUE` — positional,
+                // because a flag for the thing being named adds nothing.
+                let key = args.get(i + 1).filter(|a| !a.starts_with('-')).cloned();
+                let value = key
+                    .as_ref()
+                    .and_then(|_| args.get(i + 2).filter(|a| !a.starts_with('-')).cloned());
+                i += usize::from(key.is_some()) + usize::from(value.is_some());
+                mode = Some(Mode::Config { key, value })
             }
             "snapshot" => {
                 mode = Some(Mode::Snapshot {
@@ -601,6 +616,7 @@ async fn main() -> Result<()> {
             println!("{}", bar::line(&cfg).await);
             Ok(())
         }
+        Mode::Config { key, value } => run_config(key.as_deref(), value.as_deref()),
         Mode::Snapshot {
             hours,
             days,
@@ -725,6 +741,55 @@ async fn main() -> Result<()> {
 
 /// Headless export: fetch the clinical window and write both files, printing
 /// the paths. Useful in a cron job or right before an appointment.
+/// Read or write one setting.
+///
+/// Writing goes through the same serializer and atomic owner-only write the
+/// settings screen uses, so a value set here is indistinguishable from one
+/// saved in the app — and a config the app would have repaired is refused
+/// instead. Silently correcting a threshold somebody typed is how an alarm
+/// ends up watching a band nobody chose.
+fn run_config(key: Option<&str>, value: Option<&str>) -> Result<()> {
+    let mut cfg = Config::load()?;
+
+    let Some(key) = key else {
+        for key in Config::KEYS {
+            let shown = cfg
+                .get_key(key)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "(default)".into());
+            println!("{key} = {shown}");
+        }
+        return Ok(());
+    };
+
+    let Some(value) = value else {
+        match cfg.get_key(key) {
+            Ok(Some(v)) => println!("{v}"),
+            Ok(None) => println!("(default)"),
+            Err(message) => anyhow::bail!(message),
+        }
+        return Ok(());
+    };
+
+    if let Err(message) = cfg.set_key(key, value) {
+        anyhow::bail!(message);
+    }
+
+    // The same check the app runs on load. It repairs and warns; here a
+    // warning means the value cannot stand as typed, so nothing is written.
+    let (_, warnings) = cfg.alerts.resolve_checked(cfg.units);
+    if let Some(first) = warnings.first() {
+        anyhow::bail!("{first}\nnothing was written");
+    }
+
+    let body = toml::to_string_pretty(&cfg).context("failed to serialize config")?;
+    let path = Config::path()?;
+    Config::write_atomic(&path, &body)?;
+    println!("{key} = {value}");
+    Ok(())
+}
+
 /// The site a snapshot describes: the only one, or the named one. Returns the
 /// message to print rather than an error, because the caller turns it into a
 /// document rather than a failure.
@@ -980,6 +1045,10 @@ const COMMANDS: &[(&str, &str)] = &[
     (
         "sugarrush snapshot [--hours N] [--days N]",
         "one JSON document: reading, series, stats, insights",
+    ),
+    (
+        "sugarrush config [KEY [VALUE]]",
+        "read or write one setting",
     ),
     ("sugarrush waybar", "alias for --format json"),
     ("sugarrush about", "version, config and a health check"),

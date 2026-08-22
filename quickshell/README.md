@@ -41,7 +41,15 @@ not say so invites the wrong reading:
   The line carries the state, changing colour as it crosses a threshold, and
   seeing tonight sit above the band is the point of it. Hovering the chart
   drops a crosshair on the nearest reading and prints its value and time —
-  the reading itself, never an interpolation between two of them;
+  the reading itself, never an interpolation between two of them. Scroll the
+  chart to pan back through `scrollbackHours` of history — at a quarter-hour
+  step once past the finely-drawn window, from readings the snapshot already
+  fetched for the patterns rather than a second request. The default stops at
+  three days because a strip a few hundred pixels wide turns a fortnight into
+  noise with a viewport box too small to grab; the strip underneath is that
+  whole window with a box showing where you are, and clicking or dragging it
+  jumps. Once panned, the card names the hours on screen and returns to live
+  when tapped, so a chart showing 3am never claims to be showing now;
 - **Last 24 hours** — the five time-in-range bands, with mean, GMI and CV;
 - **Patterns · last N days** — the times of day where lows or highs keep
   happening. The card appears only when there is a pattern to name: no
@@ -95,7 +103,9 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | `command` | `sugarrush waybar` | the command the pill reads a reading from |
 | `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
 | `onRightClick` | the same, plus `--screen settings` | right click |
-| `panelHours` | `6` | the panel chart's window |
+| `panelHours` | `6` | how much of the overview the chart shows at once |
+| `overviewHours` | `24` | how much history is drawn at full resolution (6-72) |
+| `scrollbackHours` | `72` | how far the chart pans, and the span of the strip (6-336) |
 | `insightDays` | `14` | history behind the patterns and the chart's typical-day band; `0` hides the patterns and skips the query |
 | `panelCacheMinutes` | `5` | how stale the panel's document may be when it opens |
 | `snapshotCommand` | `sugarrush snapshot` | the command the panel reads its document from |
@@ -122,6 +132,25 @@ unlike the Waybar module's CSS classes.
 
 Against an older sugarrush that doesn't emit `color`, it falls back to the
 bar's own foreground, and to the bar's urgent colour for the two urgent states.
+
+## Settings in the panel
+
+The chips under the wordmark swap the panel between **Glucose** and
+**Settings** — glucose rather than "now", since that view carries six hours of
+chart and fourteen days of patterns as well as the reading, and rather than
+"dashboard", which is what this panel's own button opens.
+The settings view edits two different things, and says so by grouping them:
+
+- **Alarm thresholds** and **Alarm** write `~/.config/sugarrush/config.toml`
+  through `sugarrush config`, the same serializer and atomic write the
+  dashboard's settings screen uses. A value the app would have quietly
+  repaired — crossed thresholds, mostly — is refused, and the refusal appears
+  under the rows rather than in a log.
+- **This panel** writes the widget's own options in the bar's config through
+  `omarchy bar set`.
+
+Everything else — sites, tokens, quiet hours, themes — stays in the dashboard.
+A panel that dismisses when focus moves is the wrong place to type a token.
 
 ## Omarchy menu entries
 

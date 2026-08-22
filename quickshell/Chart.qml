@@ -18,9 +18,81 @@ Item {
   property var doc: null
   property color foreground: Color.foreground
 
+  // How much of the fetched window the chart shows at once. The rest is
+  // reachable by panning, and visible in the minimap underneath.
+  property int viewHours: 6
+  // Left edge of the viewport. -1 means "follow the newest reading", which is
+  // where it returns whenever panning reaches the right-hand end.
+  property real viewStartMs: -1
+  readonly property bool live: viewStartMs < 0
+
+  readonly property real viewSpanMs: Math.min(viewHours * 3600000, dataSpanMs)
+  readonly property real seriesFirstMs: series.length > 0 ? series[0][0] : 0
+  // Panning reaches back as far as the coarse history, not just the window
+  // drawn at full resolution.
+  readonly property real dataFirstMs: overview.length > 0
+    ? Math.min(overview[0][0], seriesFirstMs)
+    : seriesFirstMs
+  readonly property real dataLastMs: series.length > 0 ? series[series.length - 1][0] : 1
+  readonly property real dataSpanMs: Math.max(1, dataLastMs - dataFirstMs)
+
+  function clampStart(ms) {
+    return Math.max(dataFirstMs, Math.min(ms, dataLastMs - viewSpanMs))
+  }
+
+  // Panning to the right-hand end goes back to following: a chart parked one
+  // reading behind live, with no way to tell, is worse than one that scrolls.
+  function panBy(deltaMs) {
+    var from = live ? dataLastMs - viewSpanMs : viewStartMs
+    var next = clampStart(from + deltaMs)
+    viewStartMs = (next >= dataLastMs - viewSpanMs - 1000) ? -1 : next
+  }
+
+  function follow() { viewStartMs = -1 }
+
+  // One notch moves a twelfth of the window — half an hour on a six-hour
+  // chart. A quarter of the window per notch flew past whatever you were
+  // trying to look at. Fractional deltas come from touchpads, and scale the
+  // same way rather than being rounded up to a whole notch.
+  function panByWheel(angleDeltaY) {
+    var notches = angleDeltaY / 120
+    panBy(-notches * viewSpanMs / 12)
+  }
+
+  // What the chart is actually showing, which is not always what was fetched.
+  readonly property real windowStart: live ? dataLastMs - viewSpanMs : viewStartMs
+  readonly property real windowEnd: windowStart + viewSpanMs
+
   readonly property var series: doc && doc.series ? doc.series : []
   readonly property var range: doc && doc.range ? doc.range : null
   readonly property var band: doc && doc.band ? doc.band : null
+  // How far back panning may reach. The document usually carries more — the
+  // patterns want a fortnight — but a strip a few hundred pixels wide turns
+  // that into noise with a viewport box too small to grab.
+  property int scrollbackHours: 72
+
+  readonly property var allOverview: doc && doc.overview ? doc.overview.points : []
+
+  // The history the band came from, one point per quarter hour, trimmed to
+  // the scrollback. It is what makes panning past the fetched window possible
+  // without a second request: those readings were fetched anyway.
+  readonly property var overview: {
+    if (allOverview.length === 0) return []
+    var cutoff = allOverview[allOverview.length - 1][0] - scrollbackHours * 3600000
+    if (allOverview[0][0] >= cutoff) return allOverview
+    var out = []
+    for (var i = 0; i < allOverview.length; i++) {
+      if (allOverview[i][0] >= cutoff) out.push(allOverview[i])
+    }
+    return out
+  }
+
+  // What the chart draws: the fine series while the viewport is inside it,
+  // the coarse history once panned past its start. Fine detail where it can
+  // be seen, reach where it cannot.
+  readonly property var plotted: (overview.length > 1 && windowStart < seriesFirstMs)
+    ? overview
+    : series
 
   // Conventional CGM colours, matching the time-in-range bar: the bands mean
   // the same thing whatever the theme is.
@@ -40,13 +112,16 @@ Item {
   // Room for the value ticks on the left and the clock on the bottom.
   readonly property int gutterLeft: 34
   readonly property int gutterBottom: 14
+  // The overview strip, and the gap between it and the clock labels.
+  readonly property int minimapHeight: 26
+  readonly property int minimapGap: 6
 
   readonly property real plotX: gutterLeft
   readonly property real plotW: Math.max(1, width - gutterLeft)
-  readonly property real plotH: Math.max(1, height - gutterBottom)
+  readonly property real plotH: Math.max(1, height - gutterBottom - minimapHeight - minimapGap)
 
-  readonly property real firstAt: series.length > 0 ? series[0][0] : 0
-  readonly property real lastAt: series.length > 0 ? series[series.length - 1][0] : 1
+  readonly property real firstAt: windowStart
+  readonly property real lastAt: windowEnd
   readonly property real span: Math.max(1, lastAt - firstAt)
 
   // The scale always covers the alert bounds, so the thresholds are on screen
@@ -56,12 +131,14 @@ Item {
     if (!range || series.length === 0) return { lo: 0, hi: 1 }
     var lo = range.urgent_low
     var hi = range.urgent_high
-    for (var i = 0; i < series.length; i++) {
-      lo = Math.min(lo, series[i][1])
-      hi = Math.max(hi, series[i][1])
+    for (var i = 0; i < plotted.length; i++) {
+      if (plotted[i][0] < windowStart || plotted[i][0] > windowEnd) continue
+      lo = Math.min(lo, plotted[i][1])
+      hi = Math.max(hi, plotted[i][1])
     }
     if (band) {
       for (var b = 0; b < band.points.length; b++) {
+        if (band.points[b][0] < windowStart || band.points[b][0] > windowEnd) continue
         lo = Math.min(lo, band.points[b][1])
         hi = Math.max(hi, band.points[b][3])
       }
@@ -95,14 +172,33 @@ Item {
     return best
   }
 
+  // "22:00 – 04:00", for a card label that has to say where the chart is.
+  readonly property string windowLabel: clockAt(windowStart) + " – " + clockAt(windowEnd)
+
   function clockAt(ms) {
     var when = new Date(ms)
     return ("0" + when.getHours()).slice(-2) + ":" + ("0" + when.getMinutes()).slice(-2)
   }
 
-  onDocChanged: canvas.requestPaint()
-  onWidthChanged: canvas.requestPaint()
-  onHeightChanged: canvas.requestPaint()
+  // Both canvases, every time. The overview used to repaint only by luck of
+  // timing, and a pan repainted nothing at all: these handlers called a
+  // repaint() that was never defined, so every scroll threw a ReferenceError
+  // and the chart only caught up when the panel was rebuilt.
+  function repaint() {
+    canvas.requestPaint()
+    minimap.requestPaint()
+  }
+
+  onDocChanged: repaint()
+  onViewStartMsChanged: repaint()
+  onViewHoursChanged: repaint()
+  onScrollbackHoursChanged: {
+    // A shorter scrollback can leave the viewport outside the data.
+    if (!live) viewStartMs = clampStart(viewStartMs)
+    repaint()
+  }
+  onWidthChanged: repaint()
+  onHeightChanged: repaint()
 
   Text {
     anchors.centerIn: parent
@@ -128,6 +224,14 @@ Item {
       var dim = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.55)
       ctx.font = "10px " + Style.font.family
 
+      // Everything that follows the data is clipped to the plot: the series
+      // holds readings either side of the viewport now, and their segments
+      // ran left across the value labels.
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(plotX, 0, width - plotX, plotH)
+      ctx.clip()
+
       // ---- the typical day, behind everything else
       if (root.band && root.band.points.length > 1) {
         var pts = root.band.points
@@ -148,6 +252,8 @@ Item {
         ctx.stroke()
         ctx.setLineDash([])
       }
+
+      ctx.restore()
 
       // ---- thresholds: scale marks, in the foreground colour
       //
@@ -193,15 +299,22 @@ Item {
         ctx.moveTo(tx, 0)
         ctx.lineTo(tx, plotH)
         ctx.stroke()
-        ctx.fillText(root.clockAt(tick), tx, height - 2)
+        // Under the plot, not at the bottom of the canvas: the canvas now
+        // also covers the overview strip, and the clock was landing on it.
+        ctx.fillText(root.clockAt(tick), tx, plotH + 11)
       }
 
       // ---- today, one segment at a time so the line carries its own state
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(plotX, 0, width - plotX, plotH)
+      ctx.clip()
       ctx.lineWidth = 2
       ctx.lineCap = "round"
-      for (var j = 1; j < root.series.length; j++) {
-        var from = root.series[j - 1]
-        var to = root.series[j]
+      var line = root.plotted
+      for (var j = 1; j < line.length; j++) {
+        var from = line[j - 1]
+        var to = line[j]
         // The segment takes the colour of where it arrives: a line crossing
         // into the low band should already look low when it gets there.
         ctx.strokeStyle = root.colorFor(to[1])
@@ -210,7 +323,82 @@ Item {
         ctx.lineTo(root.xOf(to[0]), root.yOf(to[1]))
         ctx.stroke()
       }
+      ctx.restore()
     }
+  }
+
+  // ---- the overview: everything fetched, drawn small, with a box showing
+  // which slice the chart above is displaying. Clicking or dragging it moves
+  // the viewport, which is the only way to reach a reading that has scrolled
+  // off without keyboard focus.
+  Canvas {
+    id: minimap
+    x: root.gutterLeft
+    width: Math.max(1, root.width - root.gutterLeft)
+    height: root.minimapHeight
+    y: root.plotH + root.gutterBottom + root.minimapGap
+    visible: points.length > 1 && root.dataSpanMs > root.viewSpanMs + 60000
+
+    function xOfAll(t) {
+      return (t - root.dataFirstMs) / root.dataSpanMs * width
+    }
+
+    // The coarse history when there is one: the strip is a map of everywhere
+    // the chart can go, not only of the part drawn at full resolution.
+    readonly property var points: root.overview.length > 1 ? root.overview : root.series
+
+    onPaint: {
+      var ctx = getContext("2d")
+      ctx.reset()
+      if (points.length < 2) return
+
+      var pts = points
+      var lo = root.range ? root.range.urgent_low : 0
+      var hi = root.range ? root.range.urgent_high : 1
+      for (var i = 0; i < pts.length; i++) {
+        lo = Math.min(lo, pts[i][1])
+        hi = Math.max(hi, pts[i][1])
+      }
+      var yOfAll = function (v) { return height - (v - lo) / Math.max(0.1, hi - lo) * height }
+
+      // Decimated: at a couple of hundred pixels wide, every fifth reading
+      // draws the same shape for a fifth of the work.
+      var stride = Math.max(1, Math.floor(pts.length / width * 2))
+      ctx.strokeStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.5)
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(xOfAll(pts[0][0]), yOfAll(pts[0][1]))
+      for (var j = stride; j < pts.length; j += stride) {
+        ctx.lineTo(xOfAll(pts[j][0]), yOfAll(pts[j][1]))
+      }
+      ctx.stroke()
+
+      var vx = xOfAll(root.windowStart)
+      var vw = Math.max(6, xOfAll(root.windowEnd) - vx)
+      ctx.fillStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.14)
+      ctx.fillRect(vx, 0, vw, height)
+      ctx.strokeStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.5)
+      ctx.strokeRect(vx + 0.5, 0.5, vw - 1, height - 1)
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      onPressed: function (mouse) { root.jumpToX(mouse.x, parent.width) }
+      onPositionChanged: function (mouse) {
+        if (pressed) root.jumpToX(mouse.x, parent.width)
+      }
+      onWheel: function (wheel) {
+        root.panByWheel(wheel.angleDelta.y)
+        wheel.accepted = true
+      }
+    }
+  }
+
+  // Centre the viewport on the point of the overview that was clicked.
+  function jumpToX(px, w) {
+    var at = dataFirstMs + (px / Math.max(1, w)) * dataSpanMs
+    var next = clampStart(at - viewSpanMs / 2)
+    viewStartMs = (next >= dataLastMs - viewSpanMs - 1000) ? -1 : next
   }
 
   // ---- hover: a crosshair on the reading under the pointer
@@ -293,5 +481,17 @@ Item {
       root.hoverIndex = root.nearestIndex(mouse.x + root.gutterLeft)
     }
     onExited: root.hoverIndex = -1
+
+    // Wheel is handled here, and accepted, because the panel scrolls: the
+    // Flickable around these cards is interactive whenever the content
+    // overflows, and it takes the wheel before a child WheelHandler ever sees
+    // it. Accepting stops the card stack scrolling under the pointer.
+    //
+    // A quarter of the window per notch: enough to move, small enough to land
+    // where you meant to.
+    onWheel: function (wheel) {
+      root.panByWheel(wheel.angleDelta.y)
+      wheel.accepted = true
+    }
   }
 }

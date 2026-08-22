@@ -16,6 +16,33 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The Quickshell panel has a settings view.** Chips under the wordmark swap
+  between Glucose and Settings: alarm thresholds, audible alarm and sensor
+  life write `config.toml` through `sugarrush config`, while the panel's own
+  chart window and pattern history write the bar's config. A refused value —
+  crossed thresholds — says so under the rows. Sites, tokens, quiet hours and
+  themes stay in the dashboard.
+- **`sugarrush config` reads and writes settings from the shell.** `sugarrush
+  config` lists them, `sugarrush config alerts.low` prints one, and
+  `sugarrush config alerts.low 4.2` sets it — through the same serializer and
+  atomic owner-only write the settings screen uses. Thresholds are in your
+  display unit, as the file stores them. A value the app would have quietly
+  repaired is refused instead: crossed thresholds print what is wrong and write
+  nothing, because an alarm watching a band nobody chose is worse than an
+  error.
+- **The panel scrolls back through days, not hours.** `sugarrush snapshot`
+  now carries an `overview` — the multi-day history it already fetched for the
+  percentiles, at one point per quarter hour — so the chart can be panned
+  across a fortnight without a second request or a wait. Fine detail inside the
+  drawn window, the coarse history beyond it. `scrollbackHours` caps how far
+  that goes — three days by default, since a fortnight in a strip a few hundred
+  pixels wide is noise.
+- **The panel's chart scrolls, over an overview strip.** The panel now fetches
+  a wider window than it draws — 24 hours by default, `overviewHours` — so the
+  chart can be scrolled back through it with the wheel, and the strip beneath
+  shows the whole span with a box marking the part on screen. Click or drag the
+  strip to jump. While panned, the card names the hours it is showing and
+  returns to live when tapped.
 - **The panel leads with the reading, and says where it is heading.** The
   current value is three times its old size, beside the AR2 projection for
   half an hour out — a 9.6 rising to 10.4 is a different evening from a 9.6
