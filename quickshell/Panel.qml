@@ -290,68 +290,77 @@ Panel {
 
           Item {
             width: parent.width
-            implicitHeight: heroRow.implicitHeight
+            implicitHeight: nowValue.implicitHeight + nowCaption.implicitHeight
 
-            Row {
-              id: heroRow
+            // Baseline-anchored rather than stacked in a Row: the two numbers
+            // are different sizes, and boxes aligned at the top leave their
+            // digits sitting at different heights.
+            Text {
+              id: nowValue
               anchors.left: parent.left
-              spacing: Style.space(10)
+              anchors.top: parent.top
+              color: root.reading ? root.classColor(root.reading.class) : root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              // A quarter taller than the projection beside it: both are
+              // readings, but only one of them happened.
+              font.pixelSize: Math.round(Style.font.displayLarge * 1.25)
+              font.bold: true
+              text: root.reading ? root.reading.value : "—"
+            }
 
-              Column {
-                spacing: 0
+            Text {
+              id: heroArrow
+              visible: root.forecast !== null
+              anchors.left: nowValue.right
+              // Clear the caption as well as the number: "mmol/L · falling" is
+              // wider than "9.1", and anchoring to the number alone ran the
+              // two captions into each other.
+              anchors.leftMargin: Style.space(12)
+                + Math.max(0, nowCaption.implicitWidth - nowValue.implicitWidth)
+              anchors.baseline: nowValue.baseline
+              color: Qt.darker(root.barForeground, 1.6)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.title
+              text: "→"
+            }
 
-                Text {
-                  color: root.reading ? root.classColor(root.reading.class) : root.barForeground
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  // A quarter taller than the projection beside it: both are
-                  // readings, but only one of them happened.
-                  font.pixelSize: Math.round(Style.font.displayLarge * 1.25)
-                  font.bold: true
-                  text: root.reading ? root.reading.value : "—"
-                }
+            // Only drawn when there is a forecast: a sensor gap makes the
+            // projection a fabrication, and predict refuses it rather than
+            // guessing. An arrow to nothing would imply one anyway.
+            Text {
+              id: nextValue
+              visible: root.forecast !== null
+              anchors.left: heroArrow.right
+              anchors.leftMargin: Style.space(12)
+              anchors.baseline: nowValue.baseline
+              color: root.forecast ? root.classColor(root.forecast.class) : root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.displayLarge
+              opacity: 0.62
+              text: root.forecast ? root.forecast.value.toFixed(1) : ""
+            }
 
-                Text {
-                  color: Qt.darker(root.barForeground, 1.35)
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.caption
-                  text: root.reading
-                    ? (root.doc ? root.doc.units : "") + " · " + root.reading.arrow + " "
-                      + root.trendWords(root.reading.direction)
-                    : ""
-                }
-              }
+            Text {
+              id: nowCaption
+              anchors.left: nowValue.left
+              anchors.top: nowValue.bottom
+              color: Qt.darker(root.barForeground, 1.35)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.reading
+                ? (root.doc ? root.doc.units : "") + " · " + root.reading.arrow + " "
+                  + root.trendWords(root.reading.direction)
+                : ""
+            }
 
-              // Only drawn when there is a forecast: a sensor gap makes the
-              // projection a fabrication, and predict refuses it rather than
-              // guessing. An arrow to nothing would imply one anyway.
-              Text {
-                visible: root.forecast !== null
-                anchors.verticalCenter: parent.verticalCenter
-                color: Qt.darker(root.barForeground, 1.6)
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.title
-                text: "→"
-              }
-
-              Column {
-                visible: root.forecast !== null
-                spacing: 0
-
-                Text {
-                  color: root.forecast ? root.classColor(root.forecast.class) : root.barForeground
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.displayLarge
-                  opacity: 0.62
-                  text: root.forecast ? root.forecast.value.toFixed(1) : ""
-                }
-
-                Text {
-                  color: Qt.darker(root.barForeground, 1.35)
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.caption
-                  text: root.forecast ? "in " + root.forecast.in_min + " min" : ""
-                }
-              }
+            Text {
+              visible: root.forecast !== null
+              anchors.left: nextValue.left
+              anchors.baseline: nowCaption.baseline
+              color: Qt.darker(root.barForeground, 1.35)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.forecast ? "in " + root.forecast.in_min + " min" : ""
             }
 
             Rectangle {
