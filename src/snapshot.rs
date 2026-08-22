@@ -63,7 +63,7 @@ pub struct Snapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sensor: Option<SensorDoc>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub forecast: Option<ForecastDoc>,
+    pub forecast: Option<crate::predict::Outlook>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overview: Option<OverviewDoc>,
 }
@@ -133,18 +133,6 @@ pub struct OverviewDoc {
     pub step_min: i64,
     /// `[epoch_ms, value]`, oldest first, in display units.
     pub points: Vec<(i64, f64)>,
-}
-
-/// Where the reading is heading, from the same AR2 projection the dashboard
-/// draws. The midpoint of the furthest step, not the whole cone: a panel has
-/// room for one number, and "10.4 in 30 min" is the part that changes what
-/// someone does next.
-#[derive(Debug, Clone, Serialize)]
-pub struct ForecastDoc {
-    pub in_min: i64,
-    pub value: f64,
-    /// The band that value lands in, so it can be coloured like the reading.
-    pub class: &'static str,
 }
 
 /// How long the sensor has been running, and — when its expected life is
@@ -252,7 +240,11 @@ pub fn build(input: BuildInput) -> Snapshot {
 
     let band = band_for(&history, &series, timezone, units);
     let sensor = sensor_for(sensor_start_ms, sensor_days, now_ms);
-    let forecast = forecast_for(&recent, &alerts, units);
+    // `predict::outlook` returns nothing when the two newest readings are not
+    // a normal CGM step apart — a sensor gap extrapolated as if it were five
+    // minutes is how a benign drift once became a "heading low" — so an absent
+    // forecast here is a deliberate silence, not a failure.
+    let forecast = crate::predict::outlook(&recent, &alerts, units);
     let overview = overview_for(&history, units);
 
     Snapshot {
@@ -306,23 +298,6 @@ fn overview_for(history: &[Entry], units: Units) -> Option<OverviewDoc> {
     (!points.is_empty()).then_some(OverviewDoc {
         step_min: OVERVIEW_STEP_MIN,
         points,
-    })
-}
-
-/// The end of the AR2 projection, in display units.
-///
-/// `predict::ar2` returns nothing when the two newest readings are not a
-/// normal CGM step apart — a sensor gap extrapolated as if it were five
-/// minutes is how a benign drift once became a "heading low" — so an absent
-/// forecast here is a deliberate silence, not a failure.
-fn forecast_for(recent: &[Entry], alerts: &Alerts, units: Units) -> Option<ForecastDoc> {
-    let steps = crate::predict::ar2(recent);
-    let last = steps.last()?;
-    let midpoint = (last.low + last.high) / 2.0;
-    Some(ForecastDoc {
-        in_min: crate::predict::HORIZON_MINUTES,
-        value: scaled(units, midpoint),
-        class: crate::alert::from_value(midpoint, alerts).class(),
     })
 }
 

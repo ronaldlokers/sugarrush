@@ -13,6 +13,8 @@ use anyhow::Result;
 use ratatui::style::Color;
 use serde_json::json;
 
+use crate::units::Units;
+
 use crate::alert::{self, Alert};
 use crate::config::Config;
 use crate::nightscout::{Client, Entry};
@@ -72,6 +74,58 @@ pub struct Status {
     /// Position between the urgent bounds, 0–100.
     pub percentage: u8,
     pub color: Color,
+    /// The last hour as `(epoch_ms, display_value)`, oldest first, so a bar
+    /// can draw the shape of it rather than only the number.
+    pub series: Vec<(i64, f64)>,
+    /// Where the reading is heading, when predictive alerts are switched on.
+    pub forecast: Option<crate::predict::Outlook>,
+    /// Set when the forecast — not the reading — is what the colour is saying.
+    predicted: Option<Alert>,
+}
+
+impl Status {
+    /// The CSS-style class a bar styles from. A predicted crossing is named as
+    /// one, never as the state itself: the reading has not crossed anything,
+    /// and a bar that cannot tell them apart would cry wolf.
+    pub fn class(&self) -> String {
+        match self.predicted {
+            Some(a) => format!("predicted-{}", a.class()),
+            None => self.state.class().to_string(),
+        }
+    }
+
+    /// The tooltip line a predicted crossing earns, if any. A bar that shows
+    /// only a colour change would say something is wrong without saying what.
+    pub fn forecast_line(&self) -> Option<String> {
+        let ahead = self.predicted?;
+        let forecast = self.forecast.as_ref()?;
+        Some(format!(
+            "{} in {} min · {}",
+            forecast.value,
+            forecast.in_min,
+            ahead.label()
+        ))
+    }
+
+    /// Let a forecast colour a reading that is still in range.
+    ///
+    /// Only from in-range outwards: an alarm that is already sounding must
+    /// never be repainted by a projection that says it is about to stop, and a
+    /// projection is not evidence that anything has happened yet.
+    pub fn apply_forecast(&mut self, theme: &crate::theme::Theme) {
+        if self.state != Alert::InRange {
+            return;
+        }
+        let Some(forecast) = &self.forecast else {
+            return;
+        };
+        let ahead = forecast.alert;
+        if ahead == Alert::InRange {
+            return;
+        }
+        self.color = ahead.color(theme);
+        self.predicted = Some(ahead);
+    }
 }
 
 impl Status {
@@ -117,7 +171,7 @@ impl Status {
             Format::Json => json!({
                 "text": self.text(),
                 "tooltip": self.tooltip,
-                "class": self.state.class(),
+                "class": self.class(),
                 "percentage": self.percentage,
                 "color": hex,
                 // The parts as well as the line, so a bar can compose its own
@@ -127,6 +181,10 @@ impl Status {
                 "units": self.units,
                 "arrow": self.arrow,
                 "delta": self.delta,
+                // The shape of the last hour, and where it is heading: a bar
+                // that draws a sparkline should not have to fetch twice.
+                "series": self.series,
+                "forecast": self.forecast,
             })
             .to_string(),
             // i3blocks reads three lines: full text, short text, colour.
@@ -154,6 +212,9 @@ pub async fn status(cfg: &Config) -> Status {
             tooltip: format!("sugarrush: {e}"),
             percentage: 0,
             color: cfg.theme.resolve().urgent,
+            series: Vec::new(),
+            forecast: None,
+            predicted: None,
         },
     }
 }
@@ -181,6 +242,9 @@ async fn build(cfg: &Config) -> Result<Status> {
             tooltip: "sugarrush: no recent readings".into(),
             percentage: 0,
             color: theme.urgent,
+            series: Vec::new(),
+            forecast: None,
+            predicted: None,
         });
     };
 
@@ -206,7 +270,20 @@ async fn build(cfg: &Config) -> Result<Status> {
     let span = (alerts.urgent_high - alerts.urgent_low).max(1.0);
     let percentage = (((latest.sgv - alerts.urgent_low) / span * 100.0).clamp(0.0, 100.0)) as u8;
 
-    Ok(Status {
+    // Oldest first, in display units: a bar draws it left to right, and every
+    // other number in this document is already in the unit someone reads in.
+    let series = entries
+        .iter()
+        .rev()
+        .map(|e: &Entry| (e.date, scaled(units, e.sgv)))
+        .collect();
+    // Gated on the same switch as the predictive notification: someone who
+    // turned forecasts off should not have one colouring their bar.
+    let forecast = (alerts.predict_horizon_minutes > 0)
+        .then(|| crate::predict::outlook(&entries, &alerts, units))
+        .flatten();
+
+    let mut status = Status {
         value: units.format(latest.sgv),
         units: units.label(),
         arrow: latest.arrow().to_string(),
@@ -215,7 +292,24 @@ async fn build(cfg: &Config) -> Result<Status> {
         tooltip,
         percentage,
         color: state.color(&theme),
-    })
+        series,
+        forecast,
+        predicted: None,
+    };
+    status.apply_forecast(&theme);
+    if let Some(line) = status.forecast_line() {
+        status.tooltip = format!("{}\n{line}", status.tooltip);
+    }
+    Ok(status)
+}
+
+/// A reading in display units, rounded the way that unit is written.
+fn scaled(units: Units, mgdl: f64) -> f64 {
+    let value = units.from_mgdl(mgdl);
+    match units {
+        Units::Mmol => (value * 10.0).round() / 10.0,
+        Units::Mgdl => value.round(),
+    }
 }
 
 /// An 8-level block sparkline over the values (min→max normalized).
@@ -251,7 +345,64 @@ mod tests {
             tooltip: "tip".into(),
             percentage: 42,
             color: Color::Rgb(0x12, 0x34, 0x56),
+            series: Vec::new(),
+            forecast: None,
+            predicted: None,
         }
+    }
+
+    #[test]
+    fn the_json_carries_the_shape_of_the_last_hour() {
+        let mut s = status();
+        s.series = vec![(1_000, 5.0), (1_300, 5.6)];
+        let json: serde_json::Value = serde_json::from_str(&s.render(Format::Json)).unwrap();
+        assert_eq!(json["series"][0][0], 1_000);
+        assert_eq!(json["series"][0][1], 5.0);
+        assert_eq!(json["series"][1][1], 5.6);
+    }
+
+    #[test]
+    fn a_forecast_crossing_colours_a_reading_that_is_still_in_range() {
+        let theme = Theme::default();
+        let mut s = status();
+        s.forecast = Some(crate::predict::Outlook {
+            in_min: 30,
+            value: 3.4,
+            class: "urgent-low",
+            alert: Alert::UrgentLow,
+        });
+        s.apply_forecast(&theme);
+        // The reading has not crossed anything, so the value and the state are
+        // untouched — but the pill says a low is coming.
+        assert_eq!(s.value, "5.6");
+        assert_eq!(s.state, Alert::InRange);
+        assert_eq!(s.class(), "predicted-urgent-low");
+        assert_eq!(s.color, Alert::UrgentLow.color(&theme));
+        // And it says so in words, not only in colour.
+        assert_eq!(
+            s.forecast_line().as_deref(),
+            Some("3.4 in 30 min · URGENT LOW")
+        );
+    }
+
+    #[test]
+    fn a_forecast_never_talks_over_an_alarm_that_is_already_sounding() {
+        let theme = Theme::default();
+        let mut s = status();
+        s.state = Alert::UrgentLow;
+        s.color = Alert::UrgentLow.color(&theme);
+        // A rebound after a correction: the projection lands high while the
+        // reading is still urgently low. What is happening beats what might.
+        s.forecast = Some(crate::predict::Outlook {
+            in_min: 30,
+            value: 11.2,
+            class: "high",
+            alert: Alert::High,
+        });
+        s.apply_forecast(&theme);
+        assert_eq!(s.class(), "urgent-low");
+        assert_eq!(s.color, Alert::UrgentLow.color(&theme));
+        assert_eq!(s.forecast_line(), None, "nothing to add to the tooltip");
     }
 
     #[test]

@@ -16,6 +16,20 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The bar pill draws the last hour.** A trace after the reading, in the same
+  state colour, with the newest point marked — so the number says where the
+  glucose is and the shape says what it has been doing. Turn it off with
+  `omarchy bar set sugarrush.glucose showSparkline false`.
+
+- **The bar reacts to where the reading is heading, not only where it is.**
+  When the 30-minute projection crosses a threshold that the reading has not,
+  the pill takes the colour of what is coming and the tooltip says so
+  ("6.2 in 30 min · LOW"). The class is `predicted-low` rather than `low`, and
+  the trace ends in a hollow marker, so a projection is never mistaken for
+  something that has happened. It follows the existing
+  `predict_horizon_minutes` setting, and never repaints an alarm that is
+  already sounding.
+
 - **Click an alert notification to snooze it.** On Omarchy the toast now
   carries the snooze command, so answering a 3am alarm no longer means finding
   a terminal. It snoozes for the configured length and targets only the site

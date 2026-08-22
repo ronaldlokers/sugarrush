@@ -62,6 +62,9 @@ can understand and revisit the arrangement as their independence changes.
   while it is up
 - In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows),
   switchable to **content-free** so nothing readable lands on a lock screen
+- Bar output for Waybar, polybar, tmux, i3blocks and Quickshell, including the
+  last hour as a **sparkline** and a pill that changes colour for a **predicted**
+  crossing, not only a current one
 - On **Omarchy**, urgent alerts also take the shell's **on-screen display**,
   which sits above fullscreen windows and is not suppressed by Do Not Disturb,
   and the notification is **clickable to snooze** the site that alarmed
@@ -426,7 +429,9 @@ has, so existing configs need no edit. Example Waybar assets in
 ≥ 0.11.0), per-state CSS, and Hyprland float rules.
 
 The JSON also carries the reading in parts — `value`, `units`, `arrow`,
-`delta` — and a `color` from your theme, all of which Waybar ignores. They are
+`delta` — a `series` of the last hour as `[epoch_ms, value]` pairs, the
+30-minute `forecast`, and a `color` from your theme, all of which Waybar
+ignores. They are
 there so a bar can compose its own line (putting the unit after the value, say)
 and colour it without a stylesheet. [`quickshell/`](quickshell/)
 is one such bar: a widget for the Omarchy 4 shell that colours itself from that
