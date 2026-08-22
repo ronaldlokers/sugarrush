@@ -73,6 +73,13 @@ Panel {
   readonly property var sensor: doc && doc.sensor ? doc.sensor : null
   readonly property var forecast: doc && doc.forecast ? doc.forecast : null
 
+  // The reading against its projection, as a ratio of the shell's display
+  // type so both follow a theme's font scale. 1.8 lands on 50px at the
+  // default scale; the projection is exactly half — a note beside the
+  // reading, not a second headline.
+  readonly property int readingPx: Math.round(Style.font.displayLarge * 1.8)
+  readonly property int forecastPx: Math.round(readingPx / 2)
+
   // The same ladder the chart and the pill use, so a number means the same
   // thing wherever it appears.
   function classColor(klass) {
@@ -461,11 +468,7 @@ Panel {
               anchors.top: parent.top
               color: root.reading ? root.classColor(root.reading.class) : root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              // 50 against the projection's 25. Fixed rather than derived
-              // from the type scale: this is the number the panel exists to
-              // show, and it should not shrink because a theme picked smaller
-              // display type.
-              font.pixelSize: 50
+              font.pixelSize: root.readingPx
               font.bold: true
               text: root.reading ? root.reading.value : "—"
             }
@@ -497,8 +500,7 @@ Panel {
               anchors.baseline: nowValue.baseline
               color: root.forecast ? root.classColor(root.forecast.class) : root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              // Half the reading: a note beside it, not a second headline.
-              font.pixelSize: 25
+              font.pixelSize: root.forecastPx
               opacity: 0.62
               text: root.forecast ? root.forecast.value.toFixed(1) : ""
             }
