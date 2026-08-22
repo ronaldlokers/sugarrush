@@ -33,8 +33,8 @@ not say so invites the wrong reading:
 
 - **Now** — the reading, its trend in words, and how long ago it arrived;
 - **Last N hours** — the chart: your reading over a typical day for the same
-  hours, the median dashed and the 25–75% band shaded, each alert threshold in
-  its own colour and labelled on the value axis, the clock along the bottom.
+  hours, the median dashed and the 25–75% band shaded, each alert threshold
+  ruled and labelled on the value axis, the clock along the bottom.
   The line carries the state, changing colour as it crosses a threshold, and
   seeing tonight sit above the band is the point of it. Hovering the chart
   drops a crosshair on the nearest reading and prints its value and time —

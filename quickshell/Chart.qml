@@ -149,25 +149,32 @@ Item {
         ctx.setLineDash([])
       }
 
-      // ---- thresholds, each labelled by its own value on the axis
+      // ---- thresholds: scale marks, in the foreground colour
+      //
+      // Not coloured by severity. The line already turns amber or red where it
+      // crosses one, and a red rule drawn across a chart the reading never
+      // reached read as an alarm rather than as the axis it is. The urgent
+      // bounds are drawn fainter than low/high so the target band still reads
+      // as the one that matters.
       var levels = [
-        { value: root.range.urgent_high, color: root.urgentColor },
-        { value: root.range.high, color: root.warnColor },
-        { value: root.range.low, color: root.warnColor },
-        { value: root.range.urgent_low, color: root.urgentColor }
+        { value: root.range.urgent_high, alpha: 0.3 },
+        { value: root.range.high, alpha: 0.55 },
+        { value: root.range.low, alpha: 0.55 },
+        { value: root.range.urgent_low, alpha: 0.3 }
       ]
       ctx.lineWidth = 1
       for (var l = 0; l < levels.length; l++) {
         var ly = root.yOf(levels[l].value)
         if (ly < 0 || ly > plotH) continue
-        var lc = Qt.color(levels[l].color)
-        ctx.strokeStyle = Qt.rgba(lc.r, lc.g, lc.b, 0.55)
+        ctx.strokeStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b,
+                                  levels[l].alpha)
         ctx.beginPath()
         ctx.moveTo(plotX, ly)
         ctx.lineTo(width, ly)
         ctx.stroke()
 
-        ctx.fillStyle = levels[l].color
+        ctx.fillStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b,
+                                Math.min(1, levels[l].alpha + 0.25))
         ctx.textAlign = "right"
         // One decimal on every tick: "10" beside "13.9" and "4.8" reads as a
         // coarser measurement than its neighbours rather than the same scale.
