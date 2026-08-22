@@ -16,7 +16,6 @@ use serde_json::json;
 use crate::alert::{self, Alert};
 use crate::config::Config;
 use crate::nightscout::{Client, Entry};
-use crate::theme::Theme;
 
 const HOUR_MS: i64 = 3_600_000;
 const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
@@ -24,8 +23,10 @@ const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 /// Output syntax for a status bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
-    /// Waybar custom module: one JSON object.
-    Waybar,
+    /// One JSON object, in the shape Waybar's custom modules read. Every bar
+    /// that takes JSON reads the same document, which is why the format is
+    /// named for the syntax rather than for Waybar.
+    Json,
     /// i3blocks: full text, short text, colour — one per line.
     I3blocks,
     /// polybar: inline `%{F#rrggbb}` colour tags.
@@ -41,7 +42,10 @@ impl Format {
     /// caller can say which formats exist rather than silently picking one.
     pub fn parse(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
-            "waybar" | "json" => Some(Format::Waybar),
+            // `waybar` came first and is in every config that predates the
+            // rename, so it keeps working; `bar` reads better next to the
+            // other bar-shaped names.
+            "json" | "waybar" | "bar" => Some(Format::Json),
             "i3blocks" => Some(Format::I3blocks),
             "polybar" => Some(Format::Polybar),
             "tmux" => Some(Format::Tmux),
@@ -50,7 +54,7 @@ impl Format {
         }
     }
 
-    pub const NAMES: &'static str = "text, waybar (json), i3blocks, polybar, tmux";
+    pub const NAMES: &'static str = "text, json (waybar, bar), i3blocks, polybar, tmux";
 }
 
 /// Everything a status bar might want, resolved once.
@@ -58,6 +62,9 @@ impl Format {
 pub struct Status {
     /// The reading, in display units — or `—` when there's nothing to show.
     pub value: String,
+    /// The display unit the value is in — the one fact that tells a bar what
+    /// kind of measurement it is showing.
+    pub units: &'static str,
     pub arrow: String,
     pub delta: String,
     pub state: Alert,
@@ -101,18 +108,25 @@ impl Status {
 
     /// Render for a bar.
     pub fn render(&self, format: Format) -> String {
-        let hex = hex(self.color);
+        let hex = crate::theme::hex(self.color);
         match format {
             // `color` is not part of Waybar's schema — Waybar ignores it, and
             // it styles the module from the class via CSS. It is here for bars
             // that have no stylesheet to write, notably the Quickshell widget,
             // so they can follow the configured sugarrush theme.
-            Format::Waybar => json!({
+            Format::Json => json!({
                 "text": self.text(),
                 "tooltip": self.tooltip,
                 "class": self.state.class(),
                 "percentage": self.percentage,
                 "color": hex,
+                // The parts as well as the line, so a bar can compose its own
+                // — the Quickshell widget puts the unit after the value —
+                // without parsing `text` back apart.
+                "value": self.value,
+                "units": self.units,
+                "arrow": self.arrow,
+                "delta": self.delta,
             })
             .to_string(),
             // i3blocks reads three lines: full text, short text, colour.
@@ -133,6 +147,7 @@ pub async fn status(cfg: &Config) -> Status {
         Ok(s) => s,
         Err(e) => Status {
             value: "—".into(),
+            units: cfg.units.label(),
             arrow: String::new(),
             delta: String::new(),
             state: Alert::Stale,
@@ -159,6 +174,7 @@ async fn build(cfg: &Config) -> Result<Status> {
     let Some(latest) = entries.first() else {
         return Ok(Status {
             value: "—".into(),
+            units: units.label(),
             arrow: String::new(),
             delta: String::new(),
             state: Alert::Stale,
@@ -192,46 +208,14 @@ async fn build(cfg: &Config) -> Result<Status> {
 
     Ok(Status {
         value: units.format(latest.sgv),
+        units: units.label(),
         arrow: latest.arrow().to_string(),
         delta,
         state,
         tooltip,
         percentage,
-        color: color_for(state, &theme),
+        color: state.color(&theme),
     })
-}
-
-/// The configured colour for an alert state. One definition, in `alert.rs`.
-fn color_for(state: Alert, theme: &Theme) -> Color {
-    state.color(theme)
-}
-
-/// A `#rrggbb` string for a colour. Bars want hex, and the terminal's own
-/// palette isn't available to them — so named colours map to their conventional
-/// values rather than to whatever the terminal would have drawn.
-fn hex(color: Color) -> String {
-    let (r, g, b) = match color {
-        Color::Rgb(r, g, b) => (r, g, b),
-        Color::Black => (0, 0, 0),
-        Color::Red => (0xcc, 0x24, 0x1d),
-        Color::Green => (0x98, 0x97, 0x1a),
-        Color::Yellow => (0xd7, 0x99, 0x21),
-        Color::Blue => (0x45, 0x85, 0x88),
-        Color::Magenta => (0xb1, 0x62, 0x86),
-        Color::Cyan => (0x68, 0x9d, 0x6a),
-        Color::Gray | Color::DarkGray => (0x92, 0x83, 0x74),
-        Color::LightRed => (0xfb, 0x49, 0x34),
-        Color::LightGreen => (0xb8, 0xbb, 0x26),
-        Color::LightYellow => (0xfa, 0xbd, 0x2f),
-        Color::LightBlue => (0x83, 0xa5, 0x98),
-        Color::LightMagenta => (0xd3, 0x86, 0x9b),
-        Color::LightCyan => (0x8e, 0xc0, 0x7c),
-        Color::White => (0xff, 0xff, 0xff),
-        // Indexed and Reset carry no colour we can name; white reads on every
-        // bar background, which a guess might not.
-        _ => (0xff, 0xff, 0xff),
-    };
-    format!("#{r:02x}{g:02x}{b:02x}")
 }
 
 /// An 8-level block sparkline over the values (min→max normalized).
@@ -255,10 +239,12 @@ fn sparkline(values: &[f64]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::Theme;
 
     fn status() -> Status {
         Status {
             value: "5.6".into(),
+            units: "mmol/L",
             arrow: "→".into(),
             delta: "+0.2".into(),
             state: Alert::InRange,
@@ -270,8 +256,12 @@ mod tests {
 
     #[test]
     fn format_names_are_forgiving_but_not_guessy() {
-        assert_eq!(Format::parse("waybar"), Some(Format::Waybar));
-        assert_eq!(Format::parse("JSON"), Some(Format::Waybar));
+        // `json` is the name; `waybar` is what every config written before
+        // the rename says, and must keep working.
+        assert_eq!(Format::parse("json"), Some(Format::Json));
+        assert_eq!(Format::parse("waybar"), Some(Format::Json));
+        assert_eq!(Format::parse("bar"), Some(Format::Json));
+        assert_eq!(Format::parse("JSON"), Some(Format::Json));
         assert_eq!(Format::parse("Tmux"), Some(Format::Tmux));
         assert_eq!(Format::parse("plain"), Some(Format::Text));
         // An unknown name is rejected rather than silently defaulted.
@@ -291,8 +281,7 @@ mod tests {
 
     #[test]
     fn waybar_output_is_json_with_the_state_class() {
-        let json: serde_json::Value =
-            serde_json::from_str(&status().render(Format::Waybar)).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&status().render(Format::Json)).unwrap();
         assert_eq!(json["text"], "5.6 → +0.2");
         assert_eq!(json["class"], "in-range");
         assert_eq!(json["percentage"], 42);
@@ -300,26 +289,23 @@ mod tests {
         // Waybar ignores the extra key; a QML bar widget uses it to follow the
         // configured sugarrush theme instead of hard-coding its own palette.
         assert_eq!(json["color"], "#123456");
-    }
-
-    #[test]
-    fn named_colours_become_hex_for_bars() {
-        assert_eq!(hex(Color::Rgb(0, 0x80, 0xff)), "#0080ff");
-        assert_eq!(hex(Color::Red), "#cc241d");
-        // A colour with no nameable value falls back to something readable
-        // rather than a guess.
-        assert_eq!(hex(Color::Reset), "#ffffff");
+        // The parts, so a bar can compose its own line — putting the unit
+        // after the value, say — instead of parsing `text` back apart.
+        assert_eq!(json["value"], "5.6");
+        assert_eq!(json["units"], "mmol/L");
+        assert_eq!(json["arrow"], "→");
+        assert_eq!(json["delta"], "+0.2");
     }
 
     #[test]
     fn urgent_states_use_the_urgent_colour() {
         let theme = Theme::default();
         for state in [Alert::UrgentLow, Alert::UrgentHigh, Alert::Stale] {
-            assert_eq!(color_for(state, &theme), theme.urgent);
+            assert_eq!(state.color(&theme), theme.urgent);
         }
-        assert_eq!(color_for(Alert::InRange, &theme), theme.in_range);
-        assert_eq!(color_for(Alert::High, &theme), theme.high);
-        assert_eq!(color_for(Alert::Low, &theme), theme.low);
+        assert_eq!(Alert::InRange.color(&theme), theme.in_range);
+        assert_eq!(Alert::High.color(&theme), theme.high);
+        assert_eq!(Alert::Low.color(&theme), theme.low);
     }
 
     #[test]

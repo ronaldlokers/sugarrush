@@ -1,4 +1,6 @@
-# sugarrush
+<p align="center">
+  <img src="assets/logo.png" alt="sugarrush" width="520">
+</p>
 
 **Your [Nightscout](https://nightscout.github.io/) CGM data, in the terminal.**
 A fast, keyboard-driven TUI for glanceable blood glucose — live value, history,
@@ -87,7 +89,8 @@ can understand and revisit the arrangement as their independence changes.
   person's IANA timezone so AGP patterns and clinical exports describe their
   day rather than the viewer's clock
 - **Status-bar output** for Waybar, Quickshell, tmux, polybar, i3blocks, or
-  anything that takes plain text (see [Status bars](#status-bars))
+  anything that takes plain text — with a Quickshell panel carrying the chart,
+  time in range and patterns (see [Status bars](#status-bars))
 - Optionally, **logging carbs and insulin** back to Nightscout — off by default,
   behind a separate token and an explicit confirmation
   (see [Writing treatments](#writing-treatments))
@@ -385,7 +388,7 @@ sugarrush status                      # 5.6 → +0.2
 sugarrush status --format tmux        # #[fg=#98971a]5.6 → +0.2#[default]
 sugarrush status --format polybar     # %{F#98971a}5.6 → +0.2%{F-}
 sugarrush status --format i3blocks    # full text / short text / colour
-sugarrush status --format waybar      # {"text":…,"tooltip":…,"class":…,"color":…}
+sugarrush status --format json        # {"text":…,"value":…,"units":…,"class":…}
 ```
 
 Colours follow your configured theme, so the colourblind-safe palette carries
@@ -411,16 +414,34 @@ command=sugarrush status --format i3blocks
 interval=60
 ```
 
-`sugarrush waybar` still prints the same JSON it always has (it's
-`--format waybar` under the hood). Example Waybar assets in
+The format is named `json` because every bar that takes JSON reads the same
+document — Waybar, Quickshell, anything else. `waybar` and `bar` are accepted
+spellings of it, and `sugarrush waybar` still prints exactly what it always
+has, so existing configs need no edit. Example Waybar assets in
 [`waybar/`](waybar/): the custom module, a Graph/Settings/About menu (Waybar
 ≥ 0.11.0), per-state CSS, and Hyprland float rules.
 
-The JSON also carries a `color` — the state colour from your theme — which
-Waybar ignores and a bar with no stylesheet can use. [`quickshell/`](quickshell/)
+The JSON also carries the reading in parts — `value`, `units`, `arrow`,
+`delta` — and a `color` from your theme, all of which Waybar ignores. They are
+there so a bar can compose its own line (putting the unit after the value, say)
+and colour it without a stylesheet. [`quickshell/`](quickshell/)
 is one such bar: a widget for the Omarchy 4 shell that colours itself from that
-field, shows the tooltip on hover, and opens the TUI or its settings screen on
-click.
+field, carries the sugarrush mascot, and opens a panel with the last hours as a
+chart, the time-in-range bands and the pattern insights.
+
+That panel is fed by `sugarrush snapshot`, which prints the whole picture as one
+JSON document — current reading, a series for a chart, stats and patterns, all
+in your display units:
+
+```bash
+sugarrush snapshot --hours 6 --days 14   # everything
+sugarrush snapshot --hours 3 --days 0    # chart only, no history query
+sugarrush snapshot --demo                # synthetic, no site needed
+```
+
+It always prints valid JSON and exits 0 — a failure comes back as
+`{"schema":1,…,"error":"no site configured"}` — so whatever consumes it always
+has something to render.
 
 ## Always-on alarm
 
@@ -533,7 +554,8 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush health --json [--strict-delivery]` | machine-readable watcher, data and delivery health |
 | `sugarrush export [--days N] [--out DIR] [--site NAME\|--all]` | CSV + a clinical summary |
 | `sugarrush status [--format FORMAT]` | one line for a status bar |
-| `sugarrush waybar` | alias for --format waybar |
+| `sugarrush snapshot [--hours N] [--days N]` | one JSON document: reading, series, stats, insights |
+| `sugarrush waybar` | alias for --format json |
 | `sugarrush about` | version, config and a health check |
 
 `sugarrush --help` prints the same list, `sugarrush --man` writes a man page:

@@ -2,6 +2,7 @@ mod agp;
 mod alert;
 mod alertlog;
 mod app;
+mod bar;
 mod bigfont;
 mod config;
 mod demo;
@@ -13,6 +14,7 @@ mod nightscout;
 mod predict;
 mod selftest;
 mod service;
+mod snapshot;
 mod sound;
 mod stats;
 mod status;
@@ -22,7 +24,6 @@ mod ui;
 mod units;
 mod view;
 mod watch;
-mod waybar;
 mod wizard;
 
 use std::io::{self, IsTerminal, Stdout};
@@ -61,6 +62,15 @@ enum Mode {
     /// Print one status-bar line in the given format and exit.
     Status {
         format: status::Format,
+    },
+    /// Print one JSON document describing the current state, and exit.
+    Snapshot {
+        hours: u32,
+        days: u32,
+        site: Option<String>,
+        /// Synthetic data, so the document renders with no config and no
+        /// network — the same escape hatch the dashboard has.
+        demo: bool,
     },
     /// Print version/about info (and a desktop notification) and exit.
     About,
@@ -166,6 +176,8 @@ fn parse_args() -> Mode {
     let mut mode: Option<Mode> = None;
     let mut export_days: Option<u32> = None;
     let mut status_format: Option<String> = None;
+    let mut snapshot_hours: Option<u32> = None;
+    let mut snapshot_days: Option<u32> = None;
     let mut export_dir: Option<String> = None;
     let mut snooze_site: Option<String> = None;
     let mut snooze_all = false;
@@ -192,6 +204,22 @@ fn parse_args() -> Mode {
                     eprintln!("sugarrush: --format needs a value");
                     std::process::exit(2)
                 }));
+            }
+            "snapshot" => {
+                mode = Some(Mode::Snapshot {
+                    hours: 6,
+                    days: 14,
+                    site: None,
+                    demo: false,
+                })
+            }
+            "--hours" => {
+                i += 1;
+                snapshot_hours = args.get(i).and_then(|v| v.parse::<u32>().ok());
+                if snapshot_hours.is_none() {
+                    eprintln!("sugarrush: --hours needs a whole number of hours");
+                    std::process::exit(2);
+                }
             }
             "about" => mode = Some(Mode::About),
             "export" => {
@@ -342,6 +370,14 @@ fn parse_args() -> Mode {
             "--man" => mode = Some(Mode::Man),
             "help" | "--help" | "-h" => mode = Some(Mode::Help),
             "--version" | "-V" => mode = Some(Mode::Version),
+            "--days" if matches!(mode, Some(Mode::Snapshot { .. })) => {
+                i += 1;
+                snapshot_days = args.get(i).and_then(|v| v.parse::<u32>().ok());
+                if snapshot_days.is_none() {
+                    eprintln!("sugarrush: --days needs a whole number of days");
+                    std::process::exit(2);
+                }
+            }
             "--days" => {
                 i += 1;
                 export_days = Some(
@@ -405,6 +441,10 @@ fn parse_args() -> Mode {
         "--days",
     );
     reject_flag(
+        snapshot_hours.is_some() && !matches!(mode, Some(Mode::Snapshot { .. })),
+        "--hours",
+    );
+    reject_flag(
         status_format.is_some()
             && !matches!(
                 mode,
@@ -427,6 +467,7 @@ fn parse_args() -> Mode {
                         | Mode::Treatments { .. }
                         | Mode::Cache { .. }
                         | Mode::Export { .. }
+                        | Mode::Snapshot { .. }
                 )
             ),
         "--site",
@@ -475,6 +516,12 @@ fn parse_args() -> Mode {
                     })
                 })
                 .unwrap_or(alertlog::Format::Text),
+        },
+        Some(Mode::Snapshot { .. }) => Mode::Snapshot {
+            hours: snapshot_hours.unwrap_or(6).clamp(1, 72),
+            days: snapshot_days.unwrap_or(14).clamp(0, 90),
+            site: snooze_site,
+            demo,
         },
         Some(Mode::Status { .. }) => Mode::Status {
             format: status_format
@@ -551,7 +598,67 @@ async fn main() -> Result<()> {
             // human running it by hand without corrupting the bar's input.
             let sites = cfg.resolve_sites()?;
             warn_about_config(&sites[0].resolve_alerts(&cfg.alerts, cfg.units).1);
-            println!("{}", waybar::line(&cfg).await);
+            println!("{}", bar::line(&cfg).await);
+            Ok(())
+        }
+        Mode::Snapshot {
+            hours,
+            days,
+            demo: true,
+            ..
+        } => {
+            // A demo run must work with no config file at all, so the three
+            // settings fall back to their own defaults rather than to a
+            // Config that cannot be constructed without one.
+            let (units, alerts, theme) = match Config::load() {
+                Ok(cfg) => (
+                    cfg.units,
+                    cfg.alerts.resolve_checked(cfg.units).0,
+                    cfg.theme.resolve(),
+                ),
+                Err(_) => (
+                    units::Units::Mmol,
+                    config::Alerts::default(),
+                    theme::Theme::default(),
+                ),
+            };
+            println!(
+                "{}",
+                serde_json::to_string(&snapshot::demo(
+                    units,
+                    alerts,
+                    theme,
+                    hours,
+                    days,
+                    chrono::Utc::now().timestamp_millis(),
+                ))?
+            );
+            Ok(())
+        }
+        Mode::Snapshot {
+            hours, days, site, ..
+        } => {
+            let cfg = Config::load()?;
+            let sites = cfg.resolve_sites()?;
+            let chosen = match snapshot_site(&sites, site.as_deref()) {
+                Ok(site) => site,
+                Err(message) => {
+                    // A panel can render a message; it cannot render a
+                    // non-zero exit with nothing on stdout.
+                    println!(
+                        "{}",
+                        serde_json::to_string(&snapshot::error_doc(
+                            chrono::Utc::now().timestamp_millis(),
+                            &message,
+                        ))?
+                    );
+                    return Ok(());
+                }
+            };
+            println!(
+                "{}",
+                serde_json::to_string(&snapshot::fetch(&cfg, chosen, hours, days).await)?
+            );
             Ok(())
         }
         Mode::Status { format } => {
@@ -618,6 +725,24 @@ async fn main() -> Result<()> {
 
 /// Headless export: fetch the clinical window and write both files, printing
 /// the paths. Useful in a cron job or right before an appointment.
+/// The site a snapshot describes: the only one, or the named one. Returns the
+/// message to print rather than an error, because the caller turns it into a
+/// document rather than a failure.
+fn snapshot_site<'a>(
+    sites: &'a [config::Site],
+    selected: Option<&str>,
+) -> Result<&'a config::Site, String> {
+    match selected {
+        Some(name) => sites
+            .iter()
+            .find(|site| site.name == name)
+            .ok_or_else(|| format!("no site named '{name}'")),
+        None => sites
+            .first()
+            .ok_or_else(|| "no site configured".to_string()),
+    }
+}
+
 async fn run_export(
     days: u32,
     dir: Option<String>,
@@ -852,7 +977,11 @@ const COMMANDS: &[(&str, &str)] = &[
         "sugarrush status [--format FORMAT]",
         "one line for a status bar",
     ),
-    ("sugarrush waybar", "alias for --format waybar"),
+    (
+        "sugarrush snapshot [--hours N] [--days N]",
+        "one JSON document: reading, series, stats, insights",
+    ),
+    ("sugarrush waybar", "alias for --format json"),
     ("sugarrush about", "version, config and a health check"),
 ];
 
@@ -860,7 +989,7 @@ const COMMANDS: &[(&str, &str)] = &[
 const OPTIONS: &[(&str, &str)] = &[
     (
         "--demo",
-        "synthetic data, no config and no network (dashboard only)",
+        "synthetic data, no config and no network (dashboard and snapshot)",
     ),
     ("--screen settings", "open straight to the settings screen"),
     (
@@ -872,6 +1001,11 @@ const OPTIONS: &[(&str, &str)] = &[
         "where to write exports (default: the current directory)",
     ),
     ("--format FORMAT", "status-bar syntax"),
+    ("--hours N", "snapshot chart window (default 6)"),
+    (
+        "--days N",
+        "snapshot history for patterns (default 14, 0 = none)",
+    ),
     ("--test", "run the alarm self-test"),
     ("--quiet", "with --test: check without making a noise"),
     ("--site NAME", "target one site for snooze or alert history"),
@@ -2449,6 +2583,16 @@ mod tests {
         ] {
             assert_eq!(parse_snooze(input), expected, "for {input:?}");
         }
+    }
+
+    #[test]
+    fn snapshot_is_documented_in_help() {
+        let row = COMMANDS
+            .iter()
+            .find(|(usage, _)| usage.starts_with("sugarrush snapshot"))
+            .expect("snapshot has a help row");
+        assert_eq!(row.0, "sugarrush snapshot [--hours N] [--days N]");
+        assert!(row.1.contains("JSON"));
     }
 
     /// `--help`, the man page and the README table are three places one

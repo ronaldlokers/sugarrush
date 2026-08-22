@@ -29,6 +29,13 @@ Item {
   // module, and setting any of them would stop this widget from loading at all.
   readonly property int refreshInterval: (settings && settings.interval > 0 ? settings.interval : 60) * 1000
   readonly property string command: settings && settings.command ? settings.command : "sugarrush waybar"
+  // A number on a bar says nothing about what was measured; the unit is the
+  // one word that does, since nothing else on a desktop is reported in
+  // mmol/L. Off for anyone whose bar is already full.
+  readonly property bool showUnits: settings && settings.showUnits !== undefined
+    ? settings.showUnits !== false
+    : true
+  readonly property bool showMascot: settings && settings.showMascot === true
   readonly property string onClick: settings && settings.onClick !== undefined
     ? settings.onClick
     : "omarchy-launch-floating-terminal-with-presentation sugarrush"
@@ -40,20 +47,36 @@ Item {
   // show before the first fetch returns, and keeps the last good reading if a
   // later fetch fails — a stale number is readable, an empty slot is not.
   property string label: "—"
+  property string value: ""
+  property string units: ""
+  property string arrow: ""
+  property string delta: ""
+  // Still parsed, and still the one place a fetch failure is described — the
+  // panel reads it. The pill no longer pops it up on hover.
   property string tooltip: "sugarrush: waiting for the first reading"
   property string stateClass: "stale"
   property string stateColor: ""
 
-  // The bar's shared tooltip only shows for a target that says it is hovered,
-  // so this is part of the contract, not a convenience.
-  readonly property bool tooltipHovered: pointer.containsMouse
-
-  // A vertical bar is 28px wide, so drop the delta and keep value and trend.
+  // A vertical bar is 28px wide — narrower than "6.1 →" renders — so the
+  // delta goes and what is left stacks, one line each, the way the clock
+  // stacks its hours over its minutes.
   readonly property bool compact: bar ? bar.vertical === true : false
+  // Composed from the parts rather than by editing `text`, so the unit lands
+  // after the value without parsing a rendered line back apart. Falls back to
+  // `text` against a sugarrush too old to send the parts.
   readonly property string shownText: {
-    if (!compact) return label
-    var parts = label.split(" ")
-    return parts.length > 2 ? parts.slice(0, parts.length - 1).join(" ") : label
+    if (compact) {
+      var parts = label.split(" ")
+      return parts.length > 2 ? parts.slice(0, parts.length - 1).join("\n") : label
+    }
+    if (!showUnits || value === "" || units === "") return label
+    var line = value + " " + units
+    if (arrow !== "") line += " " + arrow
+    if (delta !== "") line += " " + delta
+    // The marker `text` carries for an out-of-range state ("!! ") is part of
+    // the reading, not decoration, so it stays.
+    var marker = label.indexOf("!") === 0 ? label.split(" ")[0] + " " : ""
+    return marker + line
   }
 
   readonly property color foreground: {
@@ -64,8 +87,12 @@ Item {
     return (stateClass === "urgent-low" || stateClass === "urgent-high") ? bar.urgent : bar.foreground
   }
 
-  implicitWidth: compact ? (bar ? bar.barSize : 28) : valueText.implicitWidth + 12
-  implicitHeight: bar ? bar.barSize : 26
+  implicitWidth: compact
+    ? (bar ? bar.barSize : 28)
+    : (root.showMascot ? mascot.width + 8 : 0) + valueText.implicitWidth + 12
+  implicitHeight: compact
+    ? Math.max(bar ? bar.barSize : 26, valueText.implicitHeight + 6)
+    : (bar ? bar.barSize : 26)
 
   // Any run still in flight is dropped first: a fetch that outlives its poll
   // interval has nothing to say that the next one won't. The restart is
@@ -91,6 +118,10 @@ Item {
       return
     }
     root.label = payload.text || "—"
+    root.value = payload.value || ""
+    root.units = payload.units || ""
+    root.arrow = payload.arrow || ""
+    root.delta = payload.delta || ""
     root.tooltip = payload.tooltip || ""
     root.stateClass = payload["class"] || "stale"
     root.stateColor = payload.color || ""
@@ -122,10 +153,79 @@ Item {
     onTriggered: root.refresh()
   }
 
+  // The panel is loaded by path, and its failure is survivable: every
+  // Omarchy-internal import lives in Panel.qml, so a shell that moves them
+  // costs the popup while the pill goes on working.
+  readonly property bool panelReady: panelLoader.status === Loader.Ready && panelLoader.item !== null
+  readonly property bool opened: panelReady ? panelLoader.item.opened === true : false
+  readonly property bool popoutSwitchClosing: panelReady ? panelLoader.item.popoutSwitchClosing === true : false
+
+  function injectPanel() {
+    if (!panelReady) return
+    var target = panelLoader.item
+    // `bar` is typed QtObject on the panel, and the widget's own `bar` is
+    // undefined until the slot injects it — assigning that undefined is an
+    // error, not a no-op.
+    if ("bar" in target && root.bar) target.bar = root.bar
+    if ("settings" in target && root.settings) target.settings = root.settings
+    if ("anchorItem" in target) target.anchorItem = root
+    if ("hostWidget" in target) target.hostWidget = root
+  }
+
+  function open() { if (panelReady) panelLoader.item.open() }
+  function close() { if (panelReady) panelLoader.item.close() }
+  function closeForPopoutSwitch() { if (panelReady) panelLoader.item.closeForPopoutSwitch() }
+
+  onBarChanged: injectPanel()
+  onSettingsChanged: injectPanel()
+
+  Loader {
+    id: panelLoader
+    active: true
+    source: Qt.resolvedUrl("Panel.qml")
+    visible: false
+    onLoaded: {
+      root.injectPanel()
+      Qt.callLater(root.injectPanel)
+    }
+    onStatusChanged: if (status === Loader.Error) {
+      console.warn("sugarrush: panel failed to load; the pill still works")
+    }
+  }
+
+  // The mascot rides in front of the reading — a silhouette, because detail
+  // is what a bar-height icon cannot keep. Vector rather than bitmap: it is
+  // asked for at whatever height the bar happens to be, and rasterises at
+  // exactly that size instead of being resampled from a fixed one.
+  Image {
+    id: mascot
+    source: Qt.resolvedUrl("mascot.svg")
+    // Sized off the reading's own type rather than the bar's height: the
+    // shell draws its glyph icons at Style.font.icon (14px against 12px
+    // text), and a mascot scaled to the slot instead of the type stood a
+    // third taller than every icon beside it.
+    height: Math.round(valueText.font.pixelSize * 7 / 6)
+    // The artwork is wider than it is tall; squaring it would letterbox the
+    // shape into a smaller drawing than the space allows.
+    width: Math.round(height * 1051 / 908)
+    sourceSize.height: height * 2
+    fillMode: Image.PreserveAspectFit
+    smooth: true
+    visible: !root.compact && root.showMascot
+    anchors.left: parent.left
+    anchors.leftMargin: 3
+    anchors.verticalCenter: parent.verticalCenter
+  }
+
   Text {
     id: valueText
-    anchors.centerIn: parent
+    anchors.verticalCenter: parent.verticalCenter
+    anchors.horizontalCenter: root.compact ? parent.horizontalCenter : undefined
+    anchors.left: root.compact ? undefined : (root.showMascot ? mascot.right : parent.left)
+    anchors.leftMargin: root.compact ? 0 : (root.showMascot ? 5 : 6)
     text: root.shownText
+    horizontalAlignment: Text.AlignHCenter
+    lineHeight: 0.95
     color: root.foreground
     font.family: root.bar ? root.bar.fontFamily : "monospace"
     font.pixelSize: 12
@@ -135,11 +235,7 @@ Item {
   MouseArea {
     id: pointer
     anchors.fill: parent
-    hoverEnabled: true
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-
-    onEntered: if (root.bar && root.tooltip !== "") root.bar.showTooltip(root, root.tooltip)
-    onExited: if (root.bar) root.bar.hideTooltip(root)
 
     onClicked: function (mouse) {
       if (!root.bar) return
@@ -147,7 +243,12 @@ Item {
         root.refresh()
       } else if (mouse.button === Qt.RightButton) {
         if (root.onRightClick !== "") root.bar.run(root.onRightClick)
+      } else if (root.panelReady) {
+        panelLoader.item.toggle()
       } else if (root.onClick !== "") {
+        // No panel — an older shell, or one that moved the internals it is
+        // built on. Left click falls back to what it did before the panel
+        // existed rather than doing nothing.
         root.bar.run(root.onClick)
       }
     }

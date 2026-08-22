@@ -6,21 +6,61 @@ specific host: the **Omarchy 4 shell** (`omarchy-shell`), which loads bar
 widgets as plugins. Quickshell on its own has no bar to add a widget to — a
 shell has to provide one — so a widget is only as portable as its host.
 
-It shows the reading, trend arrow and delta, coloured by alert state, with the
-full sugarrush tooltip on hover:
+It shows the reading **with its unit**, the trend arrow and the delta, coloured
+by alert state, and opens a panel with the rest of the day. The unit is there
+because a bare number names nothing — `10.5` could be a load average; nothing
+else on a desktop is reported in mmol/L:
 
 | Interaction | What happens |
 |---|---|
-| left click | opens the sugarrush TUI in a floating terminal |
-| right click | opens the TUI on the settings screen |
+| left click | opens the panel — chart, time in range, patterns |
+| right click | opens the sugarrush TUI in a floating terminal |
 | middle click | fetches now, without waiting for the next poll |
-| hover | tooltip: reading, trend, age, and the last hour as a sparkline |
+
+On a vertical bar the pill stacks the reading over its trend arrow and drops
+both the unit and the delta, which do not fit 28 pixels.
+
+Against a sugarrush too old to send the reading in parts, the pill falls back
+to the line that binary prints — no unit, but no breakage either.
+
+## The panel
+
+Clicking the pill opens a panel carrying what the bar line has no room for.
+The wordmark leads, with refetch and open-the-dashboard on the right, and the
+rest is a stack of cards that each name the window they describe — because
+"mean 8.8" under a six-hour chart is a 24-hour figure, and a panel that does
+not say so invites the wrong reading:
+
+- **Now** — the reading, its trend in words, and how long ago it arrived;
+- **Last N hours** — the chart: your reading over a typical day for the same
+  hours, the median dashed and the 25–75% band shaded, each alert threshold in
+  its own colour and labelled on the value axis, the clock along the bottom.
+  The line carries the state, changing colour as it crosses a threshold, and
+  seeing tonight sit above the band is the point of it. Hovering the chart
+  drops a crosshair on the nearest reading and prints its value and time —
+  the reading itself, never an interpolation between two of them;
+- **Last 24 hours** — the five time-in-range bands, with mean, GMI and CV;
+- **Patterns · last N days** — the times of day where lows or highs keep
+  happening. The card appears only when there is a pattern to name: no
+  repeating low or high means no card, rather than an empty one.
+
+The stack scrolls if it outgrows the room a popup is allowed, which four cards
+can do on a short screen.
+
+The panel calls `sugarrush snapshot`, which needs a sugarrush new enough to
+have that command; the pill does not, and keeps working either way. If the
+command is missing or too old the panel says so instead of drawing an empty
+frame.
+
+It fetches when opened, not on a timer, and reuses its last document for
+`panelCacheMinutes`. So the heavy part — the multi-day history the patterns
+need — is paid for only when someone is actually looking.
 
 ## Install
 
 ```bash
 mkdir -p ~/.config/omarchy/plugins/sugarrush
-cp manifest.json BarWidget.qml ~/.config/omarchy/plugins/sugarrush/
+cp manifest.json *.png *.svg *.qml ~/.config/omarchy/plugins/sugarrush/
 omarchy-shell shell rescanPlugins
 omarchy plugin enable sugarrush.glucose
 ```
@@ -38,10 +78,16 @@ Set with `omarchy bar set <widget> <key> <value>`:
 
 | Key | Default | What it does |
 |---|---|---|
-| `interval` | `60` | seconds between fetches |
-| `command` | `sugarrush waybar` | the command to read a reading from |
-| `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | left click |
+| `interval` | `60` | seconds between pill fetches |
+| `showUnits` | `true` | print the unit after the reading; turn it off on a crowded bar |
+| `showMascot` | `false` | put the sugar cube in front of the reading |
+| `command` | `sugarrush waybar` | the command the pill reads a reading from |
+| `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
 | `onRightClick` | the same, plus `--screen settings` | right click |
+| `panelHours` | `6` | the panel chart's window |
+| `insightDays` | `14` | history behind the patterns and the chart's typical-day band; `0` hides the patterns and skips the query |
+| `panelCacheMinutes` | `5` | how stale the panel's document may be when it opens |
+| `snapshotCommand` | `sugarrush snapshot` | the command the panel reads its document from |
 
 ```bash
 omarchy bar set sugarrush.glucose interval 30
