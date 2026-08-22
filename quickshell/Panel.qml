@@ -25,9 +25,19 @@ Panel {
   readonly property int insightDays: setting("insightDays", 14)
   readonly property int cacheMinutes: setting("panelCacheMinutes", 5)
   readonly property string snapshotCommand: setting("snapshotCommand", "sugarrush snapshot")
+  // The same binary, asked a different question. Derived so a widget pointed
+  // at a build directory edits that build's config too.
+  readonly property string configCommand: snapshotCommand.replace(/snapshot.*$/, "config")
 
   property var doc: null
   property string loadError: ""
+
+  // "now" or "settings". A view, not a second panel: the cards below simply
+  // swap, so the header, the strip and the popout identity stay put.
+  property string view: "now"
+  // key -> value, as `sugarrush config` prints it.
+  property var config: ({})
+  property string configError: ""
   property double fetchedAt: 0
 
   readonly property var reading: doc && doc.now ? doc.now : null
@@ -118,6 +128,47 @@ Panel {
     if (opened) refresh(true)
   }
 
+  function loadConfig() {
+    // Drop whatever is in flight and start again, deferred. Guarding on
+    // `running` is how the pill and the snapshot fetch each lost a refresh:
+    // a first run that never finished left the flag true for good.
+    configProc.running = false
+    Qt.callLater(function () { configProc.running = true })
+  }
+
+  function applyConfig(out) {
+    var next = ({})
+    var lines = String(out || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var at = lines[i].indexOf(" = ")
+      if (at > 0) next[lines[i].slice(0, at)] = lines[i].slice(at + 3).trim()
+    }
+    root.config = next
+  }
+
+  // Set one setting, then re-read: the CLI refuses values the app would have
+  // repaired, so the file is the only honest source of what actually stuck.
+  function setConfig(key, value) {
+    root.configError = ""
+    setProc.command = ["bash", "-lc",
+                       root.configCommand + " " + key + " " + value + " 2>&1"]
+    setProc.running = false
+    Qt.callLater(function () { setProc.running = true })
+  }
+
+  // Widget options live in the bar's own config, not sugarrush's.
+  function setWidget(key, value) {
+    if (root.bar) root.bar.run("omarchy bar set " + root.moduleName + " " + key + " " + value)
+  }
+
+  function num(key, fallback) {
+    var raw = parseFloat(root.config[key])
+    return isNaN(raw) ? fallback : raw
+  }
+
+  onViewChanged: if (view === "settings") loadConfig()
+  onConfigCommandChanged: if (view === "settings") loadConfig()
+
   function apply(out) {
     var parsed
     try {
@@ -135,6 +186,30 @@ Panel {
     root.doc = parsed
     root.loadError = parsed.error ? String(parsed.error) : ""
     root.fetchedAt = Date.now()
+  }
+
+  Process {
+    id: configProc
+    command: ["bash", "-lc", root.configCommand]
+    stdout: StdioCollector {
+      id: configOut
+      waitForEnd: true
+      onStreamFinished: root.applyConfig(configOut.text)
+    }
+  }
+
+  Process {
+    id: setProc
+    stdout: StdioCollector {
+      id: setOut
+      waitForEnd: true
+      onStreamFinished: {
+        var text = setOut.text.trim()
+        // The CLI answers "key = value" on success and an error otherwise.
+        root.configError = text.indexOf(" = ") > 0 ? "" : text
+        root.loadConfig()
+      }
+    }
   }
 
   Process {
@@ -186,6 +261,68 @@ Panel {
         id: cardContent
         width: parent.width
         spacing: Style.space(6)
+      }
+    }
+  }
+
+  // One editable number. The step is the unit the setting is measured in —
+  // 0.1 mmol/L for a threshold, a whole day for a sensor — so holding the
+  // button walks it the way the settings screen does.
+  component SettingRow: Item {
+    id: row
+    property string label: ""
+    property string suffix: ""
+    property real value: 0
+    property real step: 1
+    property int decimals: 0
+    property bool enabled: true
+    signal changed(real next)
+
+    width: parent ? parent.width : 0
+    implicitHeight: Math.max(rowLabel.implicitHeight, minus.implicitHeight)
+
+    Text {
+      id: rowLabel
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      color: root.barForeground
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.caption
+      text: row.label
+    }
+
+    Row {
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(6)
+
+      PanelActionButton {
+        id: minus
+        iconText: "−"
+        tooltipText: "Less"
+        foreground: root.barForeground
+        fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+        enabled: row.enabled
+        onClicked: row.changed(row.value - row.step)
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(58)
+        horizontalAlignment: Text.AlignHCenter
+        color: root.barForeground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.caption
+        text: row.value.toFixed(row.decimals) + row.suffix
+      }
+
+      PanelActionButton {
+        iconText: "+"
+        tooltipText: "More"
+        foreground: root.barForeground
+        fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+        enabled: row.enabled
+        onClicked: row.changed(row.value + row.step)
       }
     }
   }
@@ -269,10 +406,20 @@ Panel {
           }
         }
 
+        ButtonGroup {
+          options: [{ value: "now", label: "Now" }, { value: "settings", label: "Settings" }]
+          value: root.view
+          foreground: root.barForeground
+          fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+          fontSize: Style.font.caption
+          focusable: false
+          onChanged: function (next) { root.view = next }
+        }
+
         // Whatever went wrong replaces the cards: there is nothing to put in
         // them, and three empty boxes explain less than one sentence does.
         Text {
-          visible: root.loadError !== "" || !root.reading
+          visible: (root.loadError !== "" || !root.reading) && root.view === "now"
           width: parent.width
           wrapMode: Text.WordWrap
           color: root.barForeground
@@ -286,7 +433,7 @@ Panel {
         // settling, and that difference is the one the panel exists to show.
         Card {
           label: "Now"
-          visible: root.reading !== null && root.loadError === ""
+          visible: root.reading !== null && root.loadError === "" && root.view === "now"
 
           Item {
             width: parent.width
@@ -390,7 +537,7 @@ Panel {
 
         Card {
           label: "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
-          visible: root.loadError === ""
+          visible: root.loadError === "" && root.view === "now"
 
           Chart {
             width: parent.width
@@ -404,7 +551,7 @@ Panel {
           label: root.stats
             ? "Last " + root.stats.window_h + (root.stats.window_h === 1 ? " hour" : " hours")
             : ""
-          visible: root.stats !== null && root.loadError === ""
+          visible: root.stats !== null && root.loadError === "" && root.view === "now"
 
           TirBar {
             width: parent.width
@@ -425,6 +572,127 @@ Panel {
           }
         }
 
+        // ---- the settings view
+        Card {
+          label: "Alarm thresholds · " + (root.config["units"] === "mgdl" ? "mg/dL" : "mmol/L")
+          visible: root.view === "settings"
+
+          SettingRow {
+            label: "Urgent low"
+            value: root.num("alerts.urgent_low", 3.5)
+            step: root.config["units"] === "mgdl" ? 1 : 0.1
+            decimals: root.config["units"] === "mgdl" ? 0 : 1
+            onChanged: function (next) { root.setConfig("alerts.urgent_low", next.toFixed(decimals)) }
+          }
+          SettingRow {
+            label: "Low"
+            value: root.num("alerts.low", 3.9)
+            step: root.config["units"] === "mgdl" ? 1 : 0.1
+            decimals: root.config["units"] === "mgdl" ? 0 : 1
+            onChanged: function (next) { root.setConfig("alerts.low", next.toFixed(decimals)) }
+          }
+          SettingRow {
+            label: "High"
+            value: root.num("alerts.high", 10.0)
+            step: root.config["units"] === "mgdl" ? 1 : 0.1
+            decimals: root.config["units"] === "mgdl" ? 0 : 1
+            onChanged: function (next) { root.setConfig("alerts.high", next.toFixed(decimals)) }
+          }
+          SettingRow {
+            label: "Urgent high"
+            value: root.num("alerts.urgent_high", 13.9)
+            step: root.config["units"] === "mgdl" ? 1 : 0.1
+            decimals: root.config["units"] === "mgdl" ? 0 : 1
+            onChanged: function (next) { root.setConfig("alerts.urgent_high", next.toFixed(decimals)) }
+          }
+
+          // The CLI refuses a value the app would have quietly repaired —
+          // crossed thresholds, mostly — and that refusal belongs on screen
+          // rather than in a log nobody reads.
+          Text {
+            visible: root.configError !== ""
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: "#cc241d"
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: root.configError
+          }
+        }
+
+        Card {
+          label: "Alarm"
+          visible: root.view === "settings"
+
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(soundLabel.implicitHeight, soundToggle.implicitHeight)
+
+            Text {
+              id: soundLabel
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              color: root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: "Audible alarm"
+            }
+
+            ToggleSwitch {
+              id: soundToggle
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              checked: root.config["alerts.sound"] !== "false"
+              foreground: root.barForeground
+              onToggled: root.setConfig("alerts.sound", checked ? "off" : "on")
+            }
+          }
+
+          SettingRow {
+            label: "Sensor life"
+            suffix: " d"
+            value: root.num("sensor_days", 10)
+            step: 1
+            onChanged: function (next) {
+              root.setConfig("sensor_days", Math.max(0, Math.min(30, next)).toFixed(0))
+            }
+          }
+        }
+
+        Card {
+          label: "This panel"
+          visible: root.view === "settings"
+
+          SettingRow {
+            label: "Chart window"
+            suffix: " h"
+            value: root.panelHours
+            step: 1
+            onChanged: function (next) {
+              root.setWidget("panelHours", Math.max(1, Math.min(72, next)).toFixed(0))
+            }
+          }
+
+          SettingRow {
+            label: "Pattern history"
+            suffix: " d"
+            value: root.insightDays
+            step: 1
+            onChanged: function (next) {
+              root.setWidget("insightDays", Math.max(0, Math.min(90, next)).toFixed(0))
+            }
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: Qt.darker(root.barForeground, 1.45)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: "Everything else — sites, tokens, quiet hours, themes — lives in the dashboard."
+          }
+        }
+
         // A status strip, not a card: the sensor and the fetch time describe the
         // rig rather than the glucose, and they are the two things here that
         // do not change every five minutes.
@@ -432,7 +700,7 @@ Panel {
           width: parent.width
           implicitHeight: Math.max(sensorText.implicitHeight, fetchedText.implicitHeight)
             + Style.space(8)
-          visible: root.sensor !== null && root.loadError === ""
+          visible: root.sensor !== null && root.loadError === "" && root.view === "now"
 
           Rectangle {
             anchors.top: parent.top
@@ -464,7 +732,7 @@ Panel {
 
         Card {
           label: "Patterns · last " + root.insightDays + " days"
-          visible: root.hasInsights
+          visible: root.hasInsights && root.view === "now"
 
           Repeater {
             model: root.doc && root.doc.insights ? root.doc.insights : []

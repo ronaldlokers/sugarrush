@@ -123,6 +123,22 @@ unlike the Waybar module's CSS classes.
 Against an older sugarrush that doesn't emit `color`, it falls back to the
 bar's own foreground, and to the bar's urgent colour for the two urgent states.
 
+## Settings in the panel
+
+The chips under the wordmark swap the panel between **Now** and **Settings**.
+The settings view edits two different things, and says so by grouping them:
+
+- **Alarm thresholds** and **Alarm** write `~/.config/sugarrush/config.toml`
+  through `sugarrush config`, the same serializer and atomic write the
+  dashboard's settings screen uses. A value the app would have quietly
+  repaired — crossed thresholds, mostly — is refused, and the refusal appears
+  under the rows rather than in a log.
+- **This panel** writes the widget's own options in the bar's config through
+  `omarchy bar set`.
+
+Everything else — sites, tokens, quiet hours, themes — stays in the dashboard.
+A panel that dismisses when focus moves is the wrong place to type a token.
+
 ## Omarchy menu entries
 
 [`omarchy-menu.jsonc`](omarchy-menu.jsonc) has a sugarrush submenu — dashboard,
