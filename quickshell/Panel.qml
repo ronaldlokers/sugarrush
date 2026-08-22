@@ -303,7 +303,9 @@ Panel {
                 Text {
                   color: root.reading ? root.classColor(root.reading.class) : root.barForeground
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.displayLarge
+                  // A quarter taller than the projection beside it: both are
+                  // readings, but only one of them happened.
+                  font.pixelSize: Math.round(Style.font.displayLarge * 1.25)
                   font.bold: true
                   text: root.reading ? root.reading.value : "—"
                 }
