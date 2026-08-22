@@ -8,6 +8,15 @@ name: Publish crate
 on:
   push:
     tags: ["v*"]
+  # A failed publish cannot be re-run from the tag: the workflow that runs is
+  # the one in the tag's tree, so a fix on main never reaches it. Dispatching
+  # against a tag runs the fixed workflow over the tagged source instead, the
+  # same escape hatch the AUR publish has.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v2026.8.2)"
+        required: true
 
 permissions:
   contents: read
@@ -15,9 +24,19 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+      # The pin is a commit on the action's master branch, which — unlike the
+      # `stable` branch this used to track — has no toolchain of its own and
+      # requires one to be named. Without it the step fails with "'toolchain'
+      # is a required input", which is how v2026.8.2 reached crates.io late.
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master @ 2026-08
+        with:
+          toolchain: stable
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -29,10 +48,10 @@ jobs:
           # The tag is the release; if Cargo.toml disagrees with it, the crate
           # published under this tag would be a different version than every
           # other channel ships. Stop rather than publish the mismatch.
-          tag_version="${GITHUB_REF_NAME#v}"
+          tag_version="${TAG#v}"
           crate_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           if [ "$tag_version" != "$crate_version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $crate_version"
+            echo "::error::tag $TAG does not match Cargo.toml version $crate_version"
             exit 1
           fi
           # --locked: publish exactly the dependency versions that CI tested.
