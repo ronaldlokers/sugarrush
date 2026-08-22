@@ -34,6 +34,7 @@ Panel {
   // The same binary, asked a different question. Derived so a widget pointed
   // at a build directory edits that build's config too.
   readonly property string configCommand: snapshotCommand.replace(/snapshot.*$/, "config")
+  readonly property string healthCommand: snapshotCommand.replace(/snapshot.*$/, "health --json")
 
   property var doc: null
   property string loadError: ""
@@ -116,11 +117,70 @@ Panel {
     if (sensor.expires_in_h !== undefined) return line + " · " + ageWords(sensor.expires_in_h) + " left"
     return line
   }
+  readonly property var agp: doc && doc.agp ? doc.agp : null
   readonly property bool hasInsights: insightDays > 0 && loadError === ""
     && doc && doc.insights && doc.insights.length > 0
 
   function stale() {
     return !doc || (Date.now() - fetchedAt) > cacheMinutes * 60000
+  }
+
+  // What the alarm machinery is doing, from `sugarrush health --json`. The
+  // panel can show a perfect graph while nothing is watching overnight, and
+  // that is precisely the state someone needs to be told about.
+  property var health: null
+
+  function alarmWords() {
+    if (!health) return ""
+    if (health.watcher_alive !== true) return "not watching"
+    if (health.alarm_configured !== true) return "no alarm set"
+    var sites = health.sites || []
+    for (var i = 0; i < sites.length; i++) {
+      var until = sites[i].snoozed_until_ms
+      if (until) {
+        var left = Math.round((until - Date.now()) / 60000)
+        if (left > 0) return "snoozed " + left + "m"
+      }
+    }
+    return "alarm armed"
+  }
+
+  readonly property bool alarmArmed: alarmWords() === "alarm armed"
+
+  // Armed is the quiet state, and everything else is worth an eye: nothing
+  // watching is the failure the panel exists to make visible, a snooze is
+  // deliberate but temporary.
+  function alarmColor() {
+    var words = alarmWords()
+    if (words === "not watching" || words === "no alarm set") return "#cc241d"
+    if (words.indexOf("snoozed") === 0) return "#d79921"
+    return Qt.darker(barForeground, 1.35)
+  }
+
+  function loadHealth() {
+    healthProc.running = false
+    Qt.callLater(function () { healthProc.running = true })
+  }
+
+  readonly property string summaryCommand: snapshotCommand.replace(/snapshot.*$/, "summary")
+  // "" until a copy is attempted, then what happened. Cleared on the way out
+  // so the panel never opens still claiming a copy from an hour ago.
+  property string copyState: ""
+
+  function copySummary() {
+    root.copyState = "copying…"
+    copyProc.running = false
+    Qt.callLater(function () { copyProc.running = true })
+  }
+
+  function applyHealth(out) {
+    try {
+      root.health = JSON.parse(String(out || ""))
+    } catch (e) {
+      // Say nothing rather than claim a state we could not read: an empty
+      // chip is honest, "alarm armed" would not be.
+      root.health = null
+    }
   }
 
   function refresh(force) {
@@ -133,7 +193,7 @@ Panel {
     Qt.callLater(function () { snapProc.running = true })
   }
 
-  onOpenedChanged: if (opened) refresh(false)
+  onOpenedChanged: if (opened) { refresh(false); loadHealth(); copyState = "" }
 
   // A cached document belongs to the command that produced it. When the
   // command changes the cache is about something else, so drop it rather than
@@ -227,6 +287,42 @@ Panel {
         root.configError = text.indexOf(" = ") > 0 ? "" : text
         root.loadConfig()
       }
+    }
+  }
+
+  Process {
+    id: copyProc
+    // `wl-copy` on Wayland, `xclip` for anyone running this under Xwayland or
+    // a stray X session. Whichever answers first wins; if neither is
+    // installed the panel says so rather than pretending it copied.
+    command: ["bash", "-lc",
+              root.summaryCommand + " | { wl-copy 2>/dev/null || xclip -selection clipboard 2>/dev/null; }"]
+    onExited: function (code) {
+      root.copyState = code === 0 ? "copied to the clipboard" : "could not copy — is wl-clipboard installed?"
+      copyClear.restart()
+    }
+  }
+
+  Timer {
+    id: copyClear
+    interval: 4000
+    onTriggered: root.copyState = ""
+  }
+
+  Process {
+    id: healthProc
+    command: ["bash", "-lc", root.healthCommand]
+    stdout: StdioCollector {
+      id: healthOut
+      waitForEnd: true
+      onStreamFinished: root.applyHealth(healthOut.text)
+    }
+    stderr: StdioCollector {
+      id: healthErr
+      waitForEnd: true
+      // A sugarrush too old for `health --json` says so here; the chip stays
+      // empty and the rest of the panel is unaffected.
+      onStreamFinished: if (healthErr.text.trim() !== "") console.warn("sugarrush panel health", healthErr.text.trim())
     }
   }
 
@@ -427,7 +523,9 @@ Panel {
         }
 
         ButtonGroup {
-          options: [{ value: "glucose", label: "Glucose" }, { value: "settings", label: "Settings" }]
+          options: [{ value: "glucose", label: "Glucose" },
+                    { value: "profile", label: "Profile" },
+                    { value: "settings", label: "Settings" }]
           value: root.view
           foreground: root.barForeground
           fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -590,6 +688,91 @@ Panel {
           }
         }
 
+        // ---- the profile view
+        Card {
+          label: root.agp
+            ? "Typical day · " + root.agp.days + " days"
+            : "Typical day"
+          visible: root.loadError === "" && root.view === "profile"
+
+          AgpChart {
+            width: parent.width
+            height: Style.space(150)
+            visible: root.agp !== null
+            agp: root.agp
+            range: root.doc && root.doc.range ? root.doc.range : null
+            foreground: root.barForeground
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: Qt.darker(root.barForeground, 1.2)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: root.agp
+              ? "median, with the middle half and the outer 5–95% behind it"
+              : "Not enough days yet — a profile drawn from one or two of them "
+                + "cannot tell a habit from a bad Tuesday."
+          }
+
+          // The same text `sugarrush export` writes, on the clipboard: the
+          // point of a profile is usually a conversation with a clinician,
+          // and that conversation happens somewhere else.
+          Row {
+            spacing: Style.space(10)
+
+            Button {
+              text: "Copy summary"
+              bordered: true
+              focusable: false
+              foreground: root.barForeground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              fontSize: Style.font.caption
+              onClicked: root.copySummary()
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              color: Qt.darker(root.barForeground, 1.2)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.copyState
+            }
+          }
+        }
+
+        Card {
+          label: "Patterns · last " + root.insightDays + " days"
+          // Not gated on there being any: "nothing stands out" is an answer,
+          // and a card that vanishes reads as a panel that failed to load.
+          visible: root.insightDays > 0 && root.loadError === "" && root.view === "profile"
+
+          Repeater {
+            model: root.doc && root.doc.insights ? root.doc.insights : []
+
+            Text {
+              required property var modelData
+              width: column.width - Style.space(24)
+              wrapMode: Text.WordWrap
+              color: root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: modelData.text
+            }
+          }
+
+          Text {
+            visible: !root.doc || !root.doc.insights || root.doc.insights.length === 0
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: Qt.darker(root.barForeground, 1.2)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: "Nothing recurring stands out over these days."
+          }
+        }
+
         // ---- the settings view
         Card {
           label: "Alarm thresholds · " + (root.config["units"] === "mgdl" ? "mg/dL" : "mmol/L")
@@ -736,9 +919,11 @@ Panel {
         // do not change every five minutes.
         Item {
           width: parent.width
-          implicitHeight: Math.max(sensorText.implicitHeight, fetchedText.implicitHeight)
+          implicitHeight: Math.max(sensorText.implicitHeight, fetchedText.implicitHeight,
+                                   alarmChip.visible ? alarmChip.height : 0)
             + Style.space(8)
-          visible: root.sensor !== null && root.loadError === "" && root.view === "glucose"
+          visible: (root.sensor !== null || root.health !== null)
+            && root.loadError === "" && root.view === "glucose"
 
           Rectangle {
             anchors.top: parent.top
@@ -747,9 +932,36 @@ Panel {
             color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.16)
           }
 
+          // The alarm's own state, left of the sensor: both describe the rig,
+          // and this is the one that decides whether tonight is covered.
+          Rectangle {
+            id: alarmChip
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: -Style.space(2)
+            visible: alarmChipText.text !== ""
+            width: alarmChipText.implicitWidth + Style.space(14)
+            height: alarmChipText.implicitHeight + Style.space(6)
+            radius: height / 2
+            color: "transparent"
+            border.width: 1
+            border.color: Qt.rgba(root.alarmColor().r, root.alarmColor().g,
+                                  root.alarmColor().b, root.alarmArmed ? 0.4 : 0.9)
+
+            Text {
+              id: alarmChipText
+              anchors.centerIn: parent
+              color: root.alarmColor()
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.alarmWords()
+            }
+          }
+
           Text {
             id: sensorText
-            anchors.left: parent.left
+            anchors.left: alarmChip.visible ? alarmChip.right : parent.left
+            anchors.leftMargin: alarmChip.visible ? Style.space(8) : 0
             anchors.bottom: parent.bottom
             color: root.sensorColor()
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -767,25 +979,6 @@ Panel {
             text: root.reading ? "updated " + root.reading.age_min + "m ago" : ""
           }
         }
-
-        Card {
-          label: "Patterns · last " + root.insightDays + " days"
-          visible: root.hasInsights && root.view === "glucose"
-
-          Repeater {
-            model: root.doc && root.doc.insights ? root.doc.insights : []
-
-            Text {
-              required property var modelData
-              width: column.width - Style.space(24)
-              wrapMode: Text.WordWrap
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              text: modelData.text
-            }
-          }
-          }
         }
       }
     }

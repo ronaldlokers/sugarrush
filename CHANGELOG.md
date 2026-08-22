@@ -16,6 +16,23 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The panel has a Profile view.** The ambulatory glucose profile — every day
+  in the window folded onto one 24-hour clock, median over the middle half and
+  the outer 5–95% — answers "what do my nights look like" rather than "what
+  happened last night". It needs at least three days of history. The patterns
+  list moves here from the Glucose view, since it names findings from the same
+  multi-day profile, and now says so when nothing recurring stands out instead
+  of vanishing.
+
+- **The panel says whether the alarm is actually watching.** A chip in the
+  status strip reads `alarm armed`, `snoozed 12m`, or `not watching` in red,
+  from `sugarrush health --json`. A perfect graph over a stopped watcher was
+  the one thing the panel could not tell you.
+
+- **Copy the clinical summary from the panel**, and a new `sugarrush summary`
+  command that prints it to stdout. The same text `sugarrush export` writes,
+  without the CSV and without a file to find afterwards.
+
 - **The bar pill draws the last hour.** A trace after the reading, in the same
   state colour, with the newest point marked — so the number says where the
   glucose is and the shape says what it has been doing. Turn it off with

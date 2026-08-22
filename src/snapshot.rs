@@ -66,6 +66,24 @@ pub struct Snapshot {
     pub forecast: Option<crate::predict::Outlook>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overview: Option<OverviewDoc>,
+    /// The ambulatory glucose profile: one composite day, not a time series.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agp: Option<AgpDoc>,
+}
+
+/// The whole window folded onto a single 24-hour clock — the standard way a
+/// clinic reads a CGM, and the one view that answers "what do my nights look
+/// like" rather than "what happened last night".
+#[derive(Debug, Clone, Serialize)]
+pub struct AgpDoc {
+    /// Distinct local dates behind the percentiles. Below `BAND_MIN_DAYS`
+    /// there is no profile: with one day p25 and p50 are the same number, and
+    /// a chart that cannot tell a habit from a Tuesday should not be drawn.
+    pub days: usize,
+    /// Minutes per bucket, so a consumer can size its own x-axis.
+    pub step_min: i64,
+    /// `[minute_of_local_day, p05, p25, p50, p75, p95]`, in display units.
+    pub points: Vec<(i64, f64, f64, f64, f64, f64)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -246,6 +264,7 @@ pub fn build(input: BuildInput) -> Snapshot {
     // forecast here is a deliberate silence, not a failure.
     let forecast = crate::predict::outlook(&recent, &alerts, units);
     let overview = overview_for(&history, units);
+    let agp = agp_for(&bands, units);
 
     Snapshot {
         schema: 1,
@@ -263,6 +282,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         stats,
         insights: Some(insights),
         band,
+        agp,
         sensor,
         forecast,
         overview,
@@ -328,6 +348,31 @@ fn sensor_for(started_at: Option<i64>, days: u32, now_ms: i64) -> Option<SensorD
 /// Same bar `agp::insights` sets before it will name a pattern: below this the
 /// percentiles describe one or two nights, not a habit.
 const BAND_MIN_DAYS: usize = 3;
+
+/// The percentile profile as one composite day.
+fn agp_for(bands: &[crate::agp::Band], units: Units) -> Option<AgpDoc> {
+    let days = bands.iter().map(|b| b.days).max().unwrap_or(0);
+    if bands.is_empty() || days < BAND_MIN_DAYS {
+        return None;
+    }
+    Some(AgpDoc {
+        days,
+        step_min: crate::agp::BUCKET_MIN,
+        points: bands
+            .iter()
+            .map(|b| {
+                (
+                    b.minute,
+                    scaled(units, b.p05),
+                    scaled(units, b.p25),
+                    scaled(units, b.p50),
+                    scaled(units, b.p75),
+                    scaled(units, b.p95),
+                )
+            })
+            .collect(),
+    })
+}
 
 /// The profile sampled across the window `series` covers, one point per bucket.
 fn band_for(
@@ -445,6 +490,7 @@ pub fn error_doc(now_ms: i64, message: &str) -> Snapshot {
         sensor: None,
         forecast: None,
         overview: None,
+        agp: None,
     }
 }
 
@@ -799,6 +845,58 @@ mod tests {
         let json = serde_json::to_value(build(short)).unwrap();
 
         assert!(json.get("band").is_none());
+    }
+
+    #[test]
+    fn the_profile_is_a_whole_day_whatever_the_chart_shows() {
+        let mut with_history = input(
+            vec![
+                entry(115.0, NOW - 5 * MIN, "Flat"),
+                entry(113.0, NOW - 65 * MIN, "Flat"),
+            ],
+            nightly_lows(),
+        );
+        with_history.timezone = Some(chrono_tz::UTC);
+        let json = serde_json::to_value(build(with_history)).unwrap();
+
+        assert_eq!(json["agp"]["days"], 4);
+        assert_eq!(json["agp"]["step_min"], crate::agp::BUCKET_MIN);
+        let points = json["agp"]["points"].as_array().unwrap();
+        // The whole clock, not the charted window: this is the view that says
+        // "this happens at 3am", so it cannot stop where the chart does.
+        assert_eq!(points.len(), (24 * 60 / crate::agp::BUCKET_MIN) as usize);
+
+        let first = points[0].as_array().unwrap();
+        assert_eq!(first.len(), 6, "[minute, p05, p25, p50, p75, p95]");
+        assert_eq!(first[0].as_i64().unwrap(), crate::agp::BUCKET_MIN / 2);
+        // Minutes of a local day, ordered, ending inside the last bucket.
+        let last = points[points.len() - 1].as_array().unwrap();
+        assert!(last[0].as_i64().unwrap() < 1440);
+
+        // Display units and ordered percentiles, like everything else here.
+        let p50 = first[3].as_f64().unwrap();
+        assert!((2.0..=12.0).contains(&p50), "p50 {p50} is not mmol/L");
+        assert!(first[1].as_f64().unwrap() <= first[2].as_f64().unwrap());
+        assert!(first[2].as_f64().unwrap() <= p50);
+        assert!(p50 <= first[4].as_f64().unwrap());
+        assert!(first[4].as_f64().unwrap() <= first[5].as_f64().unwrap());
+    }
+
+    #[test]
+    fn one_days_history_is_not_a_profile() {
+        // Same bar as the band: with one day the median and the quartiles are
+        // the same number, and drawing that invites reading a Tuesday as a
+        // habit.
+        let day = 24 * 3_600_000i64;
+        let mut one_day: Vec<Entry> = (0..288)
+            .map(|i| entry(110.0, NOW - day - i * 5 * MIN, "Flat"))
+            .collect();
+        one_day.reverse();
+        let mut short = input(vec![entry(115.0, NOW - 5 * MIN, "Flat")], one_day);
+        short.timezone = Some(chrono_tz::UTC);
+        let json = serde_json::to_value(build(short)).unwrap();
+
+        assert!(json.get("agp").is_none());
     }
 
     #[test]
