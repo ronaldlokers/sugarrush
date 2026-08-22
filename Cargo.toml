@@ -1,6 +1,6 @@
 [package]
 name = "sugarrush"
-version = "2026.8.1"
+version = "2026.8.2"
 edition = "2021"
 # Verified in CI, not guessed: 1.88 fails on notify-rust's own MSRV.
 rust-version = "1.89"
