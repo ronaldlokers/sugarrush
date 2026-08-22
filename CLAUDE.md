@@ -131,8 +131,16 @@ Notes for future release work:
 - Release-asset downloads in CI must use `gh release download` (the browser
   `releases/download/...` URL can 404 for dist-created releases).
 - If a channel's job fails after the release exists, re-run it against the
-  same tag — no re-tag needed: `gh run rerun <id> --failed` (Homebrew) or
-  `gh workflow run aur.yml -f tag=vYYYY.M.N` (AUR).
+  same tag — no re-tag needed: `gh run rerun <id> --failed` (Homebrew),
+  `gh workflow run aur.yml -f tag=vYYYY.M.N` (AUR), or
+  `gh workflow run publish-crate.yml -f tag=vYYYY.M.N` (crates.io).
+- **A re-run cannot pick up a fix.** A tag-triggered workflow runs the file
+  from that tag's own tree, so `gh run rerun` replays the broken version no
+  matter what has landed on `main` since. When the failure was the workflow
+  itself, fix it on `main` and then *dispatch* it for the tag — both the AUR
+  and crates.io publishes take a `tag` input and check that ref out, which is
+  what the dispatch is for. `v2026.8.2` reached crates.io that way after the
+  toolchain pin in #183 broke the tag-triggered run.
 
 ## Definition of done for a user-visible change
 
