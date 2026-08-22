@@ -139,11 +139,20 @@ Item {
     return ("0" + when.getHours()).slice(-2) + ":" + ("0" + when.getMinutes()).slice(-2)
   }
 
-  onDocChanged: canvas.requestPaint()
+  // Both canvases, every time. The overview used to repaint only by luck of
+  // timing, and a pan repainted nothing at all: these handlers called a
+  // repaint() that was never defined, so every scroll threw a ReferenceError
+  // and the chart only caught up when the panel was rebuilt.
+  function repaint() {
+    canvas.requestPaint()
+    minimap.requestPaint()
+  }
+
+  onDocChanged: repaint()
   onViewStartMsChanged: repaint()
   onViewHoursChanged: repaint()
-  onWidthChanged: canvas.requestPaint()
-  onHeightChanged: canvas.requestPaint()
+  onWidthChanged: repaint()
+  onHeightChanged: repaint()
 
   Text {
     anchors.centerIn: parent
