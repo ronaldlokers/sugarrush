@@ -26,6 +26,8 @@ Panel {
   // overview strip spans exactly this. Same 6-72h range the dashboard's
   // minimap uses.
   readonly property int overviewHours: Math.max(panelHours, setting("overviewHours", 24))
+  // How far the chart scrolls. The patterns keep their own, longer window.
+  readonly property int scrollbackHours: Math.max(overviewHours, setting("scrollbackHours", 72))
   readonly property int insightDays: setting("insightDays", 14)
   readonly property int cacheMinutes: setting("panelCacheMinutes", 5)
   readonly property string snapshotCommand: setting("snapshotCommand", "sugarrush snapshot")
@@ -691,6 +693,16 @@ Panel {
             step: 6
             onChanged: function (next) {
               root.setWidget("overviewHours", Math.max(6, Math.min(72, next)).toFixed(0))
+            }
+          }
+
+          SettingRow {
+            label: "Scroll back"
+            suffix: " h"
+            value: root.scrollbackHours
+            step: 12
+            onChanged: function (next) {
+              root.setWidget("scrollbackHours", Math.max(6, Math.min(336, next)).toFixed(0))
             }
           }
 

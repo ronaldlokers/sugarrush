@@ -34,7 +34,9 @@ All notable changes to sugarrush are documented here. The format is based on
   now carries an `overview` — the multi-day history it already fetched for the
   percentiles, at one point per quarter hour — so the chart can be panned
   across a fortnight without a second request or a wait. Fine detail inside the
-  drawn window, the coarse history beyond it.
+  drawn window, the coarse history beyond it. `scrollbackHours` caps how far
+  that goes — three days by default, since a fortnight in a strip a few hundred
+  pixels wide is noise.
 - **The panel's chart scrolls, over an overview strip.** The panel now fetches
   a wider window than it draws — 24 hours by default, `overviewHours` — so the
   chart can be scrolled back through it with the wheel, and the strip beneath

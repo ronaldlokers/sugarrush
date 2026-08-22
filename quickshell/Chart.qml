@@ -57,10 +57,26 @@ Item {
   readonly property var series: doc && doc.series ? doc.series : []
   readonly property var range: doc && doc.range ? doc.range : null
   readonly property var band: doc && doc.band ? doc.band : null
-  // The history the band came from, one point per quarter hour. It is what
-  // makes scrolling past the fetched window possible without a second
-  // request: those readings were fetched for the percentiles anyway.
-  readonly property var overview: doc && doc.overview ? doc.overview.points : []
+  // How far back panning may reach. The document usually carries more — the
+  // patterns want a fortnight — but a strip a few hundred pixels wide turns
+  // that into noise with a viewport box too small to grab.
+  property int scrollbackHours: 72
+
+  readonly property var allOverview: doc && doc.overview ? doc.overview.points : []
+
+  // The history the band came from, one point per quarter hour, trimmed to
+  // the scrollback. It is what makes panning past the fetched window possible
+  // without a second request: those readings were fetched anyway.
+  readonly property var overview: {
+    if (allOverview.length === 0) return []
+    var cutoff = allOverview[allOverview.length - 1][0] - scrollbackHours * 3600000
+    if (allOverview[0][0] >= cutoff) return allOverview
+    var out = []
+    for (var i = 0; i < allOverview.length; i++) {
+      if (allOverview[i][0] >= cutoff) out.push(allOverview[i])
+    }
+    return out
+  }
 
   // What the chart draws: the fine series while the viewport is inside it,
   // the coarse history once panned past its start. Fine detail where it can
@@ -167,6 +183,11 @@ Item {
   onDocChanged: repaint()
   onViewStartMsChanged: repaint()
   onViewHoursChanged: repaint()
+  onScrollbackHoursChanged: {
+    // A shorter scrollback can leave the viewport outside the data.
+    if (!live) viewStartMs = clampStart(viewStartMs)
+    repaint()
+  }
   onWidthChanged: repaint()
   onHeightChanged: repaint()
 
