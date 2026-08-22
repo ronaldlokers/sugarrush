@@ -26,10 +26,13 @@ to the line that binary prints — no unit, but no breakage either.
 ## The panel
 
 Clicking the pill opens a panel carrying what the bar line has no room for.
-The wordmark leads, with refetch and open-the-dashboard on the right, and the
-rest is a stack of cards that each name the window they describe — because
-"mean 8.8" under a six-hour chart is a 24-hour figure, and a panel that does
-not say so invites the wrong reading:
+The wordmark leads, with refetch and open-the-dashboard on the right, then
+chips switching between three views — **Glucose**, **Profile** and
+**Settings**. Each view is a stack of cards that name the window they describe
+— because "mean 8.8" under a six-hour chart is a 24-hour figure, and a panel
+that does not say so invites the wrong reading.
+
+Glucose:
 
 - **Now** — the reading at display size beside where it lands in half an hour,
   both coloured by the band they fall in, with the trend and the delta. The
@@ -50,14 +53,27 @@ not say so invites the wrong reading:
   whole window with a box showing where you are, and clicking or dragging it
   jumps. Once panned, the card names the hours on screen and returns to live
   when tapped, so a chart showing 3am never claims to be showing now;
-- **Last 24 hours** — the five time-in-range bands, with mean, GMI and CV;
-- **Patterns · last N days** — the times of day where lows or highs keep
-  happening. The card appears only when there is a pattern to name: no
-  repeating low or high means no card, rather than an empty one.
+- **Last 24 hours** — the five time-in-range bands, with mean, GMI and CV.
 
-Under the cards runs a status strip — `sensor 9d 5h · 19h left` on the left,
-`updated 3m ago` on the right. Those two describe the rig rather than the
-glucose, and they are the only things in the panel that do not change every
+Profile — the same window read as habit rather than as history:
+
+- **Typical day · N days** — the ambulatory glucose profile: every day folded
+  onto one 24-hour clock, the median line over the middle half and the outer
+  5–95%. A bump here means "this happens at 3am", which the six-hour chart
+  cannot say. It needs at least three days: with one, the median and the
+  quartiles are the same number, and a chart that cannot tell a habit from a
+  bad Tuesday should not be drawn. **Copy summary** puts the same clinical
+  text `sugarrush export` writes on the clipboard, for the conversation that
+  usually happens somewhere else;
+- **Patterns · last N days** — the times of day where lows or highs keep
+  happening, or a line saying nothing recurring stands out.
+
+Under the cards runs a status strip — the alarm's own state as a chip, then
+`sensor 9d 5h · 19h left`, with `updated 3m ago` on the right. The chip reads
+`alarm armed`, `snoozed 12m`, or `not watching` in red when no daemon is
+running, from `sugarrush health --json`: a panel can draw a perfect graph
+while nothing is watching tonight, and that is exactly the state worth being
+told about. Those describe the rig rather than the glucose, and they are the only things in the panel that do not change every
 five minutes, so they sit apart from the cards rather than inside one. The
 sensor turns amber inside its last day and red once it is past; the countdown
 needs `sensor_days` and a site whose uploader logs "Sensor Start" / "Sensor

@@ -87,6 +87,11 @@ enum Mode {
         site: Option<String>,
         all: bool,
     },
+    /// Print the clinical summary for the last `days` days to stdout.
+    Summary {
+        days: u32,
+        site: Option<String>,
+    },
     /// Run the headless alarm watcher until killed.
     Watch,
     /// Write a systemd user unit pointing at this binary, and explain how to
@@ -244,6 +249,12 @@ fn parse_args() -> Mode {
                     dir: None,
                     site: None,
                     all: false,
+                })
+            }
+            "summary" => {
+                mode = Some(Mode::Summary {
+                    days: 0,
+                    site: None,
                 })
             }
             "watch" => mode = Some(Mode::Watch),
@@ -452,7 +463,12 @@ fn parse_args() -> Mode {
         export_days.is_some()
             && !matches!(
                 mode,
-                Some(Mode::Export { .. } | Mode::Alerts { .. } | Mode::Treatments { .. })
+                Some(
+                    Mode::Export { .. }
+                        | Mode::Alerts { .. }
+                        | Mode::Treatments { .. }
+                        | Mode::Summary { .. }
+                )
             ),
         "--days",
     );
@@ -519,6 +535,10 @@ fn parse_args() -> Mode {
             dir: export_dir,
             site: snooze_site,
             all: snooze_all,
+        },
+        Some(Mode::Summary { .. }) => Mode::Summary {
+            days: export_days.unwrap_or(0),
+            site: snooze_site,
         },
         Some(Mode::Alerts { .. }) => Mode::Alerts {
             days: export_days.map(i64::from).unwrap_or(7),
@@ -691,6 +711,7 @@ async fn main() -> Result<()> {
             site,
             all,
         } => run_export(days, dir, site.as_deref(), all).await,
+        Mode::Summary { days, site } => run_summary(days, site.as_deref()).await,
         Mode::Watch => watch::run().await,
         Mode::Snooze { minutes, site, all } => run_snooze(minutes, site.as_deref(), all),
         Mode::AlarmTest { quiet } => selftest::run(quiet).await,
@@ -818,13 +839,61 @@ async fn run_export(
     let cfg = Config::load()?;
     let days = if days == 0 { cfg.agp_days } else { days }.clamp(1, 90);
     let sites = cfg.resolve_sites()?;
+    let selected_sites = select_sites(&sites, selected, all)?;
+    for site in selected_sites {
+        run_export_site(&cfg, site, days, dir.as_deref()).await?;
+    }
+    Ok(())
+}
+
+/// `sugarrush summary` — the clinical summary `export` writes, on stdout.
+///
+/// The same text, because a summary that differs from the exported one is a
+/// second thing to keep right. Stdout rather than a file so it can be piped:
+/// into a clipboard, an email, a chat window on the way to a clinic.
+async fn run_summary(days: u32, selected: Option<&str>) -> Result<()> {
+    let cfg = Config::load()?;
+    let days = if days == 0 { cfg.agp_days } else { days }.clamp(1, 90);
+    let sites = cfg.resolve_sites()?;
+    let site = select_sites(&sites, selected, false)?[0];
+    let (alerts, warnings) = site.resolve_alerts(&cfg.alerts, cfg.units);
+    warn_about_config(&warnings);
+
+    let now = now_ms();
+    let start = now - days as i64 * 24 * 3_600_000;
+    let entries = Client::for_site(site)?
+        .entries_range(start, now, days as usize * 24 * 12 + 200)
+        .await?;
+    print!(
+        "{}",
+        export::report_in(
+            &entries,
+            &alerts,
+            cfg.units,
+            days,
+            now,
+            site.timezone.as_deref()
+        )
+    );
+    Ok(())
+}
+
+/// Which people a command that can address one or several is addressing.
+///
+/// Refusing to guess with several configured is the point: a report or an
+/// export silently covering the wrong person is worse than an error.
+fn select_sites<'a>(
+    sites: &'a [config::Site],
+    selected: Option<&str>,
+    all: bool,
+) -> Result<Vec<&'a config::Site>> {
     if all && selected.is_some() {
         anyhow::bail!("choose either --site NAME or --all");
     }
     if sites.len() > 1 && selected.is_none() && !all {
         anyhow::bail!("multiple people are configured; choose --site NAME or explicitly use --all");
     }
-    let selected_sites: Vec<_> = if all {
+    Ok(if all {
         sites.iter().collect()
     } else if let Some(name) = selected {
         vec![sites.iter().find(|site| site.name == name).ok_or_else(|| {
@@ -839,11 +908,7 @@ async fn run_export(
         })?]
     } else {
         vec![&sites[0]]
-    };
-    for site in selected_sites {
-        run_export_site(&cfg, site, days, dir.as_deref()).await?;
-    }
-    Ok(())
+    })
 }
 
 async fn run_export_site(
@@ -1038,6 +1103,10 @@ const COMMANDS: &[(&str, &str)] = &[
     (
         "sugarrush export [--days N] [--out DIR] [--site NAME|--all]",
         "CSV + a clinical summary",
+    ),
+    (
+        "sugarrush summary [--days N] [--site NAME]",
+        "the clinical summary alone, on stdout",
     ),
     (
         "sugarrush status [--format FORMAT]",

@@ -62,6 +62,8 @@ can understand and revisit the arrangement as their independence changes.
   while it is up
 - In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows),
   switchable to **content-free** so nothing readable lands on a lock screen
+- An **Omarchy 4 panel**: the chart, time in range, an ambulatory glucose
+  profile, the patterns, whether the alarm is armed, and full settings editing
 - Bar output for Waybar, polybar, tmux, i3blocks and Quickshell, including the
   last hour as a **sparkline** and a pill that changes colour for a **predicted**
   crossing, not only a current one
@@ -562,6 +564,7 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush alerts [--days N] [--site NAME] [--format text\|json\|csv]` | filter or export what the alarm has done |
 | `sugarrush health --json [--strict-delivery]` | machine-readable watcher, data and delivery health |
 | `sugarrush export [--days N] [--out DIR] [--site NAME\|--all]` | CSV + a clinical summary |
+| `sugarrush summary [--days N] [--site NAME]` | the clinical summary alone, on stdout |
 | `sugarrush status [--format FORMAT]` | one line for a status bar |
 | `sugarrush snapshot [--hours N] [--days N]` | one JSON document: reading, series, stats, insights |
 | `sugarrush config [KEY [VALUE]]` | read or write one setting |
