@@ -31,12 +31,7 @@ rest is a stack of cards that each name the window they describe — because
 "mean 8.8" under a six-hour chart is a 24-hour figure, and a panel that does
 not say so invites the wrong reading:
 
-- **Now** — the reading, its trend in words, how long ago it arrived, and how
-  long the sensor has been running: `sensor 6d 4h · 3d left`, amber inside the
-  last day and red once it is past. The countdown needs `sensor_days` in
-  `config.toml` (or the settings screen) and a site whose uploader logs
-  "Sensor Start" / "Sensor Change"; without either, the age alone is shown, or
-  nothing at all;
+- **Now** — the reading, its trend in words, and how long ago it arrived;
 - **Last N hours** — the chart: your reading over a typical day for the same
   hours, the median dashed and the 25–75% band shaded, each alert threshold in
   its own colour and labelled on the value axis, the clock along the bottom.
@@ -48,6 +43,14 @@ not say so invites the wrong reading:
 - **Patterns · last N days** — the times of day where lows or highs keep
   happening. The card appears only when there is a pattern to name: no
   repeating low or high means no card, rather than an empty one.
+
+Under the cards runs a status strip — `sensor 9d 5h · 19h left` on the left,
+`updated 3m ago` on the right. Those two describe the rig rather than the
+glucose, and they are the only things in the panel that do not change every
+five minutes, so they sit apart from the cards rather than inside one. The
+sensor turns amber inside its last day and red once it is past; the countdown
+needs `sensor_days` and a site whose uploader logs "Sensor Start" / "Sensor
+Change", and without either you get the age alone, or no strip at all.
 
 The stack scrolls if it outgrows the room a popup is allowed, which four cards
 can do on a short screen.

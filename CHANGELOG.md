@@ -8,9 +8,10 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
-- **The panel says how old your sensor is, and when it runs out.** The *Now*
-  card carries `sensor 6d 4h · 3d left`, amber inside the last day and red once
-  it is past. New `sensor_days` setting (default 10 — a G6/G7 lasts 10 days, a
+- **The panel says how old your sensor is, and when it runs out.** A status
+  strip under the cards reads `sensor 9d 5h · 19h left`, amber inside the last
+  day and red once it is past, with when the panel last fetched on the other
+  end. New `sensor_days` setting (default 10 — a G6/G7 lasts 10 days, a
   Libre 14) sets the expected life; `0` keeps showing the age without ever
   calling it expiring, which is what you want if your uploader logs no sensor
   changes. `sugarrush snapshot` carries the same as a `sensor` block.

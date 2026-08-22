@@ -300,17 +300,6 @@ Panel {
               }
             }
 
-            Text {
-              anchors.right: nowPill.left
-              anchors.rightMargin: Style.space(10)
-              anchors.verticalCenter: parent.verticalCenter
-              visible: root.sensor !== null
-              color: root.sensorColor()
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              text: root.sensorWords()
-            }
-
             Rectangle {
               id: nowPill
               anchors.right: parent.right
@@ -370,6 +359,43 @@ Panel {
                 + " · GMI " + root.stats.gmi.toFixed(1) + "%"
                 + " · CV " + (root.stats.cv === undefined ? "—" : root.stats.cv.toFixed(1) + "%")
               : ""
+          }
+        }
+
+        // A status strip, not a card: the sensor and the fetch time describe the
+        // rig rather than the glucose, and they are the two things here that
+        // do not change every five minutes.
+        Item {
+          width: parent.width
+          implicitHeight: Math.max(sensorText.implicitHeight, fetchedText.implicitHeight)
+            + Style.space(8)
+          visible: root.sensor !== null && root.loadError === ""
+
+          Rectangle {
+            anchors.top: parent.top
+            width: parent.width
+            height: 1
+            color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.16)
+          }
+
+          Text {
+            id: sensorText
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            color: root.sensorColor()
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: root.sensorWords()
+          }
+
+          Text {
+            id: fetchedText
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            color: Qt.darker(root.barForeground, 1.45)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: root.reading ? "updated " + root.reading.age_min + "m ago" : ""
           }
         }
 
