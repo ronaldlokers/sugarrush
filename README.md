@@ -86,8 +86,8 @@ can understand and revisit the arrangement as their independence changes.
   that lists everyone you watch at once, worst first. Each site can carry the
   person's IANA timezone so AGP patterns and clinical exports describe their
   day rather than the viewer's clock
-- **Status-bar output** for Waybar, tmux, polybar, i3blocks, or anything that
-  takes plain text (see [Status bars](#status-bars))
+- **Status-bar output** for Waybar, Quickshell, tmux, polybar, i3blocks, or
+  anything that takes plain text (see [Status bars](#status-bars))
 - Optionally, **logging carbs and insulin** back to Nightscout — off by default,
   behind a separate token and an explicit confirmation
   (see [Writing treatments](#writing-treatments))
@@ -385,7 +385,7 @@ sugarrush status                      # 5.6 → +0.2
 sugarrush status --format tmux        # #[fg=#98971a]5.6 → +0.2#[default]
 sugarrush status --format polybar     # %{F#98971a}5.6 → +0.2%{F-}
 sugarrush status --format i3blocks    # full text / short text / colour
-sugarrush status --format waybar      # {"text":…,"tooltip":…,"class":…}
+sugarrush status --format waybar      # {"text":…,"tooltip":…,"class":…,"color":…}
 ```
 
 Colours follow your configured theme, so the colourblind-safe palette carries
@@ -415,6 +415,12 @@ interval=60
 `--format waybar` under the hood). Example Waybar assets in
 [`waybar/`](waybar/): the custom module, a Graph/Settings/About menu (Waybar
 ≥ 0.11.0), per-state CSS, and Hyprland float rules.
+
+The JSON also carries a `color` — the state colour from your theme — which
+Waybar ignores and a bar with no stylesheet can use. [`quickshell/`](quickshell/)
+is one such bar: a widget for the Omarchy 4 shell that colours itself from that
+field, shows the tooltip on hover, and opens the TUI or its settings screen on
+click.
 
 ## Always-on alarm
 

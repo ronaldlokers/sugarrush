@@ -631,9 +631,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[cfg(unix)]
     fn set_mtime(path: &Path, when: std::time::SystemTime) {
         // No filetime crate here; go through the file's own handle.
+        // `File::set_modified` is cross-platform, and the test that calls this
+        // is not gated — a `#[cfg(unix)]` here failed the Windows build with
+        // "cannot find function `set_mtime`" rather than skipping anything.
         let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         file.set_modified(when).unwrap();
     }

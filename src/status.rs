@@ -103,11 +103,16 @@ impl Status {
     pub fn render(&self, format: Format) -> String {
         let hex = hex(self.color);
         match format {
+            // `color` is not part of Waybar's schema — Waybar ignores it, and
+            // it styles the module from the class via CSS. It is here for bars
+            // that have no stylesheet to write, notably the Quickshell widget,
+            // so they can follow the configured sugarrush theme.
             Format::Waybar => json!({
                 "text": self.text(),
                 "tooltip": self.tooltip,
                 "class": self.state.class(),
                 "percentage": self.percentage,
+                "color": hex,
             })
             .to_string(),
             // i3blocks reads three lines: full text, short text, colour.
@@ -292,6 +297,9 @@ mod tests {
         assert_eq!(json["class"], "in-range");
         assert_eq!(json["percentage"], 42);
         assert_eq!(json["tooltip"], "tip");
+        // Waybar ignores the extra key; a QML bar widget uses it to follow the
+        // configured sugarrush theme instead of hard-coding its own palette.
+        assert_eq!(json["color"], "#123456");
     }
 
     #[test]
