@@ -32,9 +32,14 @@ Panel {
   property var doc: null
   property string loadError: ""
 
-  // "now" or "settings". A view, not a second panel: the cards below simply
-  // swap, so the header, the strip and the popout identity stay put.
-  property string view: "now"
+  // "glucose" or "settings". A view, not a second panel: the cards below
+  // simply swap, so the header, the strip and the popout identity stay put.
+  //
+  // Named for the data, not the moment: the view holds six hours of chart and
+  // fourteen days of patterns as well as the reading, and it already contains
+  // a card called Now. "Dashboard" is taken — that is the TUI, which the
+  // button beside these chips opens.
+  property string view: "glucose"
   // key -> value, as `sugarrush config` prints it.
   property var config: ({})
   property string configError: ""
@@ -407,7 +412,7 @@ Panel {
         }
 
         ButtonGroup {
-          options: [{ value: "now", label: "Now" }, { value: "settings", label: "Settings" }]
+          options: [{ value: "glucose", label: "Glucose" }, { value: "settings", label: "Settings" }]
           value: root.view
           foreground: root.barForeground
           fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -419,7 +424,7 @@ Panel {
         // Whatever went wrong replaces the cards: there is nothing to put in
         // them, and three empty boxes explain less than one sentence does.
         Text {
-          visible: (root.loadError !== "" || !root.reading) && root.view === "now"
+          visible: (root.loadError !== "" || !root.reading) && root.view === "glucose"
           width: parent.width
           wrapMode: Text.WordWrap
           color: root.barForeground
@@ -433,7 +438,7 @@ Panel {
         // settling, and that difference is the one the panel exists to show.
         Card {
           label: "Now"
-          visible: root.reading !== null && root.loadError === "" && root.view === "now"
+          visible: root.reading !== null && root.loadError === "" && root.view === "glucose"
 
           Item {
             width: parent.width
@@ -537,7 +542,7 @@ Panel {
 
         Card {
           label: "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
-          visible: root.loadError === "" && root.view === "now"
+          visible: root.loadError === "" && root.view === "glucose"
 
           Chart {
             width: parent.width
@@ -551,7 +556,7 @@ Panel {
           label: root.stats
             ? "Last " + root.stats.window_h + (root.stats.window_h === 1 ? " hour" : " hours")
             : ""
-          visible: root.stats !== null && root.loadError === "" && root.view === "now"
+          visible: root.stats !== null && root.loadError === "" && root.view === "glucose"
 
           TirBar {
             width: parent.width
@@ -700,7 +705,7 @@ Panel {
           width: parent.width
           implicitHeight: Math.max(sensorText.implicitHeight, fetchedText.implicitHeight)
             + Style.space(8)
-          visible: root.sensor !== null && root.loadError === "" && root.view === "now"
+          visible: root.sensor !== null && root.loadError === "" && root.view === "glucose"
 
           Rectangle {
             anchors.top: parent.top
@@ -732,7 +737,7 @@ Panel {
 
         Card {
           label: "Patterns · last " + root.insightDays + " days"
-          visible: root.hasInsights && root.view === "now"
+          visible: root.hasInsights && root.view === "glucose"
 
           Repeater {
             model: root.doc && root.doc.insights ? root.doc.insights : []

@@ -125,7 +125,10 @@ bar's own foreground, and to the bar's urgent colour for the two urgent states.
 
 ## Settings in the panel
 
-The chips under the wordmark swap the panel between **Now** and **Settings**.
+The chips under the wordmark swap the panel between **Glucose** and
+**Settings** — glucose rather than "now", since that view carries six hours of
+chart and fourteen days of patterns as well as the reading, and rather than
+"dashboard", which is what this panel's own button opens.
 The settings view edits two different things, and says so by grouping them:
 
 - **Alarm thresholds** and **Alarm** write `~/.config/sugarrush/config.toml`

@@ -17,7 +17,7 @@ All notable changes to sugarrush are documented here. The format is based on
 ### Added
 
 - **The Quickshell panel has a settings view.** Chips under the wordmark swap
-  between the reading and settings: alarm thresholds, audible alarm and sensor
+  between Glucose and Settings: alarm thresholds, audible alarm and sensor
   life write `config.toml` through `sugarrush config`, while the panel's own
   chart window and pattern history write the bar's config. A refused value —
   crossed thresholds — says so under the rows. Sites, tokens, quiet hours and
