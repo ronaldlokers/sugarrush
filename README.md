@@ -63,7 +63,8 @@ can understand and revisit the arrangement as their independence changes.
 - In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows),
   switchable to **content-free** so nothing readable lands on a lock screen
 - On **Omarchy**, urgent alerts also take the shell's **on-screen display**,
-  which sits above fullscreen windows and is not suppressed by Do Not Disturb
+  which sits above fullscreen windows and is not suppressed by Do Not Disturb,
+  and the notification is **clickable to snooze** the site that alarmed
 - **Audible alarm** for urgent lows/highs with snooze, per-level tones,
   **quiet hours**, and unacknowledged-alarm **escalation** (incl. phone push)
 - Predictive alerts before a threshold is crossed; offline vs. sensor-gap

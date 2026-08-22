@@ -2265,6 +2265,10 @@ fn deliver(app: &mut App, r: app::Reaction, fetch: &Fetcher) {
                 app.live_latest().map(|e| e.sgv),
                 app.units,
                 app.alerts.notify_content,
+                Some(snooze_command(
+                    &app.active_site().name,
+                    app.alerts.snooze_minutes,
+                )),
             );
             app.notify_failed = !accepted;
             if !app.demo {
@@ -2418,6 +2422,10 @@ async fn refresh(app: &mut App, client: &Client) {
                 app.live_latest().map(|e| e.sgv),
                 app.units,
                 app.alerts.notify_content,
+                Some(snooze_command(
+                    &app.active_site().name,
+                    app.alerts.snooze_minutes,
+                )),
             );
         }
     }
@@ -2426,35 +2434,85 @@ async fn refresh(app: &mut App, client: &Client) {
     }
 }
 
+/// Wrap an argument in single quotes so a shell runs it as one word.
+///
+/// The snooze command travels to Omarchy's notification service as a string
+/// and is run by a shell on click, so a site name with a space in it would
+/// arrive as two arguments and one with a quote in it as something worse.
+fn shell_quote(arg: &str) -> String {
+    format!("'{}'", arg.replace('\'', "'\\''"))
+}
+
+/// The command a click on the notification runs: snooze this one site.
+///
+/// Named by site rather than `--all`, because answering one person's alarm
+/// must never silence another's — the same rule the CLI enforces.
+pub(crate) fn snooze_command(site: &str, minutes: i64) -> String {
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(shell_quote))
+        .unwrap_or_else(|| "sugarrush".to_string());
+    format!("{exe} snooze {minutes} --site {}", shell_quote(site))
+}
+
 /// Fire a best-effort desktop notification for an alert.
 pub(crate) fn notify(
     alert: alert::Alert,
     sgv: Option<f64>,
     units: units::Units,
     content: bool,
+    snooze: Option<String>,
 ) -> bool {
-    // Content-free mode still fires — and still as critical, so it breaks
-    // through Do Not Disturb — but says nothing a lock screen shouldn't show.
+    // Content-free mode still fires — critical, though on Omarchy that is not
+    // the Do Not Disturb exemption it reads as (see `src/osd.rs`) — but says
+    // nothing a lock screen shouldn't show.
     if !content {
-        return desktop_notify("alert — open sugarrush", alert.urgency() == "critical");
+        return desktop_notify(
+            "alert — open sugarrush",
+            alert.urgency() == "critical",
+            snooze,
+        );
     }
     let body = match sgv {
         Some(v) => format!("{} · {} {}", alert.label(), units.format(v), units.label()),
         None => alert.label().to_string(),
     };
-    desktop_notify(&body, alert.urgency() == "critical")
+    desktop_notify(&body, alert.urgency() == "critical", snooze)
+}
+
+/// Fire a plain notification that still carries the snooze action. The
+/// several-sites case names the site in the body, so it cannot go through
+/// `notify`, but it must not lose the click that answers it.
+pub(crate) fn notify_with_snooze(body: &str, critical: bool, snooze: String) -> bool {
+    desktop_notify(body, critical, Some(snooze))
 }
 
 /// Fire a plain desktop notification (used for predictive alerts).
 pub(crate) fn notify_text(body: &str) -> bool {
-    desktop_notify(body, false)
+    desktop_notify(body, false, None)
 }
 
 /// Cross-platform desktop notification (Linux / macOS / Windows) via
 /// notify-rust. Best-effort — errors are ignored.
-fn desktop_notify(body: &str, critical: bool) -> bool {
+fn desktop_notify(body: &str, critical: bool, snooze: Option<String>) -> bool {
     let mut n = notify_rust::Notification::new();
     n.summary("sugarrush").body(body).appname("sugarrush");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(command) = snooze {
+        // Omarchy runs this on click and, because it travels as data rather
+        // than as a live libnotify action, a toast still works after the
+        // shell restarts — which the 3am case cannot assume it hasn't.
+        // Every other notification server ignores an unknown hint.
+        n.hint(notify_rust::Hint::Custom("omarchy-exec".into(), command));
+        n.hint(notify_rust::Hint::Custom(
+            "omarchy-glyph".into(),
+            osd::glyph(alert::Alert::UrgentLow).into(),
+        ));
+    }
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    {
+        let _ = snooze;
+    }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         n.urgency(if critical {
@@ -2546,6 +2604,32 @@ fn install_panic_hook() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_snooze_command_targets_one_site_for_the_configured_length() {
+        let command = snooze_command("Ronald", 15);
+        assert!(
+            command.ends_with("snooze 15 --site 'Ronald'"),
+            "got {command}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_site_name_cannot_break_out_of_the_snooze_command() {
+        // The name comes from the config file, so this is less an attacker
+        // than a person with an apostrophe in their name — but the command is
+        // handed to a shell on click, and a quote that closes early turns the
+        // rest of the name into a second command. Checked against a real
+        // shell, since the only thing that matters is how one reads it.
+        let name = "Ro'; echo broken-out; echo '";
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("printf %s {}", shell_quote(name)))
+            .output()
+            .expect("sh runs");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), name);
+    }
 
     fn app() -> App {
         let cfg = Config::demo();

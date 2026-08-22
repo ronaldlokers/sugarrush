@@ -44,6 +44,16 @@ is resolved from current config for each attempt. Recovery cancels a pending
 webhook so an old escalation cannot arrive after the episode ended. The
 dashboard remains one-shot because it does not own the durable watcher state.
 
+On Omarchy the notification is also answerable: it carries an `omarchy-exec`
+hint holding `sugarrush snooze <snooze_minutes> --site <name>`, which the shell
+runs when the toast is clicked. Three properties of that are load-bearing. It
+travels as data rather than as a live libnotify action, so a toast still works
+after the shell restarts — which nothing at 3am can assume it hasn't. It names
+one site, because answering one person's alarm must never silence another's.
+And the site name is shell-quoted (`snooze_command`), since it reaches a shell
+as a string. Other notification servers ignore an unknown hint, so the
+notification is unchanged everywhere else.
+
 Urgent alerts take a third desktop channel where one exists: Omarchy's
 on-screen display, driven by `src/osd.rs`. It matters because the notification
 is not the guaranteed channel it reads as. Omarchy's notification service
@@ -196,6 +206,11 @@ The OSD's own rules are covered in `src/osd.rs`:
 
 - `only_urgent_alerts_reach_the_osd`
 - `a_content_free_payload_carries_no_reading`
+
+and the notification's snooze action in `src/main.rs`:
+
+- `the_snooze_command_targets_one_site_for_the_configured_length`
+- `a_site_name_cannot_break_out_of_the_snooze_command`
 
 A change to the alarm path that does not break one of these has probably not
 been tested. Add to them.

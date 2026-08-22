@@ -16,6 +16,13 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Click an alert notification to snooze it.** On Omarchy the toast now
+  carries the snooze command, so answering a 3am alarm no longer means finding
+  a terminal. It snoozes for the configured length and targets only the site
+  that alarmed, and because the command travels with the notification rather
+  than as a live action, a toast still answers after a shell restart. Other
+  desktops are unaffected.
+
 - **Urgent alerts also show on Omarchy's on-screen display.** Do Not Disturb
   drops sugarrush's desktop notification outright — critical urgency does not
   buy an exemption — so an urgent low could pass with nothing on screen. The
