@@ -198,19 +198,41 @@ fn produced_sound(child: &mut Child) -> bool {
 
 /// Spawn the first working audio player on this platform, detached.
 /// Returns which one actually produced sound, if any.
+/// The players to try, in order. (program, args-before-file); the file path is
+/// appended last.
+#[cfg(not(test))]
+const CANDIDATES: &[(&str, &[&str])] = &[
+    ("paplay", &[]),
+    ("pw-play", &[]),
+    ("aplay", &["-q"]),
+    ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]),
+    ("canberra-gtk-play", &["-f"]), // canberra wants --file=; handled below
+    ("afplay", &[]),                // macOS
+    ("cvlc", &["--play-and-exit", "--intf", "dummy"]),
+];
+
+/// A stand-in for the real players in a test build, because `alarm` is
+/// fire-and-forget: it spawns a detached thread, the test process exits, and
+/// the orphaned player goes on playing. `cargo test` on a desktop machine
+/// sounded a real alarm through the speakers, and did it from a run that
+/// asserts nothing about whether sound was produced.
+///
+/// Swapping the table rather than short-circuiting `play` keeps the seam
+/// closed for every test, present and future, instead of asking each one to
+/// remember to opt in. It also keeps discovery honest: the stand-in outlives
+/// `STARTUP_CHECKS`, so `play` takes its full ~150ms here, and a `play`
+/// that stopped being backgrounded would fail the timing test rather than
+/// pass it trivially.
+#[cfg(all(test, unix))]
+const CANDIDATES: &[(&str, &[&str])] = &[("sh", &["-c", "sleep 0.4"])];
+
+/// Nothing to stand in with off unix, so a test build simply finds no player.
+#[cfg(all(test, not(unix)))]
+const CANDIDATES: &[(&str, &[&str])] = &[];
+
 fn play(path: &Path) -> Option<&'static str> {
-    // (program, args-before-file). The file path is appended last.
-    let candidates: [(&str, &[&str]); 7] = [
-        ("paplay", &[]),
-        ("pw-play", &[]),
-        ("aplay", &["-q"]),
-        ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]),
-        ("canberra-gtk-play", &["-f"]), // canberra wants --file=; handled below
-        ("afplay", &[]),                // macOS
-        ("cvlc", &["--play-and-exit", "--intf", "dummy"]),
-    ];
     let known_good = WORKING.lock().ok().and_then(|w| *w);
-    for (prog, args) in candidates {
+    for &(prog, args) in CANDIDATES {
         // Don't keep paying for a player that has already proven it can't
         // reach the audio server here.
         if FAILED.lock().is_ok_and(|f| f.contains(&prog)) {
