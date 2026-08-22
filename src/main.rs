@@ -11,6 +11,7 @@ mod follow;
 mod health;
 mod history_cache;
 mod nightscout;
+pub(crate) mod osd;
 mod predict;
 mod selftest;
 mod service;
@@ -2272,6 +2273,24 @@ fn deliver(app: &mut App, r: app::Reaction, fetch: &Fetcher) {
                     Some(&app.active_site().stable_id()),
                     "desktop",
                     if accepted { "accepted" } else { "rejected" },
+                    a,
+                );
+            }
+        }
+        if osd::should_show(&app.alerts, a) {
+            let shown = osd::show(&osd::payload(
+                a,
+                app.live_latest().map(|e| e.sgv),
+                app.units,
+                app.alerts.notify_content,
+                osd::SECONDS,
+            ));
+            if !app.demo {
+                alertlog::record_delivery(
+                    &app.active_site().name,
+                    Some(&app.active_site().stable_id()),
+                    "osd",
+                    if shown { "accepted" } else { "rejected" },
                     a,
                 );
             }

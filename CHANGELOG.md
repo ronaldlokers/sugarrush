@@ -16,6 +16,15 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Urgent alerts also show on Omarchy's on-screen display.** Do Not Disturb
+  drops sugarrush's desktop notification outright — critical urgency does not
+  buy an exemption — so an urgent low could pass with nothing on screen. The
+  OSD is drawn by the shell above fullscreen windows and outside notification
+  policy, and now carries urgent alerts alongside the notification. Urgent
+  states only, it honours the content-free setting, and it is silently skipped
+  on other desktops. Turn it off with `osd = false` under `[alerts]`, or from
+  the settings screen.
+
 - **The Quickshell panel has a settings view.** Chips under the wordmark swap
   between Glucose and Settings: alarm thresholds, audible alarm and sensor
   life write `config.toml` through `sugarrush config`, while the panel's own

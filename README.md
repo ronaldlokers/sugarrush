@@ -62,6 +62,8 @@ can understand and revisit the arrangement as their independence changes.
   while it is up
 - In-TUI banner + cross-platform desktop notifications (Linux/macOS/Windows),
   switchable to **content-free** so nothing readable lands on a lock screen
+- On **Omarchy**, urgent alerts also take the shell's **on-screen display**,
+  which sits above fullscreen windows and is not suppressed by Do Not Disturb
 - **Audible alarm** for urgent lows/highs with snooze, per-level tones,
   **quiet hours**, and unacknowledged-alarm **escalation** (incl. phone push)
 - Predictive alerts before a threshold is crossed; offline vs. sensor-gap
@@ -309,6 +311,7 @@ sugarrush alarm self-test
 · quiet hours            set (23:00–07:00), not active now
 ✓ snooze                 none active
 ✓ desktop notification   delivered
+✓ on-screen display      shown
 · push webhook           not configured
 ✗ escalation             set to 10 min but the push webhook is its only
                          channel — it will do nothing

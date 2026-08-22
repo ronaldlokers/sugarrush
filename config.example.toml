@@ -65,6 +65,8 @@ urgent_high = 13.9    # red banner + critical notification at or above
 stale_minutes = 15    # warn when the newest reading is older than this
 desktop = true        # fire desktop notifications (Linux/macOS/Windows)
 sound = true          # looping audible alarm on urgent low/high and stale data
+osd = true            # also show urgent alerts on Omarchy's on-screen display,
+                      # which Do Not Disturb cannot suppress (ignored elsewhere)
 snooze_minutes = 15   # how long the `a` key silences the audible alarm
 # Quiet hours: during this window only urgent-low sounds (others stay silent).
 # Omit to disable. The window may cross midnight.

@@ -23,6 +23,7 @@ pub enum Field {
     Units,
     Refresh,
     Desktop,
+    Osd,
     NotifyContent,
     Sound,
     /// Not a setting — an action. Runs the alarm self-test.
@@ -58,7 +59,7 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 43] = [
+    pub const ALL: [Field; 44] = [
         Field::SiteName,
         Field::SiteUrl,
         Field::SiteToken,
@@ -71,6 +72,7 @@ impl Field {
         Field::Units,
         Field::Refresh,
         Field::Desktop,
+        Field::Osd,
         Field::NotifyContent,
         Field::Sound,
         Field::TestAlarm,
@@ -118,6 +120,7 @@ impl Field {
             Field::Units => "Units",
             Field::Refresh => "Refresh interval",
             Field::Desktop => "Desktop notifications",
+            Field::Osd => "On-screen display",
             Field::NotifyContent => "Notification detail",
             Field::Sound => "Audible alarm",
             Field::TestAlarm => "Test the alarm",
@@ -171,6 +174,7 @@ impl Field {
             | Field::CacheEnabled
             | Field::CacheDays => "General",
             Field::Desktop
+            | Field::Osd
             | Field::NotifyContent
             | Field::Sound
             | Field::TestAlarm
@@ -515,6 +519,7 @@ impl App {
             Field::SiteAlerts => self.set_site_alert_override(!self.site_alert_override()),
             Field::Units => self.toggle_units(),
             Field::Desktop => self.alerts.desktop = !self.alerts.desktop,
+            Field::Osd => self.alerts.osd = !self.alerts.osd,
             Field::Sound => self.alerts.sound = !self.alerts.sound,
             Field::TestAlarm => {
                 self.status = Some("press enter to run the alarm test".to_string());
@@ -839,6 +844,7 @@ impl App {
             Field::Units => self.units.label().to_string(),
             Field::Refresh => format!("{}s", self.refresh_secs),
             Field::Desktop => if self.alerts.desktop { "on" } else { "off" }.to_string(),
+            Field::Osd => if self.alerts.osd { "on" } else { "off" }.to_string(),
             Field::Sound => if self.alerts.sound { "on" } else { "off" }.to_string(),
             Field::TestAlarm => self
                 .alarm_test
