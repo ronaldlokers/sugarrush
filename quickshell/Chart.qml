@@ -50,6 +50,15 @@ Item {
 
   function follow() { viewStartMs = -1 }
 
+  // One notch moves a twelfth of the window — half an hour on a six-hour
+  // chart. A quarter of the window per notch flew past whatever you were
+  // trying to look at. Fractional deltas come from touchpads, and scale the
+  // same way rather than being rounded up to a whole notch.
+  function panByWheel(angleDeltaY) {
+    var notches = angleDeltaY / 120
+    panBy(-notches * viewSpanMs / 12)
+  }
+
   // What the chart is actually showing, which is not always what was fetched.
   readonly property real windowStart: live ? dataLastMs - viewSpanMs : viewStartMs
   readonly property real windowEnd: windowStart + viewSpanMs
@@ -379,7 +388,7 @@ Item {
         if (pressed) root.jumpToX(mouse.x, parent.width)
       }
       onWheel: function (wheel) {
-        root.panBy(wheel.angleDelta.y > 0 ? -root.viewSpanMs / 4 : root.viewSpanMs / 4)
+        root.panByWheel(wheel.angleDelta.y)
         wheel.accepted = true
       }
     }
@@ -481,7 +490,7 @@ Item {
     // A quarter of the window per notch: enough to move, small enough to land
     // where you meant to.
     onWheel: function (wheel) {
-      root.panBy(wheel.angleDelta.y > 0 ? -root.viewSpanMs / 4 : root.viewSpanMs / 4)
+      root.panByWheel(wheel.angleDelta.y)
       wheel.accepted = true
     }
   }
