@@ -562,6 +562,7 @@ fn field_detail(field: Field) -> &'static str {
         Field::Units => "How glucose values and editable thresholds are displayed. Internally, safety comparisons remain in mg/dL.",
         Field::Refresh => "How often the dashboard asks Nightscout for new data. The watcher uses its own conservative polling policy.",
         Field::Desktop => "Send a desktop notification when an alert episode starts or a predictive warning becomes due.",
+        Field::Osd => "Also show urgent alerts on Omarchy's on-screen display, which is drawn above fullscreen windows and is not suppressed by Do Not Disturb. Ignored on other desktops.",
         Field::NotifyContent => "Choose whether notifications include the reading and state, or stay generic for shared and locked screens.",
         Field::Sound => "Play the looping audible alarm for urgent and stale states. Use the test below to verify the machine can actually sound.",
         Field::TestAlarm => "Play the audible half of the alarm self-test now. Run `sugarrush watch --test` for every delivery channel.",

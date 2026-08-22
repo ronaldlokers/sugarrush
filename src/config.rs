@@ -274,6 +274,10 @@ pub struct AlertsConfig {
     /// Play a looping audible alarm on urgent/stale states.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sound: Option<bool>,
+    /// Also show urgent alerts on Omarchy's on-screen display, which no
+    /// notification policy can suppress. Ignored where that shell is absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub osd: Option<bool>,
     /// How long the snooze key silences the audible alarm, in minutes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snooze_minutes: Option<i64>,
@@ -316,6 +320,7 @@ impl AlertsConfig {
             urgent_high: Some(units.from_mgdl(alerts.urgent_high)),
             stale_minutes: Some(alerts.stale_minutes),
             desktop: Some(alerts.desktop),
+            osd: Some(alerts.osd),
             sound: Some(alerts.sound),
             snooze_minutes: Some(alerts.snooze_minutes),
             quiet_start: alerts.quiet_start.map(fmt_hhmm),
@@ -383,6 +388,7 @@ impl AlertsConfig {
             urgent_high,
             stale_minutes,
             desktop: self.desktop.unwrap_or(d.desktop),
+            osd: self.osd.unwrap_or(d.osd),
             sound: self.sound.unwrap_or(d.sound),
             snooze_minutes: self.snooze_minutes.unwrap_or(d.snooze_minutes),
             quiet_start: self.quiet_start.as_deref().and_then(parse_hhmm),
@@ -526,6 +532,7 @@ pub struct Alerts {
     pub urgent_high: f64,
     pub stale_minutes: i64,
     pub desktop: bool,
+    pub osd: bool,
     pub sound: bool,
     pub snooze_minutes: i64,
     /// Quiet-hours window as minutes-of-day; `None` when disabled.
@@ -548,6 +555,7 @@ impl Default for Alerts {
             urgent_high: 250.0,
             stale_minutes: 15,
             desktop: true,
+            osd: true,
             sound: true,
             snooze_minutes: 15,
             quiet_start: None,
@@ -1282,6 +1290,7 @@ desktop = false
             units: Units::Mmol,
             refresh_secs: 30,
             alerts: AlertsConfig {
+                osd: Some(true),
                 urgent_low: Some(3.0),
                 low: Some(3.9),
                 high: Some(10.0),

@@ -229,6 +229,36 @@ pub async fn run(quiet: bool) -> Result<()> {
         }
     }
 
+    // 6b. The on-screen display: the only desktop channel Do Not Disturb
+    //     cannot take away, and therefore worth its own line in the report.
+    if !profiles.iter().any(|(_, alerts)| alerts.osd) {
+        checks.push(Check::Off(
+            "on-screen display".into(),
+            "off (osd = false)".into(),
+        ));
+    } else if quiet {
+        checks.push(Check::Off(
+            "on-screen display".into(),
+            "on — not shown (--quiet)".into(),
+        ));
+    } else if crate::osd::show(&crate::osd::payload(
+        crate::alert::Alert::InRange,
+        None,
+        crate::units::Units::Mgdl,
+        false,
+        3,
+    )) {
+        checks.push(Check::Ok("on-screen display".into(), "shown".into()));
+    } else {
+        // Not `Bad`: the OSD is Omarchy's, and every other desktop is
+        // expected to have no shell to answer. Its absence is only news to
+        // someone who turned it on.
+        checks.push(Check::Off(
+            "on-screen display".into(),
+            "no Omarchy shell answered — nothing shown".into(),
+        ));
+    }
+
     // 7. The push webhook — the channel that reaches a phone, and the only one
     //    escalation has.
     for (site, alerts) in &profiles {

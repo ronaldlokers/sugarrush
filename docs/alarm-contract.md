@@ -44,7 +44,33 @@ is resolved from current config for each attempt. Recovery cancels a pending
 webhook so an old escalation cannot arrive after the episode ended. The
 dashboard remains one-shot because it does not own the durable watcher state.
 
-Each desktop and webhook attempt is appended to the owner-only alert history
+On Omarchy the notification is also answerable: it carries an `omarchy-exec`
+hint holding `sugarrush snooze <snooze_minutes> --site <name>`, which the shell
+runs when the toast is clicked. Three properties of that are load-bearing. It
+travels as data rather than as a live libnotify action, so a toast still works
+after the shell restarts — which nothing at 3am can assume it hasn't. It names
+one site, because answering one person's alarm must never silence another's.
+And the site name is shell-quoted (`snooze_command`), since it reaches a shell
+as a string. Other notification servers ignore an unknown hint, so the
+notification is unchanged everywhere else.
+
+Urgent alerts take a third desktop channel where one exists: Omarchy's
+on-screen display, driven by `src/osd.rs`. It matters because the notification
+is not the guaranteed channel it reads as. Omarchy's notification service
+suppresses everything under Do Not Disturb except its own toasts and
+`notify-send` at critical urgency, and sugarrush sends under its own app name —
+so critical urgency alone does **not** break through. The OSD is drawn by the
+shell on the overlay layer: above fullscreen windows, and outside notification
+policy entirely. It is best-effort and silent where that shell is absent.
+
+Two rules bound it. Only urgent states reach it (`osd::should_show`) — a
+channel that cannot be deferred must not be spent on a routine crossing. And
+it obeys `notify_content` like the notification does, more strictly than the
+notification needs to: no lock screen stands between the OSD and the room.
+It is deliberately *not* gated on `alerts.desktop`, because turning off daytime
+toasts is not a request to lose the channel that survives Do Not Disturb.
+
+Each desktop, OSD, and webhook attempt is appended to the owner-only alert history
 without its URL, token, message, or glucose value. Outcomes are called
 `accepted` or `rejected`: endpoint acceptance is evidence about the software
 path, never evidence that a person received, read, or heard the alert.
@@ -164,6 +190,8 @@ alarm self-test exists:
 6. The dashboard is open and has claimed the alarm, but is on another site
 7. Readings are arriving, so nothing is `Stale`, but they are wrong
 8. `escalate_minutes` is set with no `push_url`, so escalation has no channel
+9. Do Not Disturb, which drops the desktop notification outright on Omarchy —
+   the OSD is the answer to this one, and `alerts.osd = false` takes it away
 
 ## Testing
 
@@ -173,6 +201,16 @@ The reaction sequence is covered in `src/app.rs`:
 - `a_notification_is_consumed_even_when_it_cannot_be_delivered`
 - `escalation_fires_on_the_pass_that_earns_it`
 - `recovery_is_reported_once_and_only_after_an_alarm`
+
+The OSD's own rules are covered in `src/osd.rs`:
+
+- `only_urgent_alerts_reach_the_osd`
+- `a_content_free_payload_carries_no_reading`
+
+and the notification's snooze action in `src/main.rs`:
+
+- `the_snooze_command_targets_one_site_for_the_configured_length`
+- `a_site_name_cannot_break_out_of_the_snooze_command`
 
 A change to the alarm path that does not break one of these has probably not
 been tested. Add to them.

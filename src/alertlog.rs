@@ -303,12 +303,6 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     out
 }
 
-/// `sugarrush alerts --days N` — what the alarm did, and for how long.
-#[cfg(test)]
-pub fn report(days: i64, units: Units) -> String {
-    report_site(days, units, None)
-}
-
 pub fn render(days: i64, units: Units, site: Option<&str>, format: Format) -> Result<String> {
     let since = crate::now_ms() - days.max(1) * 86_400_000;
     let records = filtered_records(since, site)?;
@@ -317,13 +311,6 @@ pub fn render(days: i64, units: Units, site: Option<&str>, format: Format) -> Re
         Format::Json => format!("{}\n", serde_json::to_string_pretty(&records)?),
         Format::Csv => records_csv(&records),
     })
-}
-
-#[cfg(test)]
-pub fn report_site(days: i64, units: Units, site: Option<&str>) -> String {
-    let since = crate::now_ms() - days.max(1) * 86_400_000;
-    let records = filtered_records(since, site).unwrap_or_default();
-    report_records(days, units, site, records)
 }
 
 fn filtered_records(since: i64, site: Option<&str>) -> Result<Vec<Record>> {
@@ -547,7 +534,11 @@ mod tests {
     /// for a watcher that never ran would be the most dangerous possible lie.
     #[test]
     fn an_empty_log_says_it_might_mean_nothing_was_watching() {
-        let out = report(7, Units::Mgdl);
+        // Through `report_records` rather than `report`: the latter reads the
+        // real `$XDG_STATE_HOME`, so this passed only on a machine that had
+        // never alarmed — green in CI, red the moment a developer ran the
+        // self-test.
+        let out = report_records(7, Units::Mgdl, None, Vec::new());
         assert!(out.contains("Nothing recorded"));
         assert!(out.contains("nothing was running to notice"));
         assert!(out.contains("watch --test"));

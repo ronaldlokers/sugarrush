@@ -792,13 +792,18 @@ fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reaction {
             // The notification names the site, or a caregiver gets "URGENT
             // LOW" with no idea whose it is.
             let accepted = if multi && app.alerts.notify_content {
-                crate::notify_text(&format!("{}: {}", w.name, a.label()))
+                crate::notify_with_snooze(
+                    &format!("{}: {}", w.name, a.label()),
+                    a.urgency() == "critical",
+                    crate::snooze_command(&w.name, app.alerts.snooze_minutes),
+                )
             } else {
                 crate::notify(
                     a,
                     app.latest().map(|e| e.sgv),
                     app.units,
                     app.alerts.notify_content,
+                    Some(crate::snooze_command(&w.name, app.alerts.snooze_minutes)),
                 )
             };
             crate::alertlog::record_delivery(
@@ -806,6 +811,25 @@ fn react(w: &mut Watched, now_ms: i64, multi: bool) -> crate::app::Reaction {
                 Some(&w.id),
                 "desktop",
                 if accepted { "accepted" } else { "rejected" },
+                a,
+            );
+        }
+        // Deliberately outside the `desktop` check: the OSD is its own
+        // channel, and someone who turned notifications off to stop daytime
+        // toasts has not asked to lose the one that survives Do Not Disturb.
+        if crate::osd::should_show(&app.alerts, a) {
+            let shown = crate::osd::show(&crate::osd::payload(
+                a,
+                app.latest().map(|e| e.sgv),
+                app.units,
+                app.alerts.notify_content,
+                crate::osd::SECONDS,
+            ));
+            crate::alertlog::record_delivery(
+                &w.name,
+                Some(&w.id),
+                "osd",
+                if shown { "accepted" } else { "rejected" },
                 a,
             );
         }
