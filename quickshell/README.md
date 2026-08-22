@@ -41,7 +41,11 @@ not say so invites the wrong reading:
   The line carries the state, changing colour as it crosses a threshold, and
   seeing tonight sit above the band is the point of it. Hovering the chart
   drops a crosshair on the nearest reading and prints its value and time —
-  the reading itself, never an interpolation between two of them;
+  the reading itself, never an interpolation between two of them. Scroll the
+  chart to pan back through the fetched window; the strip underneath is that
+  whole window with a box showing where you are, and clicking or dragging it
+  jumps. Once panned, the card names the hours on screen and returns to live
+  when tapped, so a chart showing 3am never claims to be showing now;
 - **Last 24 hours** — the five time-in-range bands, with mean, GMI and CV;
 - **Patterns · last N days** — the times of day where lows or highs keep
   happening. The card appears only when there is a pattern to name: no
@@ -95,7 +99,8 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | `command` | `sugarrush waybar` | the command the pill reads a reading from |
 | `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
 | `onRightClick` | the same, plus `--screen settings` | right click |
-| `panelHours` | `6` | the panel chart's window |
+| `panelHours` | `6` | how much of the overview the chart shows at once |
+| `overviewHours` | `24` | how far back the chart can be scrolled, and the span of the strip under it (6-72) |
 | `insightDays` | `14` | history behind the patterns and the chart's typical-day band; `0` hides the patterns and skips the query |
 | `panelCacheMinutes` | `5` | how stale the panel's document may be when it opens |
 | `snapshotCommand` | `sugarrush snapshot` | the command the panel reads its document from |

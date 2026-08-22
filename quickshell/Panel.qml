@@ -22,6 +22,10 @@ Panel {
   readonly property var barIdentity: hostWidget || root
 
   readonly property int panelHours: setting("panelHours", 6)
+  // What gets fetched, and so how far back the chart can be scrolled. The
+  // overview strip spans exactly this. Same 6-72h range the dashboard's
+  // minimap uses.
+  readonly property int overviewHours: Math.max(panelHours, setting("overviewHours", 24))
   readonly property int insightDays: setting("insightDays", 14)
   readonly property int cacheMinutes: setting("panelCacheMinutes", 5)
   readonly property string snapshotCommand: setting("snapshotCommand", "sugarrush snapshot")
@@ -219,7 +223,9 @@ Panel {
 
   Process {
     id: snapProc
-    command: ["bash", "-lc", root.snapshotCommand + " --hours " + root.panelHours + " --days " + root.insightDays]
+    command: ["bash", "-lc",
+              root.snapshotCommand + " --hours " + root.overviewHours
+              + " --days " + root.insightDays]
     stdout: StdioCollector {
       id: snapOut
       waitForEnd: true
@@ -675,6 +681,16 @@ Panel {
             step: 1
             onChanged: function (next) {
               root.setWidget("panelHours", Math.max(1, Math.min(72, next)).toFixed(0))
+            }
+          }
+
+          SettingRow {
+            label: "Overview span"
+            suffix: " h"
+            value: root.overviewHours
+            step: 6
+            onChanged: function (next) {
+              root.setWidget("overviewHours", Math.max(6, Math.min(72, next)).toFixed(0))
             }
           }
 
