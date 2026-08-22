@@ -173,7 +173,11 @@ Item {
   Image {
     id: mascot
     source: Qt.resolvedUrl("mascot.svg")
-    height: Math.round((root.bar ? root.bar.barSize : 26) * 0.72)
+    // Sized off the reading's own type rather than the bar's height: the
+    // shell draws its glyph icons at Style.font.icon (14px against 12px
+    // text), and a mascot scaled to the slot instead of the type stood a
+    // third taller than every icon beside it.
+    height: Math.round(valueText.font.pixelSize * 7 / 6)
     // The artwork is wider than it is tall; squaring it would letterbox the
     // shape into a smaller drawing than the space allows.
     width: Math.round(height * 1051 / 908)
