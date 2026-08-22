@@ -16,6 +16,13 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The panel leads with the reading, and says where it is heading.** The
+  current value is three times its old size, beside the AR2 projection for
+  half an hour out — a 9.6 rising to 10.4 is a different evening from a 9.6
+  settling. Both are coloured by the band they land in. During a sensor gap the
+  projection is left out rather than fabricated, which is what `predict` has
+  always done for the dashboard. `sugarrush snapshot` carries it as a
+  `forecast` block.
 - **The panel says how old your sensor is, and when it runs out.** A status
   strip under the cards reads `sensor 9d 5h · 19h left`, amber inside the last
   day and red once it is past, with when the panel last fetched on the other

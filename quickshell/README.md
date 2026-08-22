@@ -31,7 +31,10 @@ rest is a stack of cards that each name the window they describe — because
 "mean 8.8" under a six-hour chart is a 24-hour figure, and a panel that does
 not say so invites the wrong reading:
 
-- **Now** — the reading, its trend in words, and how long ago it arrived;
+- **Now** — the reading at display size beside where it lands in half an hour,
+  both coloured by the band they fall in, with the trend and the delta. The
+  forecast is sugarrush's own AR2 projection; during a sensor gap it is absent
+  rather than guessed, and the arrow goes with it;
 - **Last N hours** — the chart: your reading over a typical day for the same
   hours, the median dashed and the 25–75% band shaded, each alert threshold
   ruled and labelled on the value axis, the clock along the bottom.

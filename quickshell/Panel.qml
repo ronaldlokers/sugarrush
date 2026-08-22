@@ -50,6 +50,20 @@ Panel {
   }
   readonly property var stats: doc && doc.stats ? doc.stats : null
   readonly property var sensor: doc && doc.sensor ? doc.sensor : null
+  readonly property var forecast: doc && doc.forecast ? doc.forecast : null
+
+  // The same ladder the chart and the pill use, so a number means the same
+  // thing wherever it appears.
+  function classColor(klass) {
+    switch (klass) {
+      case "urgent-low":
+      case "urgent-high": return "#cc241d"
+      case "low":
+      case "high": return "#d79921"
+      case "in-range": return "#98971a"
+      default: return barForeground
+    }
+  }
 
   // "6d 4h", the way the dashboard writes it.
   function ageWords(hours) {
@@ -267,43 +281,81 @@ Panel {
           text: root.loadError !== "" ? root.loadError : "waiting for the first reading"
         }
 
+        // Two numbers at the same size: the reading, and where it lands in
+        // half an hour. A 9.6 rising to 10.4 is a different evening from a 9.6
+        // settling, and that difference is the one the panel exists to show.
         Card {
           label: "Now"
           visible: root.reading !== null && root.loadError === ""
 
           Item {
             width: parent.width
-            implicitHeight: Math.max(nowRead.implicitHeight, nowPill.implicitHeight)
+            implicitHeight: heroRow.implicitHeight
 
-            Column {
-              id: nowRead
+            Row {
+              id: heroRow
               anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(1)
+              spacing: Style.space(10)
 
-              Text {
-                color: root.barForeground
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.title
-                text: root.reading
-                  ? root.reading.value + " " + (root.doc ? root.doc.units : "")
-                  : ""
+              Column {
+                spacing: 0
+
+                Text {
+                  color: root.reading ? root.classColor(root.reading.class) : root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.displayLarge
+                  font.bold: true
+                  text: root.reading ? root.reading.value : "—"
+                }
+
+                Text {
+                  color: Qt.darker(root.barForeground, 1.35)
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  text: root.reading
+                    ? (root.doc ? root.doc.units : "") + " · " + root.reading.arrow + " "
+                      + root.trendWords(root.reading.direction)
+                    : ""
+                }
               }
 
+              // Only drawn when there is a forecast: a sensor gap makes the
+              // projection a fabrication, and predict refuses it rather than
+              // guessing. An arrow to nothing would imply one anyway.
               Text {
-                color: Qt.darker(root.barForeground, 1.35)
+                visible: root.forecast !== null
+                anchors.verticalCenter: parent.verticalCenter
+                color: Qt.darker(root.barForeground, 1.6)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.caption
-                text: root.reading
-                  ? root.reading.arrow + "  " + root.trendWords(root.reading.direction)
-                  : ""
+                font.pixelSize: Style.font.title
+                text: "→"
+              }
+
+              Column {
+                visible: root.forecast !== null
+                spacing: 0
+
+                Text {
+                  color: root.forecast ? root.classColor(root.forecast.class) : root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.displayLarge
+                  opacity: 0.62
+                  text: root.forecast ? root.forecast.value.toFixed(1) : ""
+                }
+
+                Text {
+                  color: Qt.darker(root.barForeground, 1.35)
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  text: root.forecast ? "in " + root.forecast.in_min + " min" : ""
+                }
               }
             }
 
             Rectangle {
               id: nowPill
               anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
+              anchors.top: parent.top
               implicitWidth: pillText.implicitWidth + Style.space(14)
               implicitHeight: pillText.implicitHeight + Style.space(6)
               radius: height / 2

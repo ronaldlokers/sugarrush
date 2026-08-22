@@ -62,6 +62,8 @@ pub struct Snapshot {
     pub band: Option<BandDoc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sensor: Option<SensorDoc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forecast: Option<ForecastDoc>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +118,18 @@ pub struct BandDoc {
     pub days: usize,
     /// `[epoch_ms, p25, p50, p75]`, oldest first, in display units.
     pub points: Vec<(i64, f64, f64, f64)>,
+}
+
+/// Where the reading is heading, from the same AR2 projection the dashboard
+/// draws. The midpoint of the furthest step, not the whole cone: a panel has
+/// room for one number, and "10.4 in 30 min" is the part that changes what
+/// someone does next.
+#[derive(Debug, Clone, Serialize)]
+pub struct ForecastDoc {
+    pub in_min: i64,
+    pub value: f64,
+    /// The band that value lands in, so it can be coloured like the reading.
+    pub class: &'static str,
 }
 
 /// How long the sensor has been running, and — when its expected life is
@@ -223,6 +237,7 @@ pub fn build(input: BuildInput) -> Snapshot {
 
     let band = band_for(&history, &series, timezone, units);
     let sensor = sensor_for(sensor_start_ms, sensor_days, now_ms);
+    let forecast = forecast_for(&recent, &alerts, units);
 
     Snapshot {
         schema: 1,
@@ -241,7 +256,25 @@ pub fn build(input: BuildInput) -> Snapshot {
         insights: Some(insights),
         band,
         sensor,
+        forecast,
     }
+}
+
+/// The end of the AR2 projection, in display units.
+///
+/// `predict::ar2` returns nothing when the two newest readings are not a
+/// normal CGM step apart — a sensor gap extrapolated as if it were five
+/// minutes is how a benign drift once became a "heading low" — so an absent
+/// forecast here is a deliberate silence, not a failure.
+fn forecast_for(recent: &[Entry], alerts: &Alerts, units: Units) -> Option<ForecastDoc> {
+    let steps = crate::predict::ar2(recent);
+    let last = steps.last()?;
+    let midpoint = (last.low + last.high) / 2.0;
+    Some(ForecastDoc {
+        in_min: crate::predict::HORIZON_MINUTES,
+        value: scaled(units, midpoint),
+        class: crate::alert::from_value(midpoint, alerts).class(),
+    })
 }
 
 /// The sensor's age, and its remaining life when one is configured.
@@ -386,6 +419,7 @@ pub fn error_doc(now_ms: i64, message: &str) -> Snapshot {
         insights: None,
         band: None,
         sensor: None,
+        forecast: None,
     }
 }
 
@@ -786,5 +820,51 @@ mod tests {
     fn no_sensor_event_means_no_sensor_block() {
         let json = serde_json::to_value(build(input(vec![], vec![]))).unwrap();
         assert!(json.get("sensor").is_none());
+    }
+
+    #[test]
+    fn the_forecast_projects_the_reading_forward() {
+        // Two readings five minutes apart, climbing: AR2 has what it needs.
+        let json = serde_json::to_value(build(input(
+            vec![
+                entry(150.0, NOW - MIN, "SingleUp"),
+                entry(140.0, NOW - 6 * MIN, "SingleUp"),
+            ],
+            vec![],
+        )))
+        .unwrap();
+
+        assert_eq!(json["forecast"]["in_min"], 30);
+        // The horizon, not the next step: from 8.3 rising, the 5-minute
+        // projection is 8.8 and the 30-minute one is 9.6. Anything at or below
+        // 9.2 means the wrong end of the cone was reported.
+        let value = json["forecast"]["value"].as_f64().unwrap();
+        assert!((9.2..14.0).contains(&value), "got {value}");
+        // Where it lands decides the colour the panel gives it.
+        assert!(json["forecast"]["class"].is_string());
+    }
+
+    #[test]
+    fn a_gap_in_the_readings_forecasts_nothing() {
+        // Half an hour between readings: the model would extrapolate a benign
+        // drift into a fabricated low. No forecast beats a made-up one.
+        let json = serde_json::to_value(build(input(
+            vec![
+                entry(150.0, NOW - MIN, "Flat"),
+                entry(140.0, NOW - 31 * MIN, "Flat"),
+            ],
+            vec![],
+        )))
+        .unwrap();
+
+        assert!(json.get("forecast").is_none());
+    }
+
+    #[test]
+    fn one_reading_forecasts_nothing() {
+        let json =
+            serde_json::to_value(build(input(vec![entry(150.0, NOW - MIN, "Flat")], vec![])))
+                .unwrap();
+        assert!(json.get("forecast").is_none());
     }
 }
