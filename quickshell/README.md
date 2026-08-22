@@ -31,10 +31,13 @@ rest is a stack of cards that each name the window they describe — because
 "mean 8.8" under a six-hour chart is a 24-hour figure, and a panel that does
 not say so invites the wrong reading:
 
-- **Now** — the reading, its trend in words, and how long ago it arrived;
+- **Now** — the reading at display size beside where it lands in half an hour,
+  both coloured by the band they fall in, with the trend and the delta. The
+  forecast is sugarrush's own AR2 projection; during a sensor gap it is absent
+  rather than guessed, and the arrow goes with it;
 - **Last N hours** — the chart: your reading over a typical day for the same
-  hours, the median dashed and the 25–75% band shaded, each alert threshold in
-  its own colour and labelled on the value axis, the clock along the bottom.
+  hours, the median dashed and the 25–75% band shaded, each alert threshold
+  ruled and labelled on the value axis, the clock along the bottom.
   The line carries the state, changing colour as it crosses a threshold, and
   seeing tonight sit above the band is the point of it. Hovering the chart
   drops a crosshair on the nearest reading and prints its value and time —
@@ -43,6 +46,14 @@ not say so invites the wrong reading:
 - **Patterns · last N days** — the times of day where lows or highs keep
   happening. The card appears only when there is a pattern to name: no
   repeating low or high means no card, rather than an empty one.
+
+Under the cards runs a status strip — `sensor 9d 5h · 19h left` on the left,
+`updated 3m ago` on the right. Those two describe the rig rather than the
+glucose, and they are the only things in the panel that do not change every
+five minutes, so they sit apart from the cards rather than inside one. The
+sensor turns amber inside its last day and red once it is past; the countdown
+needs `sensor_days` and a site whose uploader logs "Sensor Start" / "Sensor
+Change", and without either you get the age alone, or no strip at all.
 
 The stack scrolls if it outgrows the room a popup is allowed, which four cards
 can do on a short screen.
@@ -111,6 +122,14 @@ unlike the Waybar module's CSS classes.
 
 Against an older sugarrush that doesn't emit `color`, it falls back to the
 bar's own foreground, and to the bar's urgent colour for the two urgent states.
+
+## Omarchy menu entries
+
+[`omarchy-menu.jsonc`](omarchy-menu.jsonc) has a sugarrush submenu — dashboard,
+snooze 15m/1h, the current reading as a notification, export, settings — to
+merge into `~/.config/omarchy/extensions/omarchy-menu.jsonc`. The shell watches
+that file, so an edit takes effect without a restart, and every entry is gated
+on `command -v sugarrush` so the menu stays clean on a machine without it.
 
 ## Editing the widget
 

@@ -43,6 +43,7 @@ pub enum Field {
     Stale,
     GraphStyle,
     AgpDays,
+    SensorDays,
     CacheEnabled,
     CacheDays,
     MinimapEnabled,
@@ -57,7 +58,7 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 42] = [
+    pub const ALL: [Field; 43] = [
         Field::SiteName,
         Field::SiteUrl,
         Field::SiteToken,
@@ -89,6 +90,7 @@ impl Field {
         Field::Stale,
         Field::GraphStyle,
         Field::AgpDays,
+        Field::SensorDays,
         Field::CacheEnabled,
         Field::CacheDays,
         Field::MinimapEnabled,
@@ -135,6 +137,7 @@ impl Field {
             Field::Stale => "Stale after",
             Field::GraphStyle => "Graph style",
             Field::AgpDays => "AGP days",
+            Field::SensorDays => "Sensor life",
             Field::CacheEnabled => "Offline history cache",
             Field::CacheDays => "Cache retention",
             Field::MinimapEnabled => "Minimap",
@@ -162,7 +165,11 @@ impl Field {
             | Field::AddSite
             | Field::RemoveSite
             | Field::SiteAlerts => "Site",
-            Field::Units | Field::Refresh | Field::CacheEnabled | Field::CacheDays => "General",
+            Field::Units
+            | Field::Refresh
+            | Field::SensorDays
+            | Field::CacheEnabled
+            | Field::CacheDays => "General",
             Field::Desktop
             | Field::NotifyContent
             | Field::Sound
@@ -606,6 +613,12 @@ impl App {
                 }
             }
             Field::GraphStyle => self.graph_style = self.graph_style.cycle(dir),
+            Field::SensorDays => {
+                let next = self.sensor_days as i64 + dir as i64;
+                // 0 is "don't tell me": the sensor age still shows, but
+                // nothing claims to know when it runs out.
+                self.sensor_days = next.clamp(0, 30) as u32;
+            }
             Field::AgpDays => {
                 let next = self.agp_days as i64 + dir as i64;
                 self.agp_days = next.clamp(1, 90) as u32;
@@ -718,6 +731,7 @@ impl App {
         self.allow_unattended_writes = fresh.allow_unattended_writes;
         self.graph_style = fresh.graph_style;
         self.agp_days = fresh.agp_days;
+        self.sensor_days = fresh.sensor_days;
         self.cache_enabled = fresh.cache_enabled;
         self.cache_days = fresh.cache_days;
         self.minimap_enabled = fresh.minimap_enabled;
@@ -794,6 +808,7 @@ impl App {
             },
             graph_style: self.graph_style,
             agp_days: self.agp_days,
+            sensor_days: self.sensor_days,
             minimap: MinimapConfig {
                 enabled: self.minimap_enabled,
                 span_hours: (self.minimap_span_ms / MS_PER_HOUR) as u32,
@@ -947,6 +962,10 @@ impl App {
             Field::UrgentHigh => self.threshold(self.alerts.urgent_high),
             Field::GraphStyle => self.graph_style.label().to_string(),
             Field::AgpDays => format!("{} days", self.agp_days),
+            Field::SensorDays => match self.sensor_days {
+                0 => "off".into(),
+                days => format!("{days} days"),
+            },
             Field::CacheEnabled => if self.cache_enabled {
                 "on · stores health data locally"
             } else {

@@ -49,6 +49,45 @@ Panel {
     }
   }
   readonly property var stats: doc && doc.stats ? doc.stats : null
+  readonly property var sensor: doc && doc.sensor ? doc.sensor : null
+  readonly property var forecast: doc && doc.forecast ? doc.forecast : null
+
+  // The same ladder the chart and the pill use, so a number means the same
+  // thing wherever it appears.
+  function classColor(klass) {
+    switch (klass) {
+      case "urgent-low":
+      case "urgent-high": return "#cc241d"
+      case "low":
+      case "high": return "#d79921"
+      case "in-range": return "#98971a"
+      default: return barForeground
+    }
+  }
+
+  // "6d 4h", the way the dashboard writes it.
+  function ageWords(hours) {
+    var d = Math.floor(hours / 24)
+    var h = hours % 24
+    return d > 0 ? d + "d " + h + "h" : h + "h"
+  }
+
+  // The countdown carries the state, so it is coloured like everything else:
+  // amber inside the last day, red once it is over.
+  function sensorColor() {
+    if (!sensor || sensor.expired === undefined) return Qt.darker(barForeground, 1.35)
+    if (sensor.expired) return "#cc241d"
+    if (sensor.expires_in_h <= 24) return "#d79921"
+    return Qt.darker(barForeground, 1.35)
+  }
+
+  function sensorWords() {
+    if (!sensor) return ""
+    var line = "sensor " + ageWords(sensor.age_h)
+    if (sensor.expired === true) return line + " · expired"
+    if (sensor.expires_in_h !== undefined) return line + " · " + ageWords(sensor.expires_in_h) + " left"
+    return line
+  }
   readonly property bool hasInsights: insightDays > 0 && loadError === ""
     && doc && doc.insights && doc.insights.length > 0
 
@@ -242,43 +281,92 @@ Panel {
           text: root.loadError !== "" ? root.loadError : "waiting for the first reading"
         }
 
+        // Two numbers at the same size: the reading, and where it lands in
+        // half an hour. A 9.6 rising to 10.4 is a different evening from a 9.6
+        // settling, and that difference is the one the panel exists to show.
         Card {
           label: "Now"
           visible: root.reading !== null && root.loadError === ""
 
           Item {
             width: parent.width
-            implicitHeight: Math.max(nowRead.implicitHeight, nowPill.implicitHeight)
+            implicitHeight: nowValue.implicitHeight + nowCaption.implicitHeight
 
-            Column {
-              id: nowRead
+            // Baseline-anchored rather than stacked in a Row: the two numbers
+            // are different sizes, and boxes aligned at the top leave their
+            // digits sitting at different heights.
+            Text {
+              id: nowValue
               anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(1)
+              anchors.top: parent.top
+              color: root.reading ? root.classColor(root.reading.class) : root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              // A quarter taller than the projection beside it: both are
+              // readings, but only one of them happened.
+              font.pixelSize: Math.round(Style.font.displayLarge * 1.25)
+              font.bold: true
+              text: root.reading ? root.reading.value : "—"
+            }
 
-              Text {
-                color: root.barForeground
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.title
-                text: root.reading
-                  ? root.reading.value + " " + (root.doc ? root.doc.units : "")
-                  : ""
-              }
+            Text {
+              id: heroArrow
+              visible: root.forecast !== null
+              anchors.left: nowValue.right
+              // Clear the caption as well as the number: "mmol/L · falling" is
+              // wider than "9.1", and anchoring to the number alone ran the
+              // two captions into each other.
+              anchors.leftMargin: Style.space(12)
+                + Math.max(0, nowCaption.implicitWidth - nowValue.implicitWidth)
+              anchors.baseline: nowValue.baseline
+              color: Qt.darker(root.barForeground, 1.6)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.title
+              text: "→"
+            }
 
-              Text {
-                color: Qt.darker(root.barForeground, 1.35)
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.caption
-                text: root.reading
-                  ? root.reading.arrow + "  " + root.trendWords(root.reading.direction)
-                  : ""
-              }
+            // Only drawn when there is a forecast: a sensor gap makes the
+            // projection a fabrication, and predict refuses it rather than
+            // guessing. An arrow to nothing would imply one anyway.
+            Text {
+              id: nextValue
+              visible: root.forecast !== null
+              anchors.left: heroArrow.right
+              anchors.leftMargin: Style.space(12)
+              anchors.baseline: nowValue.baseline
+              color: root.forecast ? root.classColor(root.forecast.class) : root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.displayLarge
+              opacity: 0.62
+              text: root.forecast ? root.forecast.value.toFixed(1) : ""
+            }
+
+            Text {
+              id: nowCaption
+              anchors.left: nowValue.left
+              anchors.top: nowValue.bottom
+              color: Qt.darker(root.barForeground, 1.35)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.reading
+                ? (root.doc ? root.doc.units : "") + " · " + root.reading.arrow + " "
+                  + root.trendWords(root.reading.direction)
+                : ""
+            }
+
+            Text {
+              visible: root.forecast !== null
+              anchors.left: nextValue.left
+              anchors.baseline: nowCaption.baseline
+              color: Qt.darker(root.barForeground, 1.35)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.forecast ? "in " + root.forecast.in_min + " min" : ""
             }
 
             Rectangle {
               id: nowPill
               anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
+              anchors.top: parent.top
               implicitWidth: pillText.implicitWidth + Style.space(14)
               implicitHeight: pillText.implicitHeight + Style.space(6)
               radius: height / 2
@@ -334,6 +422,43 @@ Panel {
                 + " · GMI " + root.stats.gmi.toFixed(1) + "%"
                 + " · CV " + (root.stats.cv === undefined ? "—" : root.stats.cv.toFixed(1) + "%")
               : ""
+          }
+        }
+
+        // A status strip, not a card: the sensor and the fetch time describe the
+        // rig rather than the glucose, and they are the two things here that
+        // do not change every five minutes.
+        Item {
+          width: parent.width
+          implicitHeight: Math.max(sensorText.implicitHeight, fetchedText.implicitHeight)
+            + Style.space(8)
+          visible: root.sensor !== null && root.loadError === ""
+
+          Rectangle {
+            anchors.top: parent.top
+            width: parent.width
+            height: 1
+            color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.16)
+          }
+
+          Text {
+            id: sensorText
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            color: root.sensorColor()
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: root.sensorWords()
+          }
+
+          Text {
+            id: fetchedText
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            color: Qt.darker(root.barForeground, 1.45)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: root.reading ? "updated " + root.reading.age_min + "m ago" : ""
           }
         }
 

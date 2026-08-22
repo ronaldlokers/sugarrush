@@ -6,6 +6,34 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The panel's threshold lines are scale marks again.** They were drawn in
+  their alert colours, so a red rule ran across the chart whether or not the
+  reading ever went near it. The line already turns amber or red where it
+  crosses one; the rules are now the panel's foreground, with the urgent pair
+  fainter than low and high so the target band reads first.
+
+### Added
+
+- **The panel leads with the reading, and says where it is heading.** The
+  current value is three times its old size, beside the AR2 projection for
+  half an hour out — a 9.6 rising to 10.4 is a different evening from a 9.6
+  settling. Both are coloured by the band they land in. During a sensor gap the
+  projection is left out rather than fabricated, which is what `predict` has
+  always done for the dashboard. `sugarrush snapshot` carries it as a
+  `forecast` block.
+- **The panel says how old your sensor is, and when it runs out.** A status
+  strip under the cards reads `sensor 9d 5h · 19h left`, amber inside the last
+  day and red once it is past, with when the panel last fetched on the other
+  end. New `sensor_days` setting (default 10 — a G6/G7 lasts 10 days, a
+  Libre 14) sets the expected life; `0` keeps showing the age without ever
+  calling it expiring, which is what you want if your uploader logs no sensor
+  changes. `sugarrush snapshot` carries the same as a `sensor` block.
+- **A sugarrush submenu for the Omarchy menu.** `quickshell/omarchy-menu.jsonc`
+  drops dashboard, snooze, reading, export and settings into the Omarchy menu,
+  gated so it stays hidden where sugarrush is not installed.
+
 ## [2026.8.2] - 2026-08-22
 
 This release turns sugarrush from a dashboard you watch into something that

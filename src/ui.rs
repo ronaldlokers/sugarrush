@@ -578,6 +578,9 @@ fn field_detail(field: Field) -> &'static str {
         Field::High => "Above this value, classify the reading as high after applying hysteresis on recovery.",
         Field::UrgentHigh => "At or above this value, classify the reading as urgent high and use the urgent alarm path.",
         Field::Stale => "Treat the data as a sensor gap when the newest reading is older than this many minutes.",
+        Field::SensorDays => {
+            "How long your sensor is expected to last, so its age reads as time remaining. 0 turns that off."
+        }
         Field::GraphStyle => "Draw readings as a connected line, small dots, or larger blocks.",
         Field::AgpDays => "The fixed clinical window used by the AGP, time-in-range statistics, and default export.",
         Field::CacheEnabled => "Opt in to an owner-only local reading cache for instant startup and outage context. Turning it off deletes every cached reading.",
