@@ -169,6 +169,14 @@ Item {
       var dim = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.55)
       ctx.font = "10px " + Style.font.family
 
+      // Everything that follows the data is clipped to the plot: the series
+      // holds readings either side of the viewport now, and their segments
+      // ran left across the value labels.
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(plotX, 0, width - plotX, plotH)
+      ctx.clip()
+
       // ---- the typical day, behind everything else
       if (root.band && root.band.points.length > 1) {
         var pts = root.band.points
@@ -189,6 +197,8 @@ Item {
         ctx.stroke()
         ctx.setLineDash([])
       }
+
+      ctx.restore()
 
       // ---- thresholds: scale marks, in the foreground colour
       //
@@ -240,6 +250,10 @@ Item {
       }
 
       // ---- today, one segment at a time so the line carries its own state
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(plotX, 0, width - plotX, plotH)
+      ctx.clip()
       ctx.lineWidth = 2
       ctx.lineCap = "round"
       for (var j = 1; j < root.series.length; j++) {
@@ -253,6 +267,7 @@ Item {
         ctx.lineTo(root.xOf(to[0]), root.yOf(to[1]))
         ctx.stroke()
       }
+      ctx.restore()
     }
   }
 
