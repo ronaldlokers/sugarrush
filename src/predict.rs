@@ -5,7 +5,10 @@
 //! simple AR2-style projection from the two most recent readings — the same
 //! model Nightscout uses for its short-term forecast.
 
+use crate::alert;
+use crate::config::Alerts;
 use crate::nightscout::{Entry, Prediction};
+use crate::units::Units;
 
 const BG_REF: f64 = 140.0;
 /// AR2 autoregression coefficients (Nightscout's ar2 plugin).
@@ -26,6 +29,41 @@ const BG_MAX: f64 = 400.0;
 /// Uncertainty half-width (mg/dL) added per 5-min step, so the AR2 projection
 /// fans into a cone the further out it reaches.
 const SPREAD_PER_STEP: f64 = 4.0;
+
+/// Where the reading is heading: the midpoint of the furthest projected step,
+/// in display units, with the band it lands in.
+///
+/// The midpoint rather than the whole cone, and the last step rather than the
+/// nearest: a bar or a panel has room for one number, and the end of the
+/// horizon is the part that changes what someone does next.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Outlook {
+    pub in_min: i64,
+    pub value: f64,
+    /// The band that value lands in, so it can be coloured like the reading.
+    pub class: &'static str,
+    /// The band as a value rather than a name, for callers that colour or
+    /// compare rather than print.
+    #[serde(skip)]
+    pub alert: alert::Alert,
+}
+
+/// Project [`ar2`] to its horizon and describe where it lands.
+pub fn outlook(recent: &[Entry], alerts: &Alerts, units: Units) -> Option<Outlook> {
+    let steps = ar2(recent);
+    let last = steps.last()?;
+    let midpoint = (last.low + last.high) / 2.0;
+    let value = units.from_mgdl(midpoint);
+    Some(Outlook {
+        in_min: HORIZON_MINUTES,
+        value: match units {
+            Units::Mmol => (value * 10.0).round() / 10.0,
+            Units::Mgdl => value.round(),
+        },
+        class: alert::from_value(midpoint, alerts).class(),
+        alert: alert::from_value(midpoint, alerts),
+    })
+}
 
 /// Project the next 30 minutes from the latest two readings as a widening
 /// low–high band, or empty if there isn't enough data.

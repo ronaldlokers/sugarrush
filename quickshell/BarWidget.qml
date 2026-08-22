@@ -36,6 +36,12 @@ Item {
     ? settings.showUnits !== false
     : true
   readonly property bool showMascot: settings && settings.showMascot === true
+  // The last hour as a trace beside the number: the reading says where the
+  // glucose is, the trace says what it has been doing to get there. Off on a
+  // vertical bar, which has no width to give it.
+  readonly property bool showSparkline: settings && settings.showSparkline !== undefined
+    ? settings.showSparkline !== false
+    : true
   readonly property string onClick: settings && settings.onClick !== undefined
     ? settings.onClick
     : "omarchy-launch-floating-terminal-with-presentation sugarrush"
@@ -56,6 +62,14 @@ Item {
   property string tooltip: "sugarrush: waiting for the first reading"
   property string stateClass: "stale"
   property string stateColor: ""
+  // `[[epoch_ms, value], ...]`, oldest first, straight from the status JSON.
+  property var series: []
+  // Where the reading is heading; null when forecasts are switched off.
+  property var forecast: null
+  // True when the colour is the forecast talking rather than the reading. The
+  // class says `predicted-` in that case, and nothing else in the pill should
+  // shout: a projection is not an alarm.
+  readonly property bool predicted: stateClass.indexOf("predicted-") === 0
 
   // A vertical bar is 28px wide — narrower than "6.1 →" renders — so the
   // delta goes and what is left stacks, one line each, the way the clock
@@ -87,9 +101,13 @@ Item {
     return (stateClass === "urgent-low" || stateClass === "urgent-high") ? bar.urgent : bar.foreground
   }
 
+  readonly property bool sparkVisible: !compact && showSparkline && series.length > 1
+  readonly property int sparkWidth: 30
+
   implicitWidth: compact
     ? (bar ? bar.barSize : 28)
-    : (root.showMascot ? mascot.width + 8 : 0) + valueText.implicitWidth + 12
+    : (root.showMascot ? mascot.width + 8 : 0) + valueText.implicitWidth
+      + (root.sparkVisible ? root.sparkWidth + 6 : 0) + 12
   implicitHeight: compact
     ? Math.max(bar ? bar.barSize : 26, valueText.implicitHeight + 6)
     : (bar ? bar.barSize : 26)
@@ -125,6 +143,11 @@ Item {
     root.tooltip = payload.tooltip || ""
     root.stateClass = payload["class"] || "stale"
     root.stateColor = payload.color || ""
+    // Absent from an older sugarrush: the pill simply keeps its old shape
+    // rather than blanking the trace it cannot refresh.
+    if (payload.series !== undefined) root.series = payload.series || []
+    root.forecast = payload.forecast || null
+    spark.requestPaint()
   }
 
   Process {
@@ -230,6 +253,84 @@ Item {
     font.family: root.bar ? root.bar.fontFamily : "monospace"
     font.pixelSize: 12
     font.bold: root.stateClass === "urgent-low" || root.stateClass === "urgent-high"
+  }
+
+  // The trace, drawn rather than composed of glyphs: a block-character
+  // sparkline quantises an hour of readings to eight heights, and the whole
+  // point of it here is the shape between the thresholds.
+  Canvas {
+    id: spark
+    visible: root.sparkVisible
+    anchors.left: valueText.right
+    anchors.leftMargin: 6
+    anchors.verticalCenter: parent.verticalCenter
+    width: root.sparkWidth
+    height: Math.round(valueText.font.pixelSize * 0.9)
+    // The trace is context for the number, not a second reading of its own,
+    // so it sits back from the value it belongs to.
+    opacity: 0.72
+
+    // The colour is a binding, and a binding change does not repaint a Canvas.
+    onOpacityChanged: requestPaint()
+    Connections {
+      target: root
+      function onForegroundChanged() { spark.requestPaint() }
+      function onPredictedChanged() { spark.requestPaint() }
+    }
+
+    onPaint: {
+      var ctx = getContext("2d")
+      ctx.reset()
+      var points = root.series
+      if (!points || points.length < 2) return
+
+      var lo = points[0][1], hi = points[0][1]
+      for (var i = 1; i < points.length; i++) {
+        var v = points[i][1]
+        if (v < lo) lo = v
+        if (v > hi) hi = v
+      }
+      // A flat hour is a real answer, and dividing by its zero range is not:
+      // give it a band to sit in the middle of.
+      var span = hi - lo
+      if (span < 0.0001) { lo -= 0.5; hi += 0.5; span = hi - lo }
+
+      var t0 = points[0][0]
+      var tspan = Math.max(1, points[points.length - 1][0] - t0)
+      var pad = 1.5
+      var w = width, h = height - pad * 2
+
+      ctx.beginPath()
+      for (var j = 0; j < points.length; j++) {
+        // Spaced by time rather than by index, so a gap in the readings
+        // shows as a long straight run instead of being closed up.
+        var x = (points[j][0] - t0) / tspan * w
+        var y = pad + (1 - (points[j][1] - lo) / span) * h
+        if (j === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
+      ctx.strokeStyle = root.foreground
+      ctx.lineWidth = 1.4
+      ctx.lineJoin = "round"
+      ctx.lineCap = "round"
+      ctx.stroke()
+
+      // The newest reading, marked: without it the eye has to work out which
+      // end of the trace is now. Hollow when the colour is a forecast rather
+      // than the reading — the pill has gone amber for something that has not
+      // happened yet, and that difference has to be visible somewhere.
+      var lastY = pad + (1 - (points[points.length - 1][1] - lo) / span) * h
+      ctx.beginPath()
+      ctx.arc(w - 1.8, lastY, 1.8, 0, Math.PI * 2)
+      if (root.predicted) {
+        ctx.strokeStyle = root.foreground
+        ctx.lineWidth = 1.1
+        ctx.stroke()
+      } else {
+        ctx.fillStyle = root.foreground
+        ctx.fill()
+      }
+    }
   }
 
   MouseArea {

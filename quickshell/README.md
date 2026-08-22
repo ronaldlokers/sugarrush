@@ -100,6 +100,7 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | `interval` | `60` | seconds between pill fetches |
 | `showUnits` | `true` | print the unit after the reading; turn it off on a crowded bar |
 | `showMascot` | `false` | put the sugar cube in front of the reading |
+| `showSparkline` | `true` | draw the last hour as a trace after the reading |
 | `command` | `sugarrush waybar` | the command the pill reads a reading from |
 | `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
 | `onRightClick` | the same, plus `--screen settings` | right click |
