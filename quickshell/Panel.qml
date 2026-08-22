@@ -461,10 +461,11 @@ Panel {
               anchors.top: parent.top
               color: root.reading ? root.classColor(root.reading.class) : root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              // Half again as tall as the projection beside it: both are
-              // readings, but only one of them happened, and this is the
-              // number the panel exists to show.
-              font.pixelSize: Math.round(Style.font.displayLarge * 1.75)
+              // 50 against the projection's 25. Fixed rather than derived
+              // from the type scale: this is the number the panel exists to
+              // show, and it should not shrink because a theme picked smaller
+              // display type.
+              font.pixelSize: 50
               font.bold: true
               text: root.reading ? root.reading.value : "—"
             }
@@ -496,7 +497,8 @@ Panel {
               anchors.baseline: nowValue.baseline
               color: root.forecast ? root.classColor(root.forecast.class) : root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.displayLarge
+              // Half the reading: a note beside it, not a second headline.
+              font.pixelSize: 25
               opacity: 0.62
               text: root.forecast ? root.forecast.value.toFixed(1) : ""
             }
