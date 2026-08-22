@@ -6,6 +6,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The panel's threshold lines are scale marks again.** They were drawn in
+  their alert colours, so a red rule ran across the chart whether or not the
+  reading ever went near it. The line already turns amber or red where it
+  crosses one; the rules are now the panel's foreground, with the urgent pair
+  fainter than low and high so the target band reads first.
+
 ### Added
 
 - **The panel says how old your sensor is, and when it runs out.** A status
