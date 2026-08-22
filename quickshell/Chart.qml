@@ -335,6 +335,10 @@ Item {
       onPositionChanged: function (mouse) {
         if (pressed) root.jumpToX(mouse.x, parent.width)
       }
+      onWheel: function (wheel) {
+        root.panBy(wheel.angleDelta.y > 0 ? -root.viewSpanMs / 4 : root.viewSpanMs / 4)
+        wheel.accepted = true
+      }
     }
   }
 
@@ -411,14 +415,6 @@ Item {
     }
   }
 
-  WheelHandler {
-    // A quarter window per notch: enough to move, small enough to land where
-    // you meant to.
-    onWheel: function (event) {
-      root.panBy(event.angleDelta.y > 0 ? -root.viewSpanMs / 4 : root.viewSpanMs / 4)
-    }
-  }
-
   MouseArea {
     id: probe
     anchors.fill: parent
@@ -433,5 +429,17 @@ Item {
       root.hoverIndex = root.nearestIndex(mouse.x + root.gutterLeft)
     }
     onExited: root.hoverIndex = -1
+
+    // Wheel is handled here, and accepted, because the panel scrolls: the
+    // Flickable around these cards is interactive whenever the content
+    // overflows, and it takes the wheel before a child WheelHandler ever sees
+    // it. Accepting stops the card stack scrolling under the pointer.
+    //
+    // A quarter of the window per notch: enough to move, small enough to land
+    // where you meant to.
+    onWheel: function (wheel) {
+      root.panBy(wheel.angleDelta.y > 0 ? -root.viewSpanMs / 4 : root.viewSpanMs / 4)
+      wheel.accepted = true
+    }
   }
 }
