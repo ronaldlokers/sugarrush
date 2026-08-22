@@ -461,9 +461,10 @@ Panel {
               anchors.top: parent.top
               color: root.reading ? root.classColor(root.reading.class) : root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              // A quarter taller than the projection beside it: both are
-              // readings, but only one of them happened.
-              font.pixelSize: Math.round(Style.font.displayLarge * 1.25)
+              // Half again as tall as the projection beside it: both are
+              // readings, but only one of them happened, and this is the
+              // number the panel exists to show.
+              font.pixelSize: Math.round(Style.font.displayLarge * 1.75)
               font.bold: true
               text: root.reading ? root.reading.value : "—"
             }
