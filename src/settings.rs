@@ -165,7 +165,11 @@ impl Field {
             | Field::AddSite
             | Field::RemoveSite
             | Field::SiteAlerts => "Site",
-            Field::Units | Field::Refresh | Field::CacheEnabled | Field::CacheDays => "General",
+            Field::Units
+            | Field::Refresh
+            | Field::SensorDays
+            | Field::CacheEnabled
+            | Field::CacheDays => "General",
             Field::Desktop
             | Field::NotifyContent
             | Field::Sound
@@ -185,7 +189,6 @@ impl Field {
             Field::GraphStyle | Field::AgpDays | Field::MinimapEnabled | Field::MinimapSpan => {
                 "Graph"
             }
-            Field::SensorDays => "Data",
             Field::ThemeLow
             | Field::ThemeInRange
             | Field::ThemeHigh
