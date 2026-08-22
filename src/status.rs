@@ -23,8 +23,10 @@ const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 /// Output syntax for a status bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
-    /// Waybar custom module: one JSON object.
-    Waybar,
+    /// One JSON object, in the shape Waybar's custom modules read. Every bar
+    /// that takes JSON reads the same document, which is why the format is
+    /// named for the syntax rather than for Waybar.
+    Json,
     /// i3blocks: full text, short text, colour — one per line.
     I3blocks,
     /// polybar: inline `%{F#rrggbb}` colour tags.
@@ -40,7 +42,10 @@ impl Format {
     /// caller can say which formats exist rather than silently picking one.
     pub fn parse(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
-            "waybar" | "json" => Some(Format::Waybar),
+            // `waybar` came first and is in every config that predates the
+            // rename, so it keeps working; `bar` reads better next to the
+            // other bar-shaped names.
+            "json" | "waybar" | "bar" => Some(Format::Json),
             "i3blocks" => Some(Format::I3blocks),
             "polybar" => Some(Format::Polybar),
             "tmux" => Some(Format::Tmux),
@@ -49,7 +54,7 @@ impl Format {
         }
     }
 
-    pub const NAMES: &'static str = "text, waybar (json), i3blocks, polybar, tmux";
+    pub const NAMES: &'static str = "text, json (waybar, bar), i3blocks, polybar, tmux";
 }
 
 /// Everything a status bar might want, resolved once.
@@ -109,7 +114,7 @@ impl Status {
             // it styles the module from the class via CSS. It is here for bars
             // that have no stylesheet to write, notably the Quickshell widget,
             // so they can follow the configured sugarrush theme.
-            Format::Waybar => json!({
+            Format::Json => json!({
                 "text": self.text(),
                 "tooltip": self.tooltip,
                 "class": self.state.class(),
@@ -251,8 +256,12 @@ mod tests {
 
     #[test]
     fn format_names_are_forgiving_but_not_guessy() {
-        assert_eq!(Format::parse("waybar"), Some(Format::Waybar));
-        assert_eq!(Format::parse("JSON"), Some(Format::Waybar));
+        // `json` is the name; `waybar` is what every config written before
+        // the rename says, and must keep working.
+        assert_eq!(Format::parse("json"), Some(Format::Json));
+        assert_eq!(Format::parse("waybar"), Some(Format::Json));
+        assert_eq!(Format::parse("bar"), Some(Format::Json));
+        assert_eq!(Format::parse("JSON"), Some(Format::Json));
         assert_eq!(Format::parse("Tmux"), Some(Format::Tmux));
         assert_eq!(Format::parse("plain"), Some(Format::Text));
         // An unknown name is rejected rather than silently defaulted.
@@ -272,8 +281,7 @@ mod tests {
 
     #[test]
     fn waybar_output_is_json_with_the_state_class() {
-        let json: serde_json::Value =
-            serde_json::from_str(&status().render(Format::Waybar)).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&status().render(Format::Json)).unwrap();
         assert_eq!(json["text"], "5.6 → +0.2");
         assert_eq!(json["class"], "in-range");
         assert_eq!(json["percentage"], 42);

@@ -2,6 +2,7 @@ mod agp;
 mod alert;
 mod alertlog;
 mod app;
+mod bar;
 mod bigfont;
 mod config;
 mod demo;
@@ -23,7 +24,6 @@ mod ui;
 mod units;
 mod view;
 mod watch;
-mod waybar;
 mod wizard;
 
 use std::io::{self, IsTerminal, Stdout};
@@ -598,7 +598,7 @@ async fn main() -> Result<()> {
             // human running it by hand without corrupting the bar's input.
             let sites = cfg.resolve_sites()?;
             warn_about_config(&sites[0].resolve_alerts(&cfg.alerts, cfg.units).1);
-            println!("{}", waybar::line(&cfg).await);
+            println!("{}", bar::line(&cfg).await);
             Ok(())
         }
         Mode::Snapshot {
@@ -981,7 +981,7 @@ const COMMANDS: &[(&str, &str)] = &[
         "sugarrush snapshot [--hours N] [--days N]",
         "one JSON document: reading, series, stats, insights",
     ),
-    ("sugarrush waybar", "alias for --format waybar"),
+    ("sugarrush waybar", "alias for --format json"),
     ("sugarrush about", "version, config and a health check"),
 ];
 

@@ -42,14 +42,19 @@ All notable changes to sugarrush are documented here. The format is based on
   nothing, and the unit is the one word that says what was measured. Turn it
   off with `showUnits` on a crowded bar. The sugar cube that used to carry that
   job is now opt-in, behind `showMascot`.
-- **`--format waybar` reports the reading in parts.** `value`, `units`,
+- **`--format waybar` is now `--format json`.** The same JSON is read by
+  Waybar, by the Quickshell widget, and by anything else that takes a JSON
+  line, so the format is named for its syntax rather than for one bar.
+  `waybar` and `bar` are accepted spellings, and `sugarrush waybar` is
+  unchanged — no config needs editing.
+- **`--format json` reports the reading in parts.** `value`, `units`,
   `arrow` and `delta` join the JSON, so a bar can compose its own line instead
   of parsing `text` apart. Waybar ignores them.
 - **The Quickshell bar widget no longer pops up a tooltip.** Hovering the
   reading used to show a second copy of it with a text sparkline; clicking
   opens a panel with the real chart, so the tooltip was answering a question
   that already had a better answer.
-- **`--format waybar` also reports the state colour.** The JSON now carries a
+- **`--format json` also reports the state colour.** The JSON now carries a
   `color` field holding the hex colour of the alert state, from your configured
   theme. Waybar ignores it and keeps styling the module from the CSS class;
   it is there for bars that style themselves from the payload instead of a

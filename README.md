@@ -388,7 +388,7 @@ sugarrush status                      # 5.6 → +0.2
 sugarrush status --format tmux        # #[fg=#98971a]5.6 → +0.2#[default]
 sugarrush status --format polybar     # %{F#98971a}5.6 → +0.2%{F-}
 sugarrush status --format i3blocks    # full text / short text / colour
-sugarrush status --format waybar      # {"text":…,"tooltip":…,"class":…,"color":…}
+sugarrush status --format json        # {"text":…,"value":…,"units":…,"class":…}
 ```
 
 Colours follow your configured theme, so the colourblind-safe palette carries
@@ -414,8 +414,10 @@ command=sugarrush status --format i3blocks
 interval=60
 ```
 
-`sugarrush waybar` still prints the same JSON it always has (it's
-`--format waybar` under the hood). Example Waybar assets in
+The format is named `json` because every bar that takes JSON reads the same
+document — Waybar, Quickshell, anything else. `waybar` and `bar` are accepted
+spellings of it, and `sugarrush waybar` still prints exactly what it always
+has, so existing configs need no edit. Example Waybar assets in
 [`waybar/`](waybar/): the custom module, a Graph/Settings/About menu (Waybar
 ≥ 0.11.0), per-state CSS, and Hyprland float rules.
 
@@ -553,7 +555,7 @@ Other subcommands: `sugarrush about` (version + a notification) and
 | `sugarrush export [--days N] [--out DIR] [--site NAME\|--all]` | CSV + a clinical summary |
 | `sugarrush status [--format FORMAT]` | one line for a status bar |
 | `sugarrush snapshot [--hours N] [--days N]` | one JSON document: reading, series, stats, insights |
-| `sugarrush waybar` | alias for --format waybar |
+| `sugarrush waybar` | alias for --format json |
 | `sugarrush about` | version, config and a health check |
 
 `sugarrush --help` prints the same list, `sugarrush --man` writes a man page:
