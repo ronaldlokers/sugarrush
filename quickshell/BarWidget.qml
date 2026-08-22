@@ -29,6 +29,13 @@ Item {
   // module, and setting any of them would stop this widget from loading at all.
   readonly property int refreshInterval: (settings && settings.interval > 0 ? settings.interval : 60) * 1000
   readonly property string command: settings && settings.command ? settings.command : "sugarrush waybar"
+  // A number on a bar says nothing about what was measured; the unit is the
+  // one word that does, since nothing else on a desktop is reported in
+  // mmol/L. Off for anyone whose bar is already full.
+  readonly property bool showUnits: settings && settings.showUnits !== undefined
+    ? settings.showUnits !== false
+    : true
+  readonly property bool showMascot: settings && settings.showMascot === true
   readonly property string onClick: settings && settings.onClick !== undefined
     ? settings.onClick
     : "omarchy-launch-floating-terminal-with-presentation sugarrush"
@@ -40,6 +47,10 @@ Item {
   // show before the first fetch returns, and keeps the last good reading if a
   // later fetch fails — a stale number is readable, an empty slot is not.
   property string label: "—"
+  property string value: ""
+  property string units: ""
+  property string arrow: ""
+  property string delta: ""
   // Still parsed, and still the one place a fetch failure is described — the
   // panel reads it. The pill no longer pops it up on hover.
   property string tooltip: "sugarrush: waiting for the first reading"
@@ -50,10 +61,22 @@ Item {
   // delta goes and what is left stacks, one line each, the way the clock
   // stacks its hours over its minutes.
   readonly property bool compact: bar ? bar.vertical === true : false
+  // Composed from the parts rather than by editing `text`, so the unit lands
+  // after the value without parsing a rendered line back apart. Falls back to
+  // `text` against a sugarrush too old to send the parts.
   readonly property string shownText: {
-    if (!compact) return label
-    var parts = label.split(" ")
-    return parts.length > 2 ? parts.slice(0, parts.length - 1).join("\n") : label
+    if (compact) {
+      var parts = label.split(" ")
+      return parts.length > 2 ? parts.slice(0, parts.length - 1).join("\n") : label
+    }
+    if (!showUnits || value === "" || units === "") return label
+    var line = value + " " + units
+    if (arrow !== "") line += " " + arrow
+    if (delta !== "") line += " " + delta
+    // The marker `text` carries for an out-of-range state ("!! ") is part of
+    // the reading, not decoration, so it stays.
+    var marker = label.indexOf("!") === 0 ? label.split(" ")[0] + " " : ""
+    return marker + line
   }
 
   readonly property color foreground: {
@@ -66,7 +89,7 @@ Item {
 
   implicitWidth: compact
     ? (bar ? bar.barSize : 28)
-    : mascot.width + valueText.implicitWidth + 14
+    : (root.showMascot ? mascot.width + 8 : 0) + valueText.implicitWidth + 12
   implicitHeight: compact
     ? Math.max(bar ? bar.barSize : 26, valueText.implicitHeight + 6)
     : (bar ? bar.barSize : 26)
@@ -95,6 +118,10 @@ Item {
       return
     }
     root.label = payload.text || "—"
+    root.value = payload.value || ""
+    root.units = payload.units || ""
+    root.arrow = payload.arrow || ""
+    root.delta = payload.delta || ""
     root.tooltip = payload.tooltip || ""
     root.stateClass = payload["class"] || "stale"
     root.stateColor = payload.color || ""
@@ -184,7 +211,7 @@ Item {
     sourceSize.height: height * 2
     fillMode: Image.PreserveAspectFit
     smooth: true
-    visible: !root.compact
+    visible: !root.compact && root.showMascot
     anchors.left: parent.left
     anchors.leftMargin: 3
     anchors.verticalCenter: parent.verticalCenter
@@ -194,8 +221,8 @@ Item {
     id: valueText
     anchors.verticalCenter: parent.verticalCenter
     anchors.horizontalCenter: root.compact ? parent.horizontalCenter : undefined
-    anchors.left: root.compact ? undefined : mascot.right
-    anchors.leftMargin: root.compact ? 0 : 5
+    anchors.left: root.compact ? undefined : (root.showMascot ? mascot.right : parent.left)
+    anchors.leftMargin: root.compact ? 0 : (root.showMascot ? 5 : 6)
     text: root.shownText
     horizontalAlignment: Text.AlignHCenter
     lineHeight: 0.95

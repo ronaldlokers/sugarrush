@@ -6,8 +6,10 @@ specific host: the **Omarchy 4 shell** (`omarchy-shell`), which loads bar
 widgets as plugins. Quickshell on its own has no bar to add a widget to — a
 shell has to provide one — so a widget is only as portable as its host.
 
-It shows the reading, trend arrow and delta, coloured by alert state, with the
-sugarrush mascot beside it, and opens a panel with the rest of the day:
+It shows the reading **with its unit**, the trend arrow and the delta, coloured
+by alert state, and opens a panel with the rest of the day. The unit is there
+because a bare number names nothing — `10.5` could be a load average; nothing
+else on a desktop is reported in mmol/L:
 
 | Interaction | What happens |
 |---|---|
@@ -16,7 +18,10 @@ sugarrush mascot beside it, and opens a panel with the rest of the day:
 | middle click | fetches now, without waiting for the next poll |
 
 On a vertical bar the pill stacks the reading over its trend arrow and drops
-the delta, which does not fit 28 pixels.
+both the unit and the delta, which do not fit 28 pixels.
+
+Against a sugarrush too old to send the reading in parts, the pill falls back
+to the line that binary prints — no unit, but no breakage either.
 
 ## The panel
 
@@ -74,6 +79,8 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | Key | Default | What it does |
 |---|---|---|
 | `interval` | `60` | seconds between pill fetches |
+| `showUnits` | `true` | print the unit after the reading; turn it off on a crowded bar |
+| `showMascot` | `false` | put the sugar cube in front of the reading |
 | `command` | `sugarrush waybar` | the command the pill reads a reading from |
 | `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
 | `onRightClick` | the same, plus `--screen settings` | right click |

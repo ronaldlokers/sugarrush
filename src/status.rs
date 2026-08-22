@@ -57,6 +57,9 @@ impl Format {
 pub struct Status {
     /// The reading, in display units — or `—` when there's nothing to show.
     pub value: String,
+    /// The display unit the value is in — the one fact that tells a bar what
+    /// kind of measurement it is showing.
+    pub units: &'static str,
     pub arrow: String,
     pub delta: String,
     pub state: Alert,
@@ -112,6 +115,13 @@ impl Status {
                 "class": self.state.class(),
                 "percentage": self.percentage,
                 "color": hex,
+                // The parts as well as the line, so a bar can compose its own
+                // — the Quickshell widget puts the unit after the value —
+                // without parsing `text` back apart.
+                "value": self.value,
+                "units": self.units,
+                "arrow": self.arrow,
+                "delta": self.delta,
             })
             .to_string(),
             // i3blocks reads three lines: full text, short text, colour.
@@ -132,6 +142,7 @@ pub async fn status(cfg: &Config) -> Status {
         Ok(s) => s,
         Err(e) => Status {
             value: "—".into(),
+            units: cfg.units.label(),
             arrow: String::new(),
             delta: String::new(),
             state: Alert::Stale,
@@ -158,6 +169,7 @@ async fn build(cfg: &Config) -> Result<Status> {
     let Some(latest) = entries.first() else {
         return Ok(Status {
             value: "—".into(),
+            units: units.label(),
             arrow: String::new(),
             delta: String::new(),
             state: Alert::Stale,
@@ -191,6 +203,7 @@ async fn build(cfg: &Config) -> Result<Status> {
 
     Ok(Status {
         value: units.format(latest.sgv),
+        units: units.label(),
         arrow: latest.arrow().to_string(),
         delta,
         state,
@@ -226,6 +239,7 @@ mod tests {
     fn status() -> Status {
         Status {
             value: "5.6".into(),
+            units: "mmol/L",
             arrow: "→".into(),
             delta: "+0.2".into(),
             state: Alert::InRange,
@@ -267,6 +281,12 @@ mod tests {
         // Waybar ignores the extra key; a QML bar widget uses it to follow the
         // configured sugarrush theme instead of hard-coding its own palette.
         assert_eq!(json["color"], "#123456");
+        // The parts, so a bar can compose its own line — putting the unit
+        // after the value, say — instead of parsing `text` back apart.
+        assert_eq!(json["value"], "5.6");
+        assert_eq!(json["units"], "mmol/L");
+        assert_eq!(json["arrow"], "→");
+        assert_eq!(json["delta"], "+0.2");
     }
 
     #[test]

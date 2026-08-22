@@ -37,6 +37,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Changed
 
+- **The Quickshell bar widget prints the unit.** The bar now reads
+  `10.5 mmol/L → -0.2` rather than `10.5 → -0.2`: a number by itself names
+  nothing, and the unit is the one word that says what was measured. Turn it
+  off with `showUnits` on a crowded bar. The sugar cube that used to carry that
+  job is now opt-in, behind `showMascot`.
+- **`--format waybar` reports the reading in parts.** `value`, `units`,
+  `arrow` and `delta` join the JSON, so a bar can compose its own line instead
+  of parsing `text` apart. Waybar ignores them.
 - **The Quickshell bar widget no longer pops up a tooltip.** Hovering the
   reading used to show a second copy of it with a text sparkline; clicking
   opens a panel with the real chart, so the tooltip was answering a question

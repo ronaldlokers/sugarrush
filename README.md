@@ -419,8 +419,10 @@ interval=60
 [`waybar/`](waybar/): the custom module, a Graph/Settings/About menu (Waybar
 ≥ 0.11.0), per-state CSS, and Hyprland float rules.
 
-The JSON also carries a `color` — the state colour from your theme — which
-Waybar ignores and a bar with no stylesheet can use. [`quickshell/`](quickshell/)
+The JSON also carries the reading in parts — `value`, `units`, `arrow`,
+`delta` — and a `color` from your theme, all of which Waybar ignores. They are
+there so a bar can compose its own line (putting the unit after the value, say)
+and colour it without a stylesheet. [`quickshell/`](quickshell/)
 is one such bar: a widget for the Omarchy 4 shell that colours itself from that
 field, carries the sugarrush mascot, and opens a panel with the last hours as a
 chart, the time-in-range bands and the pattern insights.
