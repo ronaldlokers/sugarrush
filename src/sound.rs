@@ -196,12 +196,13 @@ fn produced_sound(child: &mut Child) -> bool {
     true
 }
 
-/// Spawn the first working audio player on this platform, detached.
-/// Returns which one actually produced sound, if any.
-/// The players to try, in order. (program, args-before-file); the file path is
-/// appended last.
+/// A player table: (program, args-before-file). The file path is appended
+/// last.
+type Candidates = &'static [(&'static str, &'static [&'static str])];
+
+/// The players to try, in order.
 #[cfg(not(test))]
-const CANDIDATES: &[(&str, &[&str])] = &[
+const CANDIDATES: Candidates = &[
     ("paplay", &[]),
     ("pw-play", &[]),
     ("aplay", &["-q"]),
@@ -211,31 +212,73 @@ const CANDIDATES: &[(&str, &[&str])] = &[
     ("cvlc", &["--play-and-exit", "--intf", "dummy"]),
 ];
 
-/// A stand-in for the real players in a test build, because `alarm` is
+/// Stand-ins for the real players in a test build, because `alarm` is
 /// fire-and-forget: it spawns a detached thread, the test process exits, and
 /// the orphaned player goes on playing. `cargo test` on a desktop machine
-/// sounded a real alarm through the speakers, and did it from a run that
-/// asserts nothing about whether sound was produced.
+/// sounded a real alarm through the speakers, from a run that asserts nothing
+/// about whether sound was produced.
 ///
 /// Swapping the table rather than short-circuiting `play` keeps the seam
 /// closed for every test, present and future, instead of asking each one to
-/// remember to opt in. It also keeps discovery honest: the stand-in outlives
-/// `STARTUP_CHECKS`, so `play` takes its full ~150ms here, and a `play`
-/// that stopped being backgrounded would fail the timing test rather than
-/// pass it trivially.
+/// remember to opt in. It also keeps discovery honest: `WORKS` outlives
+/// `STARTUP_CHECKS`, so `play` takes its full ~150ms, and a `play` that
+/// stopped being backgrounded fails the timing test rather than passing it
+/// trivially.
+///
+/// Both outcomes stay reachable. A stand-in that could only succeed would
+/// make `Played::Bell` and `Played::Nothing` unreachable under test, which
+/// fakes the two real consumers of that answer — `App::run_alarm_test` and
+/// the alarm self-test — and would let a test claim "sounded via …" on a
+/// machine with no audio at all.
+///
+/// The choice is thread-local because cargo runs tests as parallel threads in
+/// one process: a global would have one test's failing player decide another
+/// test's outcome.
 #[cfg(all(test, unix))]
-const CANDIDATES: &[(&str, &[&str])] = &[("sh", &["-c", "sleep 0.4"])];
+pub(crate) mod stand_in {
+    use std::cell::Cell;
 
-/// Nothing to stand in with off unix, so a test build simply finds no player.
-#[cfg(all(test, not(unix)))]
-const CANDIDATES: &[(&str, &[&str])] = &[];
+    pub const WORKS: super::Candidates = &[("sh", &["-c", "sleep 0.4"])];
+    pub const FAILS: super::Candidates = &[("sh", &["-c", "exit 1"])];
 
+    thread_local! {
+        static TABLE: Cell<super::Candidates> = const { Cell::new(WORKS) };
+    }
+
+    pub fn table() -> super::Candidates {
+        TABLE.with(|t| t.get())
+    }
+
+    /// Choose what the next `play` on this thread finds.
+    pub fn set(next: super::Candidates) {
+        TABLE.with(|t| t.set(next));
+    }
+}
+
+/// Spawn the first working audio player on this platform, detached.
+/// Returns which one actually produced sound, if any.
 fn play(path: &Path) -> Option<&'static str> {
-    let known_good = WORKING.lock().ok().and_then(|w| *w);
-    for &(prog, args) in CANDIDATES {
+    #[cfg(not(test))]
+    let candidates = CANDIDATES;
+    #[cfg(all(test, unix))]
+    let candidates = stand_in::table();
+    // Nothing to stand in with off unix, so a test build finds no player.
+    #[cfg(all(test, not(unix)))]
+    let candidates: Candidates = &[];
+
+    // The two caches are process-global and the stand-ins share one program
+    // name, so under test they would carry one test's verdict into another
+    // thread's run. Skipping them costs a test build nothing: there is one
+    // candidate, and it is spawned per call either way.
+    let known_good = if cfg!(test) {
+        None
+    } else {
+        WORKING.lock().ok().and_then(|w| *w)
+    };
+    for &(prog, args) in candidates {
         // Don't keep paying for a player that has already proven it can't
         // reach the audio server here.
-        if FAILED.lock().is_ok_and(|f| f.contains(&prog)) {
+        if !cfg!(test) && FAILED.lock().is_ok_and(|f| f.contains(&prog)) {
             continue;
         }
         let mut cmd = Command::new(prog);
@@ -254,13 +297,17 @@ fn play(path: &Path) -> Option<&'static str> {
         // A player we've already seen work is trusted immediately, so the
         // common path stays non-blocking.
         if known_good != Some(prog) && !produced_sound(&mut child) {
-            if let Ok(mut failed) = FAILED.lock() {
-                failed.push(prog);
+            if !cfg!(test) {
+                if let Ok(mut failed) = FAILED.lock() {
+                    failed.push(prog);
+                }
             }
             continue;
         }
-        if let Ok(mut working) = WORKING.lock() {
-            *working = Some(prog);
+        if !cfg!(test) {
+            if let Ok(mut working) = WORKING.lock() {
+                *working = Some(prog);
+            }
         }
         if let Ok(mut players) = PLAYERS.lock() {
             reap(&mut players);
@@ -276,6 +323,13 @@ fn play(path: &Path) -> Option<&'static str> {
 /// Ring the terminal bell. Whether it makes a sound is the terminal's call
 /// (many map it to a visual flash), so this is a last resort, not a strategy.
 fn bell() {
+    // Never from a test build. `alarm` rings this on a detached thread, and
+    // cargo's output capture is per-thread and not inherited by threads a test
+    // spawns, so the BEL would reach the real terminal — the CI runner's
+    // included. The answer `Played::Bell` still travels; only the noise stops.
+    if cfg!(test) {
+        return;
+    }
     use std::io::Write;
     let mut out = std::io::stdout();
     let _ = out.write_all(b"\x07");
@@ -363,6 +417,28 @@ mod tests {
         let started = std::time::Instant::now();
         alarm(Tone::Stale);
         assert!(started.elapsed() < std::time::Duration::from_millis(100));
+    }
+
+    /// The stand-in exists so a test build makes no noise, but a seam that can
+    /// only succeed would fake the two callers that read this answer —
+    /// `App::run_alarm_test` and the alarm self-test both print it to a human.
+    #[test]
+    #[cfg(unix)]
+    fn a_working_player_is_reported_by_name() {
+        stand_in::set(stand_in::WORKS);
+        assert_eq!(sound_check(Tone::Low), Played::Player("sh"));
+    }
+
+    /// The headless case: every player spawns and dies without reaching an
+    /// audio server, so the bell is all that is left. Unreachable under test
+    /// until the stand-in could fail.
+    #[test]
+    #[cfg(unix)]
+    fn a_machine_with_no_working_player_falls_back_to_the_bell() {
+        stand_in::set(stand_in::FAILS);
+        let played = sound_check(Tone::Low);
+        stand_in::set(stand_in::WORKS);
+        assert_eq!(played, Played::Bell);
     }
 
     /// The C3 failure: a player that exists on PATH, spawns fine, and exits
