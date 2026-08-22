@@ -209,19 +209,34 @@ impl Client {
         ))
     }
 
+    /// How far back to look for a sensor start. Wider than any sensor lasts,
+    /// so a fourteen-day Libre changed yesterday is still found today.
+    const SENSOR_LOOKBACK_MS: i64 = 45 * 24 * 3_600_000;
+
     /// Epoch ms of the most recent sensor start/change treatment, if any.
     pub async fn sensor_start(&self) -> Result<Option<i64>> {
         let url = format!("{}/api/v1/treatments.json", self.base_url);
+        // Ask by date, and match the event type here.
+        //
+        // Filtering server-side by eventType is the obvious way to do this and
+        // it does not work: Nightscout 15.0.7 answers a `$regex` on eventType
+        // with a bare `null`, so a site with two Sensor Start events reported
+        // no sensor at all, silently, for as long as this code has existed.
+        // An unfiltered request is no good either — Nightscout applies its own
+        // recent-days default, and a pump user's 10-15 treatments a day push a
+        // sensor event out of any small count. A window wider than a sensor
+        // lasts, with the rows read here, is the shape that survives both.
+        let since = DateTime::from_timestamp_millis(
+            chrono::Utc::now().timestamp_millis() - Self::SENSOR_LOOKBACK_MS,
+        )
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_default();
         let resp = self
             .http
             .get(&url)
-            // Filter server-side: a pump user logs 10-15 treatments a day, so
-            // the newest 50 of *any* type covers about three days while a
-            // sensor lasts ten to fourteen — the sensor event fell off the end
-            // and the age silently disappeared.
             .query(&[
-                ("find[eventType][$regex]", "Sensor"),
-                ("count", "20"),
+                ("find[created_at][$gte]", since.as_str()),
+                ("count", "400"),
                 ("token", self.token.as_str()),
             ])
             .send()
@@ -687,6 +702,56 @@ pub mod fake {
         }
     }
 
+    /// Like [`serve`], but hands back what each request asked for. A body is
+    /// not enough to catch a query the server answers with `null`: that is
+    /// exactly how the sensor-start lookup failed against a real Nightscout
+    /// while every body-only test passed.
+    pub async fn serve_capturing(
+        status: u16,
+        body: &'static str,
+    ) -> (Site, Arc<std::sync::Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let response = Arc::new(format!(
+            "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ));
+        let recorder = Arc::clone(&seen);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let response = Arc::clone(&response);
+                let recorder = Arc::clone(&recorder);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let read = sock.read(&mut buf).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..read]).to_string();
+                    if let Some(line) = request.lines().next() {
+                        recorder.lock().unwrap().push(line.to_string());
+                    }
+                    let _ = sock.write_all(response.as_bytes()).await;
+                    let _ = sock.flush().await;
+                });
+            }
+        });
+        (
+            Site {
+                id: String::new(),
+                name: "fake".into(),
+                url: format!("http://127.0.0.1:{port}"),
+                token: "test-token".into(),
+                write_token: None,
+                timezone: None,
+                alerts: None,
+            },
+            seen,
+        )
+    }
+
     /// Answer every request after `delay_ms`, so a test can tell a chain of
     /// sequential awaits from a concurrent one by wall clock.
     pub async fn serve_slow(delay_ms: u64) -> Site {
@@ -1044,6 +1109,34 @@ mod tests {
         assert_eq!(t[0].insulin, Some(4.2));
         assert_eq!(t[1].at_ms, 2000); // created_at parsed when mills is absent
         assert_eq!(t[1].carbs, None);
+    }
+
+    /// Nightscout 15.0.7 answers `find[eventType][$regex]=Sensor` with a bare
+    /// `null` — not an empty array, not an error — so the sensor lookup came
+    /// back "no sensor" on a site that had two Sensor Start events. Ask by
+    /// date, which every version answers, and match the type here.
+    #[tokio::test]
+    async fn the_sensor_lookup_asks_by_date_not_by_event_type() {
+        let body = r#"[
+          {"eventType":"Sensor Start","created_at":"2026-08-13T06:47:32.079Z","mills":null},
+          {"eventType":"Meal Bolus","created_at":"2026-08-14T10:00:00.000Z","carbs":40},
+          {"eventType":"Sensor Start","created_at":"2026-08-01T07:24:34.886Z","mills":null}
+        ]"#;
+        let (site, seen) = fake::serve_capturing(200, body).await;
+        let client = Client::for_site(&site).unwrap();
+
+        let started = client.sensor_start().await.unwrap();
+        assert_eq!(started, parse_iso("2026-08-13T06:47:32.079Z"));
+
+        let request = seen.lock().unwrap().first().cloned().unwrap_or_default();
+        assert!(
+            !request.contains("regex"),
+            "the eventType regex is what returned null on a real site: {request}"
+        );
+        assert!(
+            request.contains("created_at"),
+            "expected a date window in the query: {request}"
+        );
     }
 
     #[test]
