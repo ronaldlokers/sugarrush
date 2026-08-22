@@ -6,6 +6,20 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2026.8.2] - 2026-08-22
+
+This release turns sugarrush from a dashboard you watch into something that
+watches for you. `sugarrush watch` runs the alarm headless, so a nocturnal low
+still wakes you when no terminal is open, and it now follows every configured
+person at once — each with its own alert episode, its own snooze, and a record
+of what the alarm actually did. You can log carbs and insulin back to
+Nightscout behind an explicit confirmation, keep a private local history, and
+export a clinical window as CSV plus a plain-language summary. Bars are
+first-class too: one JSON line for Waybar, tmux, polybar and i3blocks, and a
+full Quickshell widget for Omarchy 4 whose panel charts the last hours against
+a typical day, the day's time in range, and the times of day where lows keep
+happening.
+
 ### Added
 
 - **sugarrush has a face.** The running sugar cube is now the app icon
