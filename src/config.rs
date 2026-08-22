@@ -35,6 +35,11 @@ pub struct Config {
     /// How many days of history the AGP view folds over.
     #[serde(default = "default_agp_days")]
     pub agp_days: u32,
+    /// How many days a sensor is expected to last, so its age can be read as
+    /// time remaining. A G6/G7 runs 10, a Libre 14; `0` means the sensor is
+    /// never called expiring, for uploaders that log no sensor change at all.
+    #[serde(default = "default_sensor_days")]
+    pub sensor_days: u32,
     /// Minimap navigator settings.
     #[serde(default)]
     pub minimap: MinimapConfig,
@@ -572,6 +577,10 @@ impl Alerts {
 fn default_units() -> Units {
     Units::Mmol
 }
+fn default_sensor_days() -> u32 {
+    10
+}
+
 fn default_agp_days() -> u32 {
     14
 }
@@ -607,6 +616,7 @@ impl Config {
             theme: ThemeConfig::default(),
             graph_style: GraphStyle::default(),
             agp_days: default_agp_days(),
+            sensor_days: default_sensor_days(),
             minimap: MinimapConfig::default(),
             history_cache: HistoryCacheConfig::default(),
         }
@@ -1109,6 +1119,7 @@ desktop = false
             theme: ThemeConfig::default(),
             graph_style: GraphStyle::Dots,
             agp_days: 14,
+            sensor_days: 10,
             minimap: MinimapConfig::default(),
             history_cache: HistoryCacheConfig {
                 enabled: true,

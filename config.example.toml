@@ -24,6 +24,13 @@ graph_style = "dots"
 # settings; cycle graph tabs with Tab.
 agp_days = 14
 
+# How long a sensor is expected to last, so its age can be read as time
+# remaining — a Dexcom G6/G7 runs 10 days, a Libre 14. Clamped to 0-30, where
+# 0 keeps showing the sensor's age but never calls it expiring, which is what
+# you want if your uploader logs no sensor changes at all. Change live in
+# settings.
+sensor_days = 10
+
 # Auto-refresh interval in seconds.
 refresh_secs = 30
 

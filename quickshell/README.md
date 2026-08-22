@@ -31,7 +31,12 @@ rest is a stack of cards that each name the window they describe — because
 "mean 8.8" under a six-hour chart is a 24-hour figure, and a panel that does
 not say so invites the wrong reading:
 
-- **Now** — the reading, its trend in words, and how long ago it arrived;
+- **Now** — the reading, its trend in words, how long ago it arrived, and how
+  long the sensor has been running: `sensor 6d 4h · 3d left`, amber inside the
+  last day and red once it is past. The countdown needs `sensor_days` in
+  `config.toml` (or the settings screen) and a site whose uploader logs
+  "Sensor Start" / "Sensor Change"; without either, the age alone is shown, or
+  nothing at all;
 - **Last N hours** — the chart: your reading over a typical day for the same
   hours, the median dashed and the 25–75% band shaded, each alert threshold in
   its own colour and labelled on the value axis, the clock along the bottom.
@@ -111,6 +116,14 @@ unlike the Waybar module's CSS classes.
 
 Against an older sugarrush that doesn't emit `color`, it falls back to the
 bar's own foreground, and to the bar's urgent colour for the two urgent states.
+
+## Omarchy menu entries
+
+[`omarchy-menu.jsonc`](omarchy-menu.jsonc) has a sugarrush submenu — dashboard,
+snooze 15m/1h, the current reading as a notification, export, settings — to
+merge into `~/.config/omarchy/extensions/omarchy-menu.jsonc`. The shell watches
+that file, so an edit takes effect without a restart, and every entry is gated
+on `command -v sugarrush` so the menu stays clean on a machine without it.
 
 ## Editing the widget
 

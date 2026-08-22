@@ -1,0 +1,48 @@
+// sugarrush entries for the Omarchy menu.
+//
+// Merge into ~/.config/omarchy/extensions/omarchy-menu.jsonc — the file the
+// shell reads alongside its own menu definition, with watchChanges on, so an
+// edit takes effect without a restart.
+//
+// `when:` is a bash expression the shell evaluates: these entries stay hidden
+// on a machine where sugarrush is not installed, rather than appearing and
+// then failing.
+{
+  "sugarrush": {
+    "icon": "󰋩",
+    "when": "command -v sugarrush >/dev/null",
+    "items": [
+      {
+        "name": "Dashboard",
+        "icon": "󰕮",
+        "action": "omarchy-launch-floating-terminal-with-presentation sugarrush"
+      },
+      {
+        "name": "Snooze 15 minutes",
+        "icon": "󰒲",
+        "action": "sugarrush snooze 15m"
+      },
+      {
+        "name": "Snooze 1 hour",
+        "icon": "󰒲",
+        "action": "sugarrush snooze 1h"
+      },
+      {
+        // The reading, the trend and how old it is — no terminal needed.
+        "name": "Reading",
+        "icon": "󰗲",
+        "action": "omarchy-notification-send \"$(sugarrush status --format text)\""
+      },
+      {
+        "name": "Export for a clinician",
+        "icon": "󰈙",
+        "action": "omarchy-launch-floating-terminal-with-presentation sugarrush export"
+      },
+      {
+        "name": "Settings",
+        "icon": "󰒓",
+        "action": "omarchy-launch-floating-terminal-with-presentation sugarrush --screen settings"
+      }
+    ]
+  }
+}

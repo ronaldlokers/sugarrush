@@ -49,6 +49,31 @@ Panel {
     }
   }
   readonly property var stats: doc && doc.stats ? doc.stats : null
+  readonly property var sensor: doc && doc.sensor ? doc.sensor : null
+
+  // "6d 4h", the way the dashboard writes it.
+  function ageWords(hours) {
+    var d = Math.floor(hours / 24)
+    var h = hours % 24
+    return d > 0 ? d + "d " + h + "h" : h + "h"
+  }
+
+  // The countdown carries the state, so it is coloured like everything else:
+  // amber inside the last day, red once it is over.
+  function sensorColor() {
+    if (!sensor || sensor.expired === undefined) return Qt.darker(barForeground, 1.35)
+    if (sensor.expired) return "#cc241d"
+    if (sensor.expires_in_h <= 24) return "#d79921"
+    return Qt.darker(barForeground, 1.35)
+  }
+
+  function sensorWords() {
+    if (!sensor) return ""
+    var line = "sensor " + ageWords(sensor.age_h)
+    if (sensor.expired === true) return line + " · expired"
+    if (sensor.expires_in_h !== undefined) return line + " · " + ageWords(sensor.expires_in_h) + " left"
+    return line
+  }
   readonly property bool hasInsights: insightDays > 0 && loadError === ""
     && doc && doc.insights && doc.insights.length > 0
 
@@ -273,6 +298,17 @@ Panel {
                   ? root.reading.arrow + "  " + root.trendWords(root.reading.direction)
                   : ""
               }
+            }
+
+            Text {
+              anchors.right: nowPill.left
+              anchors.rightMargin: Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
+              visible: root.sensor !== null
+              color: root.sensorColor()
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.sensorWords()
             }
 
             Rectangle {

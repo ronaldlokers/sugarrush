@@ -27,6 +27,11 @@ pub struct BuildInput {
     /// Newest first — the last `--days`. Empty when history was not asked for.
     pub history: Vec<Entry>,
     pub stats_window_h: i64,
+    /// Epoch ms of the newest sensor start/change, if the site logs them.
+    pub sensor_start_ms: Option<i64>,
+    /// Expected sensor life in days; `0` means the age is reported without a
+    /// countdown, because nothing here knows what "expiring" would mean.
+    pub sensor_days: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,6 +60,8 @@ pub struct Snapshot {
     pub insights: Option<Vec<InsightDoc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub band: Option<BandDoc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sensor: Option<SensorDoc>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -111,6 +118,18 @@ pub struct BandDoc {
     pub points: Vec<(i64, f64, f64, f64)>,
 }
 
+/// How long the sensor has been running, and — when its expected life is
+/// known — how much of that is left.
+#[derive(Debug, Clone, Serialize)]
+pub struct SensorDoc {
+    pub started_at: i64,
+    pub age_h: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_in_h: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expired: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct InsightDoc {
     pub kind: &'static str,
@@ -144,6 +163,8 @@ pub fn build(input: BuildInput) -> Snapshot {
         recent,
         history,
         stats_window_h,
+        sensor_start_ms,
+        sensor_days,
     } = input;
 
     let now = recent.first().map(|latest| {
@@ -201,6 +222,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         .collect();
 
     let band = band_for(&history, &series, timezone, units);
+    let sensor = sensor_for(sensor_start_ms, sensor_days, now_ms);
 
     Snapshot {
         schema: 1,
@@ -218,7 +240,31 @@ pub fn build(input: BuildInput) -> Snapshot {
         stats,
         insights: Some(insights),
         band,
+        sensor,
     }
+}
+
+/// The sensor's age, and its remaining life when one is configured.
+fn sensor_for(started_at: Option<i64>, days: u32, now_ms: i64) -> Option<SensorDoc> {
+    let started_at = started_at?;
+    let age_h = ((now_ms - started_at) / 3_600_000).max(0);
+    if days == 0 {
+        // The age is a fact; "expiring" would be a guess, so it is left unsaid
+        // rather than assumed from someone else's sensor.
+        return Some(SensorDoc {
+            started_at,
+            age_h,
+            expires_in_h: None,
+            expired: None,
+        });
+    }
+    let life_h = i64::from(days) * 24;
+    Some(SensorDoc {
+        started_at,
+        age_h,
+        expires_in_h: Some((life_h - age_h).max(0)),
+        expired: Some(age_h >= life_h),
+    })
 }
 
 /// A band is a claim about a typical day, so it needs several days behind it.
@@ -339,6 +385,7 @@ pub fn error_doc(now_ms: i64, message: &str) -> Snapshot {
         stats: None,
         insights: None,
         band: None,
+        sensor: None,
     }
 }
 
@@ -385,6 +432,10 @@ async fn collect(
         None => Vec::new(),
     };
 
+    // Best-effort: a site whose uploader logs no sensor changes still gets a
+    // document, just without the sensor block.
+    let sensor_start_ms = client.sensor_start().await.ok().flatten();
+
     Ok(build(BuildInput {
         now_ms,
         units: cfg.units,
@@ -397,6 +448,8 @@ async fn collect(
         recent,
         history,
         stats_window_h: 24,
+        sensor_start_ms,
+        sensor_days: cfg.sensor_days.min(30),
     }))
 }
 
@@ -429,6 +482,10 @@ pub fn demo(
         recent,
         history,
         stats_window_h: 24,
+        // Demo data has no sensor history to speak of, and inventing a
+        // countdown would be the one number on screen that means nothing.
+        sensor_start_ms: None,
+        sensor_days: 0,
     })
 }
 
@@ -473,6 +530,8 @@ mod tests {
             recent,
             history,
             stats_window_h: 24,
+            sensor_start_ms: None,
+            sensor_days: 0,
         }
     }
 
@@ -681,5 +740,51 @@ mod tests {
         let json = serde_json::to_value(build(short)).unwrap();
 
         assert!(json.get("band").is_none());
+    }
+
+    #[test]
+    fn the_sensor_block_counts_down_from_its_expected_life() {
+        let day = 24 * 3_600_000i64;
+        let mut input = input(vec![entry(115.0, NOW - MIN, "Flat")], vec![]);
+        input.sensor_start_ms = Some(NOW - 6 * day - 4 * 3_600_000);
+        input.sensor_days = 10;
+        let json = serde_json::to_value(build(input)).unwrap();
+
+        assert_eq!(json["sensor"]["age_h"], 148);
+        // Six days four hours in, a ten-day sensor has three days and change.
+        assert_eq!(json["sensor"]["expires_in_h"], 92);
+        assert_eq!(json["sensor"]["expired"], false);
+    }
+
+    #[test]
+    fn a_sensor_past_its_life_says_so_rather_than_counting_backwards() {
+        let day = 24 * 3_600_000i64;
+        let mut input = input(vec![entry(115.0, NOW - MIN, "Flat")], vec![]);
+        input.sensor_start_ms = Some(NOW - 12 * day);
+        input.sensor_days = 10;
+        let json = serde_json::to_value(build(input)).unwrap();
+
+        assert_eq!(json["sensor"]["expired"], true);
+        assert_eq!(json["sensor"]["expires_in_h"], 0);
+    }
+
+    #[test]
+    fn no_expected_life_reports_the_age_and_claims_nothing_else() {
+        let day = 24 * 3_600_000i64;
+        let mut input = input(vec![entry(115.0, NOW - MIN, "Flat")], vec![]);
+        input.sensor_start_ms = Some(NOW - 3 * day);
+        input.sensor_days = 0;
+        let json = serde_json::to_value(build(input)).unwrap();
+
+        assert_eq!(json["sensor"]["age_h"], 72);
+        // Nothing knows when it runs out, so nothing says.
+        assert!(json["sensor"].get("expires_in_h").is_none());
+        assert!(json["sensor"].get("expired").is_none());
+    }
+
+    #[test]
+    fn no_sensor_event_means_no_sensor_block() {
+        let json = serde_json::to_value(build(input(vec![], vec![]))).unwrap();
+        assert!(json.get("sensor").is_none());
     }
 }
