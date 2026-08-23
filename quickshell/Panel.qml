@@ -198,12 +198,11 @@ Panel {
 
   readonly property string summaryCommand: snapshotCommand.replace(/snapshot.*$/, "summary")
   readonly property string snoozeCommand: snapshotCommand.replace(/snapshot.*$/, "snooze")
-  // Derived from the dashboard command rather than configured separately: a
-  // widget pointed at a build directory logs against that build, and someone
-  // who replaced the terminal launcher keeps their own.
-  readonly property string treatmentCommand: setting(
-    "onLogTreatment",
-    setting("onClick", "omarchy-launch-floating-terminal-with-presentation sugarrush") + " treatment")
+  // The site this document is about. `treatment` refuses to write without one
+  // — deliberately, since guessing which person a health record belongs to is
+  // not a guess software should make — so anything acting on this reading has
+  // to name it back.
+  readonly property string siteName: doc && doc.site ? doc.site : ""
 
   // What the last action did, in words. Cleared on the way out, like the
   // clipboard note, so a stale "snoozed" never greets the next open.
@@ -234,14 +233,6 @@ Panel {
     Qt.callLater(function () { snoozeProc.running = true })
   }
 
-  // Logging carbs or insulin goes through the interactive command, in a
-  // terminal, on purpose: `treatment` asks for the person's name before it
-  // writes to a health record, and a panel button must not be a way around
-  // that.
-  function logTreatment() {
-    root.close()
-    if (root.bar) root.bar.run(root.treatmentCommand)
-  }
   // "" until a copy is attempted, then what happened. Cleared on the way out
   // so the panel never opens still claiming a copy from an hour ago.
   property string copyState: ""
@@ -873,16 +864,6 @@ Panel {
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               fontSize: Style.font.caption
               onClicked: root.snooze("off")
-            }
-
-            Button {
-              text: "Log treatment"
-              bordered: true
-              focusable: false
-              foreground: root.barForeground
-              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              fontSize: Style.font.caption
-              onClicked: root.logTreatment()
             }
           }
 

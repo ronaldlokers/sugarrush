@@ -121,7 +121,6 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | `showArrow`, `showDelta` | — | not widget options: switch them off in sugarrush's own `[bar]` config (or the settings screen), which every bar follows |
 | `command` | `sugarrush waybar` | the command the pill reads a reading from |
 | `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
-| `onLogTreatment` | `onClick` + ` treatment` | what the panel's "Log treatment" runs; interactive on purpose, since the command confirms before writing |
 | `onRightClick` | the same, plus `--screen settings` | right click |
 | `panelHours` | `6` | how much of the overview the chart shows at once |
 | `overviewHours` | `24` | how much history is drawn at full resolution (6-72) |
@@ -202,10 +201,10 @@ dashboard or another machine is reflected here as well. If no watcher is
 running the buttons are disabled and the panel says so — silencing an alarm
 that is not armed would be a button that lies.
 
-**Log treatment** opens `sugarrush treatment` in a terminal rather than writing
-anything itself. That command confirms by asking for the person's name before
-it touches a health record, and a one-click path around that check is not
-something a bar widget should offer.
+There is deliberately no "log a treatment" button. `sugarrush treatment` takes
+the amounts on the command line and then confirms by asking for the person's
+name, so there is nothing a single click can usefully open — a form belongs in
+the panel first, and that is its own piece of work.
 A panel that dismisses when focus moves is the wrong place to type a token.
 
 ## Omarchy menu entries
