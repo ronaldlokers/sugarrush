@@ -31,6 +31,10 @@ pub struct BuildInput {
     pub recent: Vec<Entry>,
     /// Newest first — the last `--days`. Empty when history was not asked for.
     pub history: Vec<Entry>,
+    /// Carbs and insulin logged inside the `recent` window. Empty when the
+    /// site logs none, or when the request for them failed — a document
+    /// without them is still a document.
+    pub treatments: Vec<crate::nightscout::Treatment>,
     pub stats_window_h: i64,
     /// Epoch ms of the newest sensor start/change, if the site logs them.
     pub sensor_start_ms: Option<i64>,
@@ -66,6 +70,10 @@ pub struct Snapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub series: Option<Vec<(i64, f64)>>,
     /// `None` with fewer than two readings: no mean worth printing.
+    /// Oldest first, inside the `series` window: what was done, so a chart can
+    /// say why the line moved rather than only that it did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub treatments: Option<Vec<TreatmentDoc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stats: Option<Stats>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -152,6 +160,18 @@ impl ThemeDoc {
             graph: hex(theme.graph),
         }
     }
+}
+
+/// One logged carb or insulin entry. Never both zero: Nightscout logs notes,
+/// finger sticks and sensor changes in the same collection, and a marker on a
+/// chart with no amount behind it is a mark that means nothing.
+#[derive(Debug, Clone, Serialize)]
+pub struct TreatmentDoc {
+    pub at_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carbs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insulin: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -245,6 +265,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         timezone,
         recent,
         history,
+        treatments,
         stats_window_h,
         sensor_start_ms,
         sensor_days,
@@ -290,6 +311,22 @@ pub fn build(input: BuildInput) -> Snapshot {
         .collect();
     let stats = stats_for(&stats_entries, units, &alerts, stats_window_h);
 
+    // Oldest first, to match `series`, and only the ones with an amount: a
+    // note or a finger stick logged in the same collection would otherwise
+    // become a marker standing for nothing.
+    let window_from = series.first().map(|(at, _)| *at).unwrap_or(i64::MIN);
+    let mut logged: Vec<TreatmentDoc> = treatments
+        .iter()
+        .filter(|t| t.at_ms >= window_from && t.at_ms <= now_ms)
+        .filter(|t| t.carbs.is_some_and(|c| c > 0.0) || t.insulin.is_some_and(|i| i > 0.0))
+        .map(|t| TreatmentDoc {
+            at_ms: t.at_ms,
+            carbs: t.carbs.filter(|c| *c > 0.0),
+            insulin: t.insulin.filter(|i| *i > 0.0),
+        })
+        .collect();
+    logged.sort_by_key(|t| t.at_ms);
+
     let bands = crate::agp::profile_in(&history, timezone);
     let insights = crate::agp::insights(&bands, alerts.low, alerts.high)
         .iter()
@@ -330,6 +367,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         }),
         theme: ThemeDoc::of(&theme),
         series: Some(series),
+        treatments: Some(logged),
         stats,
         insights: Some(insights),
         band,
@@ -536,6 +574,7 @@ pub fn error_doc(now_ms: i64, theme: &Theme, message: &str) -> Snapshot {
         site: String::new(),
         now: None,
         range: None,
+        treatments: None,
         // Even a failure is drawn in the user's colours: the message and the
         // frame around it are the only things on screen, and falling back to
         // a built-in palette here would ignore the colourblind preset at the
@@ -599,6 +638,13 @@ async fn collect(
     // document, just without the sensor block.
     let sensor_start_ms = client.sensor_start().await.ok().flatten();
 
+    // Also best-effort. Plenty of people log nothing, and a site that answers
+    // the entries query but not this one should still get a chart.
+    let treatments = client
+        .treatments(recent_from, now_ms)
+        .await
+        .unwrap_or_default();
+
     Ok(build(BuildInput {
         now_ms,
         site: site.name.clone(),
@@ -611,6 +657,7 @@ async fn collect(
             .and_then(|name| name.parse::<chrono_tz::Tz>().ok()),
         recent,
         history,
+        treatments,
         stats_window_h: 24,
         sensor_start_ms,
         sensor_days: cfg.sensor_days.min(30),
@@ -646,6 +693,9 @@ pub fn demo(
         timezone: None,
         recent,
         history,
+        // Two of them, spaced the way a meal and its bolus actually land, so
+        // the demo chart shows the markers rather than an empty lane.
+        treatments: crate::demo::treatments(now_ms),
         stats_window_h: 24,
         // Demo data has no sensor history to speak of, and inventing a
         // countdown would be the one number on screen that means nothing.
@@ -695,6 +745,7 @@ mod tests {
             timezone: None,
             recent,
             history,
+            treatments: Vec::new(),
             stats_window_h: 24,
             sensor_start_ms: None,
             sensor_days: 0,
@@ -757,6 +808,102 @@ mod tests {
         });
         let json = serde_json::to_value(&snap).unwrap();
         assert_eq!(json["site"], "Alex's Libre");
+    }
+
+    #[test]
+    fn logged_carbs_and_insulin_reach_the_document_oldest_first() {
+        use crate::nightscout::Treatment;
+        let snap = build(BuildInput {
+            treatments: vec![
+                Treatment {
+                    at_ms: NOW - 20 * MIN,
+                    carbs: None,
+                    insulin: Some(1.5),
+                },
+                Treatment {
+                    at_ms: NOW - 50 * MIN,
+                    carbs: Some(40.0),
+                    insulin: Some(4.5),
+                },
+            ],
+            ..input(
+                vec![
+                    entry(115.0, NOW - 4 * MIN, "Flat"),
+                    entry(113.0, NOW - 60 * MIN, "Flat"),
+                ],
+                vec![],
+            )
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+
+        // Oldest first, like `series`: a chart draws left to right and should
+        // not have to reverse one of the two.
+        assert_eq!(json["treatments"][0]["at_ms"], NOW - 50 * MIN);
+        assert_eq!(json["treatments"][0]["carbs"], 40.0);
+        assert_eq!(json["treatments"][0]["insulin"], 4.5);
+        assert_eq!(json["treatments"][1]["at_ms"], NOW - 20 * MIN);
+        assert_eq!(json["treatments"][1]["insulin"], 1.5);
+        // Absent rather than zero: the marker for it is not drawn at all.
+        assert!(json["treatments"][1].get("carbs").is_none());
+    }
+
+    #[test]
+    fn a_treatment_with_no_amount_is_not_a_marker() {
+        use crate::nightscout::Treatment;
+        // Nightscout keeps notes, finger sticks and sensor changes in the same
+        // collection. A mark on the chart standing for none of the two things
+        // this draws would mean nothing.
+        let snap = build(BuildInput {
+            treatments: vec![
+                Treatment {
+                    at_ms: NOW - 10 * MIN,
+                    carbs: None,
+                    insulin: None,
+                },
+                Treatment {
+                    at_ms: NOW - 11 * MIN,
+                    carbs: Some(0.0),
+                    insulin: Some(0.0),
+                },
+            ],
+            ..input(
+                vec![
+                    entry(115.0, NOW - 4 * MIN, "Flat"),
+                    entry(113.0, NOW - 60 * MIN, "Flat"),
+                ],
+                vec![],
+            )
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+        assert_eq!(
+            json["treatments"].as_array().map(Vec::len),
+            Some(0),
+            "an amountless treatment became a marker"
+        );
+    }
+
+    #[test]
+    fn a_treatment_from_before_the_window_is_left_out() {
+        use crate::nightscout::Treatment;
+        // Nightscout's own `count` default can hand back more history than was
+        // asked for; a marker outside the plotted window would be drawn at the
+        // wrong end of the chart or off it.
+        let snap = build(BuildInput {
+            treatments: vec![Treatment {
+                at_ms: NOW - 400 * MIN,
+                carbs: Some(30.0),
+                insulin: None,
+            }],
+            ..input(
+                vec![
+                    entry(115.0, NOW - 4 * MIN, "Flat"),
+                    entry(113.0, NOW - 60 * MIN, "Flat"),
+                ],
+                vec![],
+            )
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+        assert_eq!(json["treatments"].as_array().map(Vec::len), Some(0));
     }
 
     #[test]
