@@ -219,10 +219,17 @@ dashboard or another machine is reflected here as well. If no watcher is
 running the buttons are disabled and the panel says so — silencing an alarm
 that is not armed would be a button that lies.
 
-There is deliberately no "log a treatment" button. `sugarrush treatment` takes
-the amounts on the command line and then confirms by asking for the person's
-name, so there is nothing a single click can usefully open — a form belongs in
-the panel first, and that is its own piece of work.
+**Log** opens a small form — carbs and insulin, nothing else — and **Review in
+terminal** hands those amounts to `sugarrush treatment` in a terminal window.
+The panel never writes the record itself: the command prints what it is about
+to write and asks for the person's name first, and that confirmation is the
+guard on a health record rather than a formality to route around. Cancel, or
+closing the panel, clears the form.
+
+Carbs and insulin are the only fields because they are the two the chart draws
+and the two the command needs. A meal remembered three hours late wants
+`--at`, which needs a date picker to offer honestly — that one belongs in the
+terminal.
 A panel that dismisses when focus moves is the wrong place to type a token.
 
 ## Omarchy menu entries
