@@ -14,6 +14,8 @@ Canvas {
   // `{ days, step_min, points: [[minute, p05, p25, p50, p75, p95], ...] }`
   property var agp: null
   property var range: null
+  // `doc.theme`, or null against a sugarrush too old to send one.
+  property var themeColors: null
   property color foreground: "white"
 
   readonly property int gutter: 34
@@ -21,15 +23,24 @@ Canvas {
 
   onAgpChanged: requestPaint()
   onRangeChanged: requestPaint()
+  onThemeColorsChanged: requestPaint()
   onForegroundChanged: requestPaint()
   onWidthChanged: requestPaint()
   onHeightChanged: requestPaint()
 
+  function themed(role, fallback) {
+    return themeColors && themeColors[role] ? themeColors[role] : fallback
+  }
+
+  // The same ladder `alert.rs` classifies by, in the same colours: low and
+  // high are separate roles in the palette, and drawing both amber threw that
+  // distinction away along with the colourblind preset.
   function colorFor(v) {
     if (!range) return root.foreground
-    if (v <= range.urgent_low || v >= range.urgent_high) return "#cc241d"
-    if (v < range.low || v > range.high) return "#d79921"
-    return "#98971a"
+    if (v <= range.urgent_low || v >= range.urgent_high) return themed("urgent", "#cc241d")
+    if (v < range.low) return themed("low", "#d79921")
+    if (v > range.high) return themed("high", "#d79921")
+    return themed("in_range", "#98971a")
   }
 
   onPaint: {

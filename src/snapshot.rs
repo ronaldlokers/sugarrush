@@ -48,6 +48,10 @@ pub struct Snapshot {
     pub now: Option<Reading>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub range: Option<Range>,
+    /// Always present: a consumer has to paint something even when there is
+    /// no reading to paint, and an absent palette would mean falling back to
+    /// a hard-coded one at exactly the wrong moment.
+    pub theme: ThemeDoc,
     /// `[epoch_ms, value]` oldest first, in display units. Empty when there
     /// were no readings in the window — which the panel draws as a message,
     /// not as a flat line at zero.
@@ -105,6 +109,41 @@ pub struct Range {
     pub low: f64,
     pub high: f64,
     pub urgent_high: f64,
+    /// When a reading stops counting as current. A consumer that draws an
+    /// ageing number needs the same threshold the alarm uses, or it invents
+    /// its own idea of "old" and disagrees with the thing making the noise.
+    pub stale_minutes: i64,
+}
+
+/// The resolved palette, as hex.
+///
+/// Sent because a consumer that hard-codes a copy of these colours ignores
+/// the colourblind preset — the one setting whose entire purpose is that
+/// red and green are the wrong pair for some people. The single `now.color`
+/// was never enough: a chart, a time-in-range bar and a sensor countdown all
+/// paint states the current reading is not in.
+#[derive(Debug, Clone, Serialize)]
+pub struct ThemeDoc {
+    pub low: String,
+    pub in_range: String,
+    pub high: String,
+    pub urgent: String,
+    pub prediction: String,
+    pub graph: String,
+}
+
+impl ThemeDoc {
+    fn of(theme: &Theme) -> Self {
+        let hex = crate::theme::hex;
+        Self {
+            low: hex(theme.low),
+            in_range: hex(theme.in_range),
+            high: hex(theme.high),
+            urgent: hex(theme.urgent),
+            prediction: hex(theme.prediction),
+            graph: hex(theme.graph),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -277,7 +316,9 @@ pub fn build(input: BuildInput) -> Snapshot {
             low: scaled(units, alerts.low),
             high: scaled(units, alerts.high),
             urgent_high: scaled(units, alerts.urgent_high),
+            stale_minutes: alerts.stale_minutes,
         }),
+        theme: ThemeDoc::of(&theme),
         series: Some(series),
         stats,
         insights: Some(insights),
@@ -473,7 +514,7 @@ fn stats_for(entries: &[Entry], units: Units, alerts: &Alerts, window_h: i64) ->
 /// A document that says only what went wrong. Exit code stays 0 and the shape
 /// stays parseable, so a bar renders the message instead of a parse failure —
 /// the same promise `status` makes.
-pub fn error_doc(now_ms: i64, message: &str) -> Snapshot {
+pub fn error_doc(now_ms: i64, theme: &Theme, message: &str) -> Snapshot {
     Snapshot {
         schema: 1,
         // Nominal: there is no reading to express in any unit, and a consumer
@@ -483,6 +524,11 @@ pub fn error_doc(now_ms: i64, message: &str) -> Snapshot {
         error: Some(message.to_string()),
         now: None,
         range: None,
+        // Even a failure is drawn in the user's colours: the message and the
+        // frame around it are the only things on screen, and falling back to
+        // a built-in palette here would ignore the colourblind preset at the
+        // one moment the panel has nothing else to say.
+        theme: ThemeDoc::of(theme),
         series: None,
         stats: None,
         insights: None,
@@ -512,7 +558,7 @@ pub async fn fetch(cfg: &Config, site: &Site, hours: u32, days: u32) -> Snapshot
     let now_ms = chrono::Utc::now().timestamp_millis();
     match collect(cfg, site, hours, days, now_ms).await {
         Ok(snapshot) => snapshot,
-        Err(e) => error_doc(now_ms, &e.to_string()),
+        Err(e) => error_doc(now_ms, &cfg.theme.resolve(), &e.to_string()),
     }
 }
 
@@ -640,6 +686,67 @@ mod tests {
         }
     }
 
+    /// A colourblind palette, the one preset whose whole point is that the
+    /// consumer must not be painting in red and green.
+    fn colorblind() -> Theme {
+        crate::theme::theme_from_names(&crate::theme::COLORBLIND_NAMES.map(|name| name.to_string()))
+    }
+
+    #[test]
+    fn the_document_carries_the_palette_it_was_built_with() {
+        let snap = build(BuildInput {
+            theme: colorblind(),
+            ..input(vec![entry(115.0, NOW - 4 * MIN, "Flat")], vec![])
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+
+        // Blue for low and white for in-range, not the default red and green:
+        // a consumer that hard-codes a palette would draw the wrong two.
+        let expect = colorblind();
+        assert_eq!(json["theme"]["low"], crate::theme::hex(expect.low));
+        assert_eq!(
+            json["theme"]["in_range"],
+            crate::theme::hex(expect.in_range)
+        );
+        assert_eq!(json["theme"]["high"], crate::theme::hex(expect.high));
+        assert_eq!(json["theme"]["urgent"], crate::theme::hex(expect.urgent));
+        assert_eq!(
+            json["theme"]["prediction"],
+            crate::theme::hex(expect.prediction)
+        );
+        assert_eq!(json["theme"]["graph"], crate::theme::hex(expect.graph));
+        assert_ne!(
+            json["theme"]["low"],
+            crate::theme::hex(Theme::default().low),
+            "the default palette reached the document instead of the configured one"
+        );
+    }
+
+    #[test]
+    fn even_a_failure_is_drawn_in_the_configured_palette() {
+        let json = serde_json::to_value(error_doc(NOW, &colorblind(), "site unreachable")).unwrap();
+        assert_eq!(json["error"], "site unreachable");
+        assert_eq!(
+            json["theme"]["urgent"],
+            crate::theme::hex(colorblind().urgent)
+        );
+    }
+
+    #[test]
+    fn the_range_carries_the_threshold_a_reading_goes_stale_at() {
+        // A consumer that draws an ageing reading needs the number the alarm
+        // uses, not one of its own.
+        let snap = build(BuildInput {
+            alerts: Alerts {
+                stale_minutes: 9,
+                ..alerts()
+            },
+            ..input(vec![entry(115.0, NOW - 4 * MIN, "Flat")], vec![])
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+        assert_eq!(json["range"]["stale_minutes"], 9);
+    }
+
     #[test]
     fn a_normal_document_carries_schema_units_and_the_current_reading() {
         let snap = build(input(
@@ -699,7 +806,8 @@ mod tests {
 
     #[test]
     fn an_error_is_still_a_document() {
-        let json = serde_json::to_value(error_doc(NOW, "no site configured")).unwrap();
+        let json =
+            serde_json::to_value(error_doc(NOW, &Theme::default(), "no site configured")).unwrap();
 
         assert_eq!(json["schema"], 1);
         assert_eq!(json["generated_at"], NOW);

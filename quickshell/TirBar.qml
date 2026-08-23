@@ -1,6 +1,10 @@
-// Five bands, widths proportional to their share of the window. Colours are
-// the conventional CGM ones rather than the theme's, because the bands mean
-// the same thing on every theme.
+// Five bands, widths proportional to their share of the window.
+//
+// Coloured from the document's palette, which is the user's own: the bands do
+// mean the same thing on every theme, but "the same thing" is exactly what a
+// theme names. Hard-coding them left anyone on the colourblind preset reading
+// a red/green bar. It also flattened low and urgent-low into one red, which
+// the palette has always kept apart.
 
 import QtQuick
 
@@ -8,14 +12,20 @@ Item {
   id: root
 
   property var stats: null
+  // `doc.theme`, or null against a sugarrush too old to send one.
+  property var themeColors: null
+
+  function themed(role, fallback) {
+    return themeColors && themeColors[role] ? themeColors[role] : fallback
+  }
 
   readonly property var bands: stats && stats.tir
     ? [
-      { share: stats.tir.very_low, color: "#cc241d" },
-      { share: stats.tir.low, color: "#d79921" },
-      { share: stats.tir.in_range, color: "#98971a" },
-      { share: stats.tir.high, color: "#d79921" },
-      { share: stats.tir.very_high, color: "#cc241d" }
+      { share: stats.tir.very_low, color: themed("urgent", "#cc241d") },
+      { share: stats.tir.low, color: themed("low", "#d79921") },
+      { share: stats.tir.in_range, color: themed("in_range", "#98971a") },
+      { share: stats.tir.high, color: themed("high", "#d79921") },
+      { share: stats.tir.very_high, color: themed("urgent", "#cc241d") }
     ]
     : []
 

@@ -8,6 +8,24 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Changed
 
+- **The Quickshell panel obeys your theme.** Its chart, profile, time-in-range
+  bar, sensor countdown and alarm chip all carried a hard-coded copy of the
+  default palette, so anyone on the colourblind preset — the one setting whose
+  entire purpose is that red and green are the wrong pair — got an accessible
+  bar and an inaccessible panel. The snapshot now carries the resolved palette
+  and the panel paints from it. Low and high are separate colours there too,
+  as they always have been everywhere else.
+
+- **A stale reading in the panel looks stale.** The age sat in the same grey
+  pill at 3 minutes and at 40. Past your own `stale_minutes`, the reading greys
+  out, the pill turns red and says "no reading for 26 min", and the caption
+  gives the clock time it was last seen — at 3am the number is not wrong, it is
+  absent, and the panel was presenting absence as a value.
+
+- **The panel's forecast stopped jumping sideways.** The projection was
+  anchored to the reading's rendered width, so gaining or losing a digit moved
+  it. The reading now reserves room for the widest value its units can produce.
+
 - **The Quickshell pill wears the bar's colour until something is wrong.** It
   used to paint the whole reading — number, unit, arrow, delta and trace — in
   the alert colour at all times, so a perfectly ordinary reading sat on the bar
