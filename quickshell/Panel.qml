@@ -83,17 +83,45 @@ Panel {
   readonly property int readingPx: Math.round(Style.font.displayLarge * 1.8)
   readonly property int forecastPx: Math.round(readingPx / 2)
 
+  // The resolved palette the document was built with — the user's own,
+  // including the colourblind preset. The literals below are the fallback for
+  // a sugarrush too old to send one, and nothing else.
+  readonly property var palette: doc && doc.theme ? doc.theme : null
+
+  function themed(role, fallback) {
+    return palette && palette[role] ? palette[role] : fallback
+  }
+
   // The same ladder the chart and the pill use, so a number means the same
-  // thing wherever it appears.
+  // thing wherever it appears. Low and high are separate roles: painting both
+  // amber lost a distinction the palette has always drawn.
   function classColor(klass) {
     switch (klass) {
       case "urgent-low":
-      case "urgent-high": return "#cc241d"
-      case "low":
-      case "high": return "#d79921"
-      case "in-range": return "#98971a"
+      case "urgent-high": return themed("urgent", "#cc241d")
+      case "low": return themed("low", "#d79921")
+      case "high": return themed("high", "#d79921")
+      case "in-range": return themed("in_range", "#98971a")
       default: return barForeground
     }
+  }
+
+  // How old a reading may be before it stops being the current one. The
+  // alarm's own threshold, so the panel and the thing making the noise cannot
+  // disagree about what "now" means.
+  readonly property int staleMinutes: doc && doc.range && doc.range.stale_minutes > 0
+    ? doc.range.stale_minutes
+    : 15
+
+  readonly property bool stale: reading
+    ? (reading.class === "stale" || reading.age_min >= staleMinutes)
+    : false
+
+  // The clock time the reading was taken. Past a few minutes "26m ago" is
+  // arithmetic the reader has to do; "last seen 03:14" is the answer.
+  function seenAt() {
+    if (!doc || !reading) return ""
+    return Qt.formatTime(new Date(doc.generated_at - reading.age_min * 60000), "HH:mm")
   }
 
   // "6d 4h", the way the dashboard writes it.
@@ -107,8 +135,8 @@ Panel {
   // amber inside the last day, red once it is over.
   function sensorColor() {
     if (!sensor || sensor.expired === undefined) return Qt.darker(barForeground, 1.35)
-    if (sensor.expired) return "#cc241d"
-    if (sensor.expires_in_h <= 24) return "#d79921"
+    if (sensor.expired) return themed("urgent", "#cc241d")
+    if (sensor.expires_in_h <= 24) return themed("high", "#d79921")
     return Qt.darker(barForeground, 1.35)
   }
 
@@ -154,8 +182,8 @@ Panel {
   // deliberate but temporary.
   function alarmColor() {
     var words = alarmWords()
-    if (words === "not watching" || words === "no alarm set") return "#cc241d"
-    if (words.indexOf("snoozed") === 0) return "#d79921"
+    if (words === "not watching" || words === "no alarm set") return themed("urgent", "#cc241d")
+    if (words.indexOf("snoozed") === 0) return themed("high", "#d79921")
     return Qt.darker(barForeground, 1.35)
   }
 
@@ -607,11 +635,30 @@ Panel {
             // Baseline-anchored rather than stacked in a Row: the two numbers
             // are different sizes, and boxes aligned at the top leave their
             // digits sitting at different heights.
+            // The widest reading these units can produce, measured but never
+            // drawn. Without it the projection beside the number moved every
+            // time a digit was gained or lost — motion on a panel you glance
+            // at means "something changed", and a digit count is not that.
+            Text {
+              id: valueSizer
+              visible: false
+              font: nowValue.font
+              text: root.doc && root.doc.units === "mg/dL" ? "888" : "88.8"
+            }
+
             Text {
               id: nowValue
               anchors.left: parent.left
               anchors.top: parent.top
-              color: root.reading ? root.classColor(root.reading.class) : root.barForeground
+              width: Math.max(implicitWidth, valueSizer.implicitWidth)
+              // Greyed out once it is too old to be the current reading: at
+              // 3am the number is not wrong, it is absent, and drawing it in
+              // its alert colour presents absence as a value.
+              color: !root.reading
+                ? root.barForeground
+                : (root.stale
+                   ? Qt.darker(root.barForeground, 1.5)
+                   : root.classColor(root.reading.class))
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: root.readingPx
               font.bold: true
@@ -626,7 +673,7 @@ Panel {
               // wider than "9.1", and anchoring to the number alone ran the
               // two captions into each other.
               anchors.leftMargin: Style.space(12)
-                + Math.max(0, nowCaption.implicitWidth - nowValue.implicitWidth)
+                + Math.max(0, nowCaption.implicitWidth - nowValue.width)
               anchors.baseline: nowValue.baseline
               color: Qt.darker(root.barForeground, 1.6)
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -657,10 +704,13 @@ Panel {
               color: Qt.darker(root.barForeground, 1.35)
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
-              text: root.reading
-                ? (root.doc ? root.doc.units : "") + " · " + root.reading.arrow + " "
+              text: {
+                if (!root.reading) return ""
+                var units = root.doc ? root.doc.units : ""
+                if (root.stale) return units + " · last seen " + root.seenAt()
+                return units + " · " + root.reading.arrow + " "
                   + root.trendWords(root.reading.direction)
-                : ""
+              }
             }
 
             Text {
@@ -682,17 +732,26 @@ Panel {
               radius: height / 2
               color: "transparent"
               border.width: 1
-              border.color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.28)
+              // A stale reading is the most misleading thing this panel can
+              // show, and it used to be the least visible: the age sat in the
+              // same grey pill at 3 minutes and at 40.
+              border.color: root.stale
+                ? root.themed("urgent", "#cc241d")
+                : Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.28)
 
               Text {
                 id: pillText
                 anchors.centerIn: parent
-                color: Qt.darker(root.barForeground, 1.2)
+                color: root.stale
+                  ? root.themed("urgent", "#cc241d")
+                  : Qt.darker(root.barForeground, 1.2)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
-                text: root.reading
-                  ? "Δ " + root.reading.delta + " · " + root.reading.age_min + "m ago"
-                  : ""
+                text: {
+                  if (!root.reading) return ""
+                  if (root.stale) return "no reading for " + root.reading.age_min + " min"
+                  return "Δ " + root.reading.delta + " · " + root.reading.age_min + "m ago"
+                }
               }
             }
           }
@@ -720,6 +779,7 @@ Panel {
             width: parent.width
             height: Style.space(12)
             stats: root.stats
+            palette: root.palette
           }
 
           Text {
@@ -748,6 +808,7 @@ Panel {
             visible: root.agp !== null
             agp: root.agp
             range: root.doc && root.doc.range ? root.doc.range : null
+            palette: root.palette
             foreground: root.barForeground
           }
 
@@ -861,7 +922,7 @@ Panel {
             visible: root.configError !== ""
             width: parent.width
             wrapMode: Text.WordWrap
-            color: "#cc241d"
+            color: root.themed("urgent", "#cc241d")
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
             text: root.configError

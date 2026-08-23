@@ -686,6 +686,7 @@ async fn main() -> Result<()> {
                         "{}",
                         serde_json::to_string(&snapshot::error_doc(
                             chrono::Utc::now().timestamp_millis(),
+                            &cfg.theme.resolve(),
                             &message,
                         ))?
                     );

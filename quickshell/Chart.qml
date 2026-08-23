@@ -94,18 +94,25 @@ Item {
     ? overview
     : series
 
-  // Conventional CGM colours, matching the time-in-range bar: the bands mean
-  // the same thing whatever the theme is.
-  readonly property color urgentColor: "#cc241d"
-  readonly property color warnColor: "#d79921"
-  readonly property color inRangeColor: "#98971a"
+  // The document's palette — the user's own, including the colourblind
+  // preset, which a hard-coded copy of these three silently ignored. The
+  // fallbacks are only for a sugarrush too old to send one.
+  readonly property var palette: doc && doc.theme ? doc.theme : null
+  function themed(role, fallback) {
+    return palette && palette[role] ? palette[role] : fallback
+  }
+  readonly property color urgentColor: themed("urgent", "#cc241d")
+  readonly property color lowColor: themed("low", "#d79921")
+  readonly property color highColor: themed("high", "#d79921")
+  readonly property color inRangeColor: themed("in_range", "#98971a")
 
   // The colour a reading is drawn in — the same ladder `alert.rs` classifies
   // by, so a segment of the line means what the pill means.
   function colorFor(value) {
     if (!range) return foreground
     if (value <= range.urgent_low || value >= range.urgent_high) return urgentColor
-    if (value < range.low || value > range.high) return warnColor
+    if (value < range.low) return lowColor
+    if (value > range.high) return highColor
     return inRangeColor
   }
 

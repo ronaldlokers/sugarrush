@@ -163,6 +163,12 @@ here, and no stylesheet to keep in sync, unlike the Waybar module's CSS
 classes. Against an older sugarrush that doesn't emit `color`, it falls back to
 the bar's urgent colour.
 
+The panel follows the same theme, from the `theme` object in
+`sugarrush snapshot`: the chart, the profile bands, the time-in-range bar, the
+sensor countdown and the alarm chip are all painted from your five configured
+colours rather than from a copy of the defaults. Switch on the colourblind
+preset and the whole panel switches with it.
+
 ## Settings in the panel
 
 The chips under the wordmark swap the panel between **Glucose** and
