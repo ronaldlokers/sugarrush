@@ -46,6 +46,9 @@ pub struct Config {
     /// Optional private local history for outage context and instant startup.
     #[serde(default)]
     pub history_cache: HistoryCacheConfig,
+    /// Which parts of a reading a status bar draws.
+    #[serde(default)]
+    pub bar: BarConfig,
     /// Whether `treatment --non-interactive` may write without a human.
     ///
     /// Off by default, and deliberately a config key rather than a flag: the
@@ -109,6 +112,47 @@ fn minimap_enabled() -> bool {
 }
 fn minimap_span() -> u32 {
     24
+}
+
+/// Which parts of a reading a status bar is given.
+///
+/// A bar is the one place a reading is read at a glance and out of the corner
+/// of an eye, and four facts crowded into a pill is three too many for some
+/// people. Each part is dropped at the source rather than left to the bar to
+/// hide, so every format agrees about what the reading says.
+///
+/// `units` and `sparkline` reach only the JSON payload: the plain, polybar,
+/// tmux and i3blocks lines have never carried a unit and no text format draws
+/// a trace, so switching them on cannot add anything there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BarConfig {
+    /// The trend arrow after the reading.
+    #[serde(default = "bar_part")]
+    pub arrow: bool,
+    /// The change since the previous reading.
+    #[serde(default = "bar_part")]
+    pub delta: bool,
+    /// The unit label, for a bar that renders one (JSON only).
+    #[serde(default = "bar_part")]
+    pub units: bool,
+    /// The last hour, for a bar that draws it (JSON only).
+    #[serde(default = "bar_part")]
+    pub sparkline: bool,
+}
+
+impl Default for BarConfig {
+    fn default() -> Self {
+        Self {
+            arrow: bar_part(),
+            delta: bar_part(),
+            units: bar_part(),
+            sparkline: bar_part(),
+        }
+    }
+}
+
+fn bar_part() -> bool {
+    true
 }
 
 /// Marker style for the graph's readings.
@@ -634,6 +678,10 @@ impl Config {
         "alerts.desktop",
         "alerts.sound",
         "alerts.quiet_urgent_low",
+        "bar.arrow",
+        "bar.delta",
+        "bar.units",
+        "bar.sparkline",
     ];
 
     /// The value of `key` as it would be written to the file, or `None` for a
@@ -658,6 +706,10 @@ impl Config {
             "alerts.desktop" => a.desktop.map(|v| v.to_string()),
             "alerts.sound" => a.sound.map(|v| v.to_string()),
             "alerts.quiet_urgent_low" => a.quiet_urgent_low.map(|v| v.to_string()),
+            "bar.arrow" => Some(self.bar.arrow.to_string()),
+            "bar.delta" => Some(self.bar.delta.to_string()),
+            "bar.units" => Some(self.bar.units.to_string()),
+            "bar.sparkline" => Some(self.bar.sparkline.to_string()),
             _ => return Err(unknown_key(key)),
         };
         Ok(out)
@@ -710,6 +762,10 @@ impl Config {
             "alerts.desktop" => self.alerts.desktop = Some(flag(key)?),
             "alerts.sound" => self.alerts.sound = Some(flag(key)?),
             "alerts.quiet_urgent_low" => self.alerts.quiet_urgent_low = Some(flag(key)?),
+            "bar.arrow" => self.bar.arrow = flag(key)?,
+            "bar.delta" => self.bar.delta = flag(key)?,
+            "bar.units" => self.bar.units = flag(key)?,
+            "bar.sparkline" => self.bar.sparkline = flag(key)?,
             _ => return Err(unknown_key(key)),
         }
         Ok(())
@@ -737,6 +793,7 @@ impl Config {
             sensor_days: default_sensor_days(),
             minimap: MinimapConfig::default(),
             history_cache: HistoryCacheConfig::default(),
+            bar: BarConfig::default(),
         }
     }
 
@@ -1263,6 +1320,7 @@ desktop = false
                 {
                     "on"
                 }
+                k if k.starts_with("bar.") => "off",
                 "alerts.urgent_low" => "3.2",
                 "alerts.low" => "4.1",
                 "alerts.high" => "9.9",
@@ -1271,10 +1329,15 @@ desktop = false
             };
             cfg.set_key(key, value)
                 .unwrap_or_else(|e| panic!("{key} rejected {value}: {e}"));
-            assert!(
-                cfg.get_key(key).unwrap().is_some(),
-                "{key} does not read back"
-            );
+            let read = cfg.get_key(key).unwrap();
+            assert!(read.is_some(), "{key} does not read back");
+            if value == "off" {
+                assert_eq!(
+                    read.as_deref(),
+                    Some("false"),
+                    "{key} did not keep what it was set to"
+                );
+            }
         }
     }
 
@@ -1317,6 +1380,7 @@ desktop = false
                 enabled: true,
                 retention_days: 14,
             },
+            bar: BarConfig::default(),
         };
         let toml = toml::to_string_pretty(&cfg).unwrap();
         let example = include_str!("../config.example.toml");

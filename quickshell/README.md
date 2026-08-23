@@ -6,8 +6,9 @@ specific host: the **Omarchy 4 shell** (`omarchy-shell`), which loads bar
 widgets as plugins. Quickshell on its own has no bar to add a widget to — a
 shell has to provide one — so a widget is only as portable as its host.
 
-It shows the reading **with its unit**, the trend arrow and the delta, coloured
-by alert state, and opens a panel with the rest of the day. The unit is there
+It shows the reading **with its unit**, the trend arrow and the delta, and
+opens a panel with the rest of the day. It wears the bar's own colour until
+the reading leaves your target range — see [Colours](#colours). The unit is there
 because a bare number names nothing — `10.5` could be a load average; nothing
 else on a desktop is reported in mmol/L:
 
@@ -117,6 +118,7 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | `showUnits` | `true` | print the unit after the reading; turn it off on a crowded bar |
 | `showMascot` | `false` | put the sugar cube in front of the reading |
 | `showSparkline` | `true` | draw the last hour as a trace after the reading |
+| `showArrow`, `showDelta` | — | not widget options: switch them off in sugarrush's own `[bar]` config (or the settings screen), which every bar follows |
 | `command` | `sugarrush waybar` | the command the pill reads a reading from |
 | `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
 | `onRightClick` | the same, plus `--screen settings` | right click |
@@ -126,6 +128,11 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | `insightDays` | `14` | history behind the patterns and the chart's typical-day band; `0` hides the patterns and skips the query |
 | `panelCacheMinutes` | `5` | how stale the panel's document may be when it opens |
 | `snapshotCommand` | `sugarrush snapshot` | the command the panel reads its document from |
+
+`showUnits` and `showSparkline` can only take something away. sugarrush's own
+`[bar]` config decides what the payload carries in the first place — turn
+`units` or `sparkline` off there and the pill drops them whatever these say,
+along with every other bar you run.
 
 ```bash
 omarchy bar set sugarrush.glucose interval 30
@@ -142,13 +149,19 @@ Two notes on those:
 
 ## Colours
 
-The widget paints itself from the `color` field of `sugarrush waybar`, which is
-the state colour from your sugarrush theme — including the
-colourblind palette. Nothing to theme here, and no stylesheet to keep in sync,
-unlike the Waybar module's CSS classes.
+In range, the pill is the bar's own foreground — one more thing on the bar
+rather than a green light asking to be looked at. Colour is spent on the case
+worth spending it on: **only the reading itself** takes the alert colour, and
+only when it is out of range, or when a forecast crossing is coming (the
+sparkline's end dot goes hollow for that one, since nothing has happened yet).
+The unit, the arrow, the delta and the trace stay in the bar's foreground
+throughout. Stale data is carried by the leading `?` alone.
 
-Against an older sugarrush that doesn't emit `color`, it falls back to the
-bar's own foreground, and to the bar's urgent colour for the two urgent states.
+The alert colour is the `color` field of `sugarrush waybar` — the state colour
+from your sugarrush theme, including the colourblind palette. Nothing to theme
+here, and no stylesheet to keep in sync, unlike the Waybar module's CSS
+classes. Against an older sugarrush that doesn't emit `color`, it falls back to
+the bar's urgent colour.
 
 ## Settings in the panel
 
@@ -158,11 +171,15 @@ chart and fourteen days of patterns as well as the reading, and rather than
 "dashboard", which is what this panel's own button opens.
 The settings view edits two different things, and says so by grouping them:
 
-- **Alarm thresholds** and **Alarm** write `~/.config/sugarrush/config.toml`
-  through `sugarrush config`, the same serializer and atomic write the
-  dashboard's settings screen uses. A value the app would have quietly
-  repaired — crossed thresholds, mostly — is refused, and the refusal appears
-  under the rows rather than in a log.
+- **Alarm thresholds**, **Alarm** and **Status bar** write
+  `~/.config/sugarrush/config.toml` through `sugarrush config`, the same
+  serializer and atomic write the dashboard's settings screen uses. A value the
+  app would have quietly repaired — crossed thresholds, mostly — is refused,
+  and the refusal appears under the rows rather than in a log. **Status bar**
+  switches the parts of the reading off one at a time; it is sugarrush's own
+  `[bar]` config, so it applies to every bar sugarrush feeds, not only this
+  pill, which is why it is not under "This panel". The pill refetches as soon
+  as the write lands rather than waiting out the poll.
 - **This panel** writes the widget's own options in the bar's config through
   `omarchy bar set`.
 

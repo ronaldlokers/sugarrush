@@ -41,6 +41,20 @@ refresh_secs = 30
 enabled = true
 span_hours = 24
 
+# Which parts of a reading a status bar is given, for `sugarrush status`,
+# `sugarrush waybar`, and the Quickshell pill. Everything is on by default;
+# switch off whatever crowds your bar. The reading itself is always shown, as
+# is the out-of-range marker.
+#
+# `units` and `sparkline` reach the JSON output only: the plain, polybar, tmux
+# and i3blocks lines have never carried a unit and no text format draws a
+# trace, so switching them on cannot add anything there.
+[bar]
+arrow = true      # the trend arrow after the reading
+delta = true      # the change since the previous reading
+units = true      # the unit label, for a bar that renders one
+sparkline = true  # the last hour, for a bar that draws it
+
 # Optional local outage/startup history. Off by default because enabling it
 # creates a durable health-data record on this computer. Files are owner-only;
 # turning this off in settings deletes them.

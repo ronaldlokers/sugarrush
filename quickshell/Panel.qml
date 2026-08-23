@@ -38,6 +38,8 @@ Panel {
 
   property var doc: null
   property string loadError: ""
+  // Set by `setConfig` for a key the pill renders; cleared when it is redrawn.
+  property bool refetchPillAfterSet: false
 
   // "glucose" or "settings". A view, not a second panel: the cards below
   // simply swap, so the header, the strip and the popout identity stay put.
@@ -228,6 +230,10 @@ Panel {
   // repaired, so the file is the only honest source of what actually stuck.
   function setConfig(key, value) {
     root.configError = ""
+    // A `[bar]` key changes what the pill above is drawing, and the pill only
+    // looks once a minute. Refetch it once the write has actually landed —
+    // doing it here would race the CLI to the file.
+    root.refetchPillAfterSet = key.indexOf("bar.") === 0
     setProc.command = ["bash", "-lc",
                        root.configCommand + " " + key + " " + value + " 2>&1"]
     setProc.running = false
@@ -286,6 +292,10 @@ Panel {
         // The CLI answers "key = value" on success and an error otherwise.
         root.configError = text.indexOf(" = ") > 0 ? "" : text
         root.loadConfig()
+        if (root.refetchPillAfterSet) {
+          root.refetchPillAfterSet = false
+          if (root.hostWidget) root.hostWidget.refresh()
+        }
       }
     }
   }
@@ -378,6 +388,43 @@ Panel {
         width: parent.width
         spacing: Style.space(6)
       }
+    }
+  }
+
+  // One on/off setting. The switch reads the config document rather than
+  // holding its own state, so a write the CLI refuses leaves it showing what
+  // the file actually says.
+  component SwitchRow: Item {
+    id: switchRow
+    property string label: ""
+    property string key: ""
+    // A key that has never been written reads back blank, and the defaults
+    // this panel edits are all "on".
+    readonly property bool current: {
+      var raw = root.config[switchRow.key]
+      return raw === undefined || raw === "" ? true : raw !== "false"
+    }
+
+    width: parent ? parent.width : 0
+    implicitHeight: Math.max(switchLabel.implicitHeight, switchToggle.implicitHeight)
+
+    Text {
+      id: switchLabel
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      color: root.barForeground
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.caption
+      text: switchRow.label
+    }
+
+    ToggleSwitch {
+      id: switchToggle
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      checked: switchRow.current
+      foreground: root.barForeground
+      onToggled: root.setConfig(switchRow.key, switchRow.current ? "off" : "on")
     }
   }
 
@@ -825,28 +872,9 @@ Panel {
           label: "Alarm"
           visible: root.view === "settings"
 
-          Item {
-            width: parent.width
-            implicitHeight: Math.max(soundLabel.implicitHeight, soundToggle.implicitHeight)
-
-            Text {
-              id: soundLabel
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              text: "Audible alarm"
-            }
-
-            ToggleSwitch {
-              id: soundToggle
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              checked: root.config["alerts.sound"] !== "false"
-              foreground: root.barForeground
-              onToggled: root.setConfig("alerts.sound", checked ? "off" : "on")
-            }
+          SwitchRow {
+            label: "Audible alarm"
+            key: "alerts.sound"
           }
 
           SettingRow {
@@ -857,6 +885,40 @@ Panel {
             onChanged: function (next) {
               root.setConfig("sensor_days", Math.max(0, Math.min(30, next)).toFixed(0))
             }
+          }
+        }
+
+        // sugarrush's own `[bar]` config, not this widget's options: what it
+        // says goes for every bar the reading reaches, which is why it is
+        // here and not under "This panel".
+        Card {
+          label: "Status bar"
+          visible: root.view === "settings"
+
+          SwitchRow {
+            label: "Trend arrow"
+            key: "bar.arrow"
+          }
+          SwitchRow {
+            label: "Delta"
+            key: "bar.delta"
+          }
+          SwitchRow {
+            label: "Unit"
+            key: "bar.units"
+          }
+          SwitchRow {
+            label: "Sparkline"
+            key: "bar.sparkline"
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: Qt.darker(root.barForeground, 1.45)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: "The reading itself always shows. These apply to every bar sugarrush feeds, not only this one."
           }
         }
 
