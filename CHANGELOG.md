@@ -49,6 +49,16 @@ All notable changes to sugarrush are documented here. The format is based on
   another with nothing logged, and the chart could only ever show the rise.
   sugarrush had been fetching and discarding this all along.
 
+- **You can log carbs and insulin from the panel.** A **Log** button beside the
+  snooze pair opens two steppers; **Review in terminal** hands the amounts to
+  `sugarrush treatment`, which prints what it is about to write and asks for
+  the person's name before it writes it. The panel deliberately does not do
+  the writing: that confirmation is the guard on a health record, and a bar
+  widget should not be a way around it. The form stays collapsed until asked
+  for, so the panel is no taller for the many opens that are just a glance at
+  a number. The button only appears on a site that has a treatment write token,
+  since without one `sugarrush treatment` refuses the write outright.
+
 - **The panel can silence the alarm that opened it.** A **Snooze 15m / 1h**
   pair sits under the reading, and while one is running it becomes
   `Wake now · 12m left`. The snooze state is read from the daemon's own health

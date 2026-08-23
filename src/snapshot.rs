@@ -23,6 +23,10 @@ pub struct BuildInput {
     /// has to say which site it means, and guessing "the first one" is not
     /// something a health-record write should do on someone's behalf.
     pub site: String,
+    /// Whether this site has a treatment write token. The token itself never
+    /// leaves the config — a consumer needs to know that a write is possible,
+    /// never what it would be made with.
+    pub can_write: bool,
     pub units: Units,
     pub alerts: Alerts,
     pub theme: Theme,
@@ -56,6 +60,10 @@ pub struct Snapshot {
     /// The site the document is about, so a consumer can name it back.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub site: String,
+    /// Whether a treatment could be written to it. A UI that offers to log
+    /// one without this sends someone to a command that refuses them —
+    /// `treatment` rejects a site with no write token, on purpose.
+    pub can_write: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub now: Option<Reading>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -259,6 +267,7 @@ pub fn build(input: BuildInput) -> Snapshot {
     let BuildInput {
         now_ms,
         site,
+        can_write,
         units,
         alerts,
         theme,
@@ -357,6 +366,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         generated_at: now_ms,
         error: None,
         site,
+        can_write,
         now,
         range: Some(Range {
             urgent_low: scaled(units, alerts.urgent_low),
@@ -572,6 +582,7 @@ pub fn error_doc(now_ms: i64, theme: &Theme, message: &str) -> Snapshot {
         error: Some(message.to_string()),
         // Nothing was read, so there is no site to name.
         site: String::new(),
+        can_write: false,
         now: None,
         range: None,
         treatments: None,
@@ -648,6 +659,10 @@ async fn collect(
     Ok(build(BuildInput {
         now_ms,
         site: site.name.clone(),
+        can_write: site
+            .write_token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty()),
         units: cfg.units,
         alerts,
         theme: cfg.theme.resolve(),
@@ -687,6 +702,8 @@ pub fn demo(
     build(BuildInput {
         now_ms,
         site: "demo".to_string(),
+        // Demo mode writes nothing anywhere; offering to would be a lie.
+        can_write: false,
         units,
         alerts,
         theme,
@@ -739,6 +756,7 @@ mod tests {
         BuildInput {
             now_ms: NOW,
             site: "Alex".to_string(),
+            can_write: true,
             units: Units::Mmol,
             alerts: alerts(),
             theme: Theme::default(),
@@ -904,6 +922,26 @@ mod tests {
         });
         let json = serde_json::to_value(&snap).unwrap();
         assert_eq!(json["treatments"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn the_document_says_whether_a_treatment_could_be_written() {
+        // A UI that offers to log one against a site with no write token
+        // sends someone to a command that refuses them.
+        let yes = build(BuildInput {
+            can_write: true,
+            ..input(vec![entry(115.0, NOW - 4 * MIN, "Flat")], vec![])
+        });
+        let no = build(BuildInput {
+            can_write: false,
+            ..input(vec![entry(115.0, NOW - 4 * MIN, "Flat")], vec![])
+        });
+        assert_eq!(serde_json::to_value(&yes).unwrap()["can_write"], true);
+        assert_eq!(serde_json::to_value(&no).unwrap()["can_write"], false);
+
+        // And never the token itself, whatever else the document grows.
+        let text = serde_json::to_string(&yes).unwrap();
+        assert!(!text.contains("token"), "the document mentions a token");
     }
 
     #[test]
