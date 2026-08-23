@@ -56,9 +56,8 @@ All notable changes to sugarrush are documented here. The format is based on
   the writing: that confirmation is the guard on a health record, and a bar
   widget should not be a way around it. The form stays collapsed until asked
   for, so the panel is no taller for the many opens that are just a glance at
-  a number. On a site with no treatment write token the button is disabled and
-  says so, pointing at the field in the dashboard's settings that fixes it,
-  rather than sending you to a command that turns you away.
+  a number. The button only appears on a site that has a treatment write token,
+  since without one `sugarrush treatment` refuses the write outright.
 
 - **The panel can silence the alarm that opened it.** A **Snooze 15m / 1h**
   pair sits under the reading, and while one is running it becomes
