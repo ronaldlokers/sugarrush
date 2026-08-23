@@ -18,6 +18,11 @@ use crate::units::Units;
 /// positional arguments that callers can silently transpose.
 pub struct BuildInput {
     pub now_ms: i64,
+    /// The site this document describes. Named, not implied: a consumer that
+    /// wants to act on the reading — log a treatment against it, snooze it —
+    /// has to say which site it means, and guessing "the first one" is not
+    /// something a health-record write should do on someone's behalf.
+    pub site: String,
     pub units: Units,
     pub alerts: Alerts,
     pub theme: Theme,
@@ -44,6 +49,9 @@ pub struct Snapshot {
     pub generated_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The site the document is about, so a consumer can name it back.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub site: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub now: Option<Reading>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,6 +238,7 @@ fn round1(value: f64) -> f64 {
 pub fn build(input: BuildInput) -> Snapshot {
     let BuildInput {
         now_ms,
+        site,
         units,
         alerts,
         theme,
@@ -310,6 +319,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         units: units.label(),
         generated_at: now_ms,
         error: None,
+        site,
         now,
         range: Some(Range {
             urgent_low: scaled(units, alerts.urgent_low),
@@ -522,6 +532,8 @@ pub fn error_doc(now_ms: i64, theme: &Theme, message: &str) -> Snapshot {
         units: Units::Mmol.label(),
         generated_at: now_ms,
         error: Some(message.to_string()),
+        // Nothing was read, so there is no site to name.
+        site: String::new(),
         now: None,
         range: None,
         // Even a failure is drawn in the user's colours: the message and the
@@ -589,6 +601,7 @@ async fn collect(
 
     Ok(build(BuildInput {
         now_ms,
+        site: site.name.clone(),
         units: cfg.units,
         alerts,
         theme: cfg.theme.resolve(),
@@ -626,6 +639,7 @@ pub fn demo(
 
     build(BuildInput {
         now_ms,
+        site: "demo".to_string(),
         units,
         alerts,
         theme,
@@ -674,6 +688,7 @@ mod tests {
     fn input(recent: Vec<Entry>, history: Vec<Entry>) -> BuildInput {
         BuildInput {
             now_ms: NOW,
+            site: "Alex".to_string(),
             units: Units::Mmol,
             alerts: alerts(),
             theme: Theme::default(),
@@ -730,6 +745,18 @@ mod tests {
             json["theme"]["urgent"],
             crate::theme::hex(colorblind().urgent)
         );
+    }
+
+    #[test]
+    fn the_document_names_the_site_it_describes() {
+        // A consumer that acts on the reading has to name the site back —
+        // `sugarrush treatment` refuses to write without one, on purpose.
+        let snap = build(BuildInput {
+            site: "Alex's Libre".to_string(),
+            ..input(vec![entry(115.0, NOW - 4 * MIN, "Flat")], vec![])
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+        assert_eq!(json["site"], "Alex's Libre");
     }
 
     #[test]

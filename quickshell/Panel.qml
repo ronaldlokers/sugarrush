@@ -197,6 +197,42 @@ Panel {
   }
 
   readonly property string summaryCommand: snapshotCommand.replace(/snapshot.*$/, "summary")
+  readonly property string snoozeCommand: snapshotCommand.replace(/snapshot.*$/, "snooze")
+  // The site this document is about. `treatment` refuses to write without one
+  // — deliberately, since guessing which person a health record belongs to is
+  // not a guess software should make — so anything acting on this reading has
+  // to name it back.
+  readonly property string siteName: doc && doc.site ? doc.site : ""
+
+  // What the last action did, in words. Cleared on the way out, like the
+  // clipboard note, so a stale "snoozed" never greets the next open.
+  property string actionState: ""
+
+  // Minutes left on a snooze, or 0. Read from the daemon's own health report
+  // rather than from a timer started when the button was pressed: a snooze
+  // set from the menu, the TUI or another machine counts just as much.
+  readonly property int snoozedFor: {
+    if (!health) return 0
+    var sites = health.sites || []
+    var most = 0
+    for (var i = 0; i < sites.length; i++) {
+      var until = sites[i].snoozed_until_ms
+      if (until) most = Math.max(most, Math.round((until - Date.now()) / 60000))
+    }
+    return Math.max(0, most)
+  }
+
+  // Silencing an alarm that is not running is a button that lies. The panel
+  // already knows, from the same report the alarm chip is drawn from.
+  readonly property bool watching: health !== null && health.watcher_alive === true
+
+  function snooze(spec) {
+    root.actionState = spec === "off" ? "waking the alarm…" : "snoozing…"
+    snoozeProc.command = ["bash", "-lc", root.snoozeCommand + " " + spec + " 2>&1"]
+    snoozeProc.running = false
+    Qt.callLater(function () { snoozeProc.running = true })
+  }
+
   // "" until a copy is attempted, then what happened. Cleared on the way out
   // so the panel never opens still claiming a copy from an hour ago.
   property string copyState: ""
@@ -227,7 +263,7 @@ Panel {
     Qt.callLater(function () { snapProc.running = true })
   }
 
-  onOpenedChanged: if (opened) { refresh(false); loadHealth(); copyState = "" }
+  onOpenedChanged: if (opened) { refresh(false); loadHealth(); copyState = ""; actionState = "" }
 
   // A cached document belongs to the command that produced it. When the
   // command changes the cache is about something else, so drop it rather than
@@ -330,6 +366,33 @@ Panel {
         }
       }
     }
+  }
+
+  Process {
+    id: snoozeProc
+    stdout: StdioCollector {
+      id: snoozeOut
+      waitForEnd: true
+      onStreamFinished: {
+        // Every line, not the last: `snooze` answers with the confirmation
+        // and then, when there is one, the caveat — "no watcher running —
+        // this arms the next one" is the half worth reading.
+        root.actionState = snoozeOut.text.trim().split("\n")
+          .filter(function (line) { return line.trim() !== "" })
+          .join(" · ")
+        // The daemon writes the state; re-read it rather than assuming the
+        // write landed, and let the pill catch up at the same time.
+        root.loadHealth()
+        if (root.hostWidget) root.hostWidget.refresh()
+        actionClear.restart()
+      }
+    }
+  }
+
+  Timer {
+    id: actionClear
+    interval: 6000
+    onTriggered: root.actionState = ""
   }
 
   Process {
@@ -758,6 +821,67 @@ Panel {
                 }
               }
             }
+          }
+
+          // The reason someone opens this panel at 3am is to silence the thing
+          // that woke them. Both commands already ship; neither was reachable
+          // from the panel the alarm made them open.
+          Row {
+            spacing: Style.space(8)
+
+            Button {
+              visible: root.snoozedFor <= 0
+              text: "Snooze 15m"
+              bordered: true
+              focusable: false
+              enabled: root.watching
+              foreground: root.barForeground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              fontSize: Style.font.caption
+              onClicked: root.snooze("15m")
+            }
+
+            Button {
+              visible: root.snoozedFor <= 0
+              text: "1h"
+              bordered: true
+              focusable: false
+              enabled: root.watching
+              foreground: root.barForeground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              fontSize: Style.font.caption
+              onClicked: root.snooze("1h")
+            }
+
+            // While one is running, the pair becomes what you would actually
+            // want next: how long is left, and a way out of it.
+            Button {
+              visible: root.snoozedFor > 0
+              text: "Wake now · " + root.snoozedFor + "m left"
+              bordered: true
+              focusable: false
+              foreground: root.alarmColor()
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              fontSize: Style.font.caption
+              onClicked: root.snooze("off")
+            }
+          }
+
+          Text {
+            visible: text !== ""
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: Qt.darker(root.barForeground, 1.2)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            // The daemon's own answer when there is one; otherwise the reason
+            // the snooze buttons are dead, which is worth more than a greyed
+            // button with no explanation.
+            text: root.actionState !== ""
+              ? root.actionState
+              : (root.health !== null && !root.watching
+                 ? "Nothing is watching, so there is nothing to snooze."
+                 : "")
           }
         }
 

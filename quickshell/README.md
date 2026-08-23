@@ -190,6 +190,21 @@ The settings view edits two different things, and says so by grouping them:
   `omarchy bar set`.
 
 Everything else — sites, tokens, quiet hours, themes — stays in the dashboard.
+
+## Acting from the panel
+
+Under the reading are the two things worth doing at 3am. **Snooze 15m** and
+**1h** run `sugarrush snooze`, and while a snooze is running they collapse into
+`Wake now · 12m left`, which runs `sugarrush snooze off`. The countdown comes
+from `sugarrush health --json`, so a snooze set from the Omarchy menu, the
+dashboard or another machine is reflected here as well. If no watcher is
+running the buttons are disabled and the panel says so — silencing an alarm
+that is not armed would be a button that lies.
+
+There is deliberately no "log a treatment" button. `sugarrush treatment` takes
+the amounts on the command line and then confirms by asking for the person's
+name, so there is nothing a single click can usefully open — a form belongs in
+the panel first, and that is its own piece of work.
 A panel that dismisses when focus moves is the wrong place to type a token.
 
 ## Omarchy menu entries
