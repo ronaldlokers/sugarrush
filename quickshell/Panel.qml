@@ -224,6 +224,11 @@ Panel {
   // The log form, collapsed until asked for: most opens are someone checking
   // a number, and a panel that grows a data-entry form for all of them is
   // paying for the exception.
+  // Whether this site could accept a treatment at all. `treatment` refuses a
+  // site with no write token, so a Log button without this walks someone into
+  // a command that turns them away.
+  readonly property bool canWrite: doc !== null && doc.can_write === true
+
   property bool logging: false
   property real logCarbs: 0
   property real logInsulin: 0
@@ -920,8 +925,9 @@ Panel {
               bordered: true
               focusable: false
               // Nothing to write against a document that cannot name its
-              // site, which is what an older sugarrush sends.
-              enabled: root.siteName !== ""
+              // site (an older sugarrush), and nothing to write *with* on a
+              // site that has no treatment write token.
+              enabled: root.siteName !== "" && root.canWrite
               foreground: root.barForeground
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               fontSize: Style.font.caption
@@ -992,11 +998,17 @@ Panel {
             // The daemon's own answer when there is one; otherwise the reason
             // the snooze buttons are dead, which is worth more than a greyed
             // button with no explanation.
-            text: root.actionState !== ""
-              ? root.actionState
-              : (root.health !== null && !root.watching
-                 ? "Nothing is watching, so there is nothing to snooze."
-                 : "")
+            text: {
+              if (root.actionState !== "") return root.actionState
+              if (root.health !== null && !root.watching)
+                return "Nothing is watching, so there is nothing to snooze."
+              // Worth saying rather than leaving a dead button to be poked:
+              // the fix is one field in the dashboard's settings.
+              if (root.doc !== null && !root.canWrite)
+                return "No treatment write token for this site — add one under "
+                  + "Site in the dashboard's settings to log from here."
+              return ""
+            }
           }
         }
 
