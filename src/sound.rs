@@ -186,9 +186,28 @@ fn reap(players: &mut Vec<Child>) {
 /// The sample is ~0.5s long, so a player that is genuinely playing is still
 /// alive when this returns.
 fn produced_sound(child: &mut Child) -> bool {
+    started_playing(|| {
+        child
+            .try_wait()
+            .map(|done| done.map(|status| status.success()))
+    })
+}
+
+/// The startup watch itself, over anything that reports an exit.
+///
+/// Split from the process it usually watches so it can be tested without
+/// spawning one. Testing it through a real child meant `sh -c "exit 1"`, and a
+/// cold shell on a loaded Windows runner takes longer to start than the whole
+/// budget here — the child had not exited yet, so the watch correctly said
+/// "still playing" and the test failed for a reason that had nothing to do
+/// with the behaviour it was pinning.
+///
+/// `poll` reports `Some(true)` for a clean exit, `Some(false)` for a failure,
+/// and `None` while the player is still running.
+fn started_playing(mut poll: impl FnMut() -> std::io::Result<Option<bool>>) -> bool {
     for _ in 0..STARTUP_CHECKS {
-        match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
+        match poll() {
+            Ok(Some(success)) => return success,
             Ok(None) => std::thread::sleep(STARTUP_POLL),
             Err(_) => return false,
         }
@@ -445,44 +464,84 @@ mod tests {
     /// non-zero milliseconds later because no audio server is reachable.
     #[test]
     fn a_player_that_exits_nonzero_did_not_produce_sound() {
-        let mut child = Command::new("sh")
-            .args(["-c", "exit 1"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("sh should exist");
         assert!(
-            !produced_sound(&mut child),
+            !started_playing(|| Ok(Some(false))),
             "a failing player was counted as a sounded alarm"
         );
     }
 
+    /// The same failure, from a player that takes a few polls to give up
+    /// rather than dying on the first one.
+    #[test]
+    fn a_player_that_fails_a_little_later_is_still_caught() {
+        let mut polls = 0;
+        let played = started_playing(|| {
+            polls += 1;
+            Ok(if polls < 3 { None } else { Some(false) })
+        });
+        assert!(
+            !played,
+            "a player that failed on the third poll was believed"
+        );
+        assert_eq!(polls, 3);
+    }
+
     #[test]
     fn a_player_still_running_counts_as_sound() {
-        // Stands in for a player working through the ~0.5s sample.
-        let mut child = Command::new("sh")
-            .args(["-c", "sleep 2"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("sh should exist");
-        assert!(produced_sound(&mut child));
-        let _ = child.kill();
-        let _ = child.wait();
+        // Stands in for a player working through the ~0.5s sample: it never
+        // exits inside the budget, and the watch runs out of checks.
+        let mut polls = 0;
+        let played = started_playing(|| {
+            polls += 1;
+            Ok(None)
+        });
+        assert!(played);
+        assert_eq!(polls, STARTUP_CHECKS, "the watch gave up early");
     }
 
     #[test]
     fn a_player_that_exits_cleanly_counts_as_sound() {
         // Some players return promptly on a very short sample.
-        let mut child = Command::new("sh")
-            .args(["-c", "exit 0"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("sh should exist");
-        assert!(produced_sound(&mut child));
+        assert!(started_playing(|| Ok(Some(true))));
+    }
+
+    /// A `try_wait` that errors says nothing about the audio, and the bell is
+    /// the safe answer for an alarm.
+    #[test]
+    fn a_player_that_cannot_be_watched_is_not_believed() {
+        assert!(!started_playing(|| Err(std::io::Error::other(
+            "no such process"
+        ))));
+    }
+
+    /// The watch above is only worth anything if it is wired to a real child,
+    /// which needs a program that exits when told. Unix only: `sh` is the one
+    /// spelling every platform sugarrush's alarm runs on agrees about.
+    #[test]
+    #[cfg(unix)]
+    fn the_watch_is_wired_to_the_player_it_launches() {
+        let spawn = |script: &str| {
+            Command::new("sh")
+                .args(["-c", script])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("sh should exist")
+        };
+
+        let mut failing = spawn("exit 1");
+        assert!(
+            !produced_sound(&mut failing),
+            "a failing player was believed"
+        );
+
+        let mut clean = spawn("exit 0");
+        assert!(produced_sound(&mut clean));
+
+        let mut playing = spawn("sleep 2");
+        assert!(produced_sound(&mut playing));
+        let _ = playing.kill();
+        let _ = playing.wait();
     }
 }
