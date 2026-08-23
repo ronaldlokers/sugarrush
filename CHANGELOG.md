@@ -41,6 +41,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The panel's chart shows what you did, not only what happened.** Carbs and
+  insulin logged on the site are drawn in their own lane along the foot of the
+  chart — a dot sized by the amount for carbs, a triangle for insulin, labelled
+  where there is room — and the card title totals the window: `Last 6 hours ·
+  45g · 5.7u`. A rise from 5 to 12 means one thing after 60g of pasta and
+  another with nothing logged, and the chart could only ever show the rise.
+  sugarrush had been fetching and discarding this all along.
+
 - **The panel can silence the alarm that opened it.** A **Snooze 15m / 1h**
   pair sits under the reading, and while one is running it becomes
   `Wake now · 12m left`. The snooze state is read from the daemon's own health

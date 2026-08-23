@@ -191,6 +191,24 @@ The settings view edits two different things, and says so by grouping them:
 
 Everything else — sites, tokens, quiet hours, themes — stays in the dashboard.
 
+## Carbs and insulin
+
+Anything logged on your Nightscout site inside the chart's window is drawn in a
+lane along the foot of the chart: a dot for carbs, sized by the amount, and a
+triangle for insulin, with the amounts labelled wherever the markers are far
+enough apart to read. The card's own title carries the totals — `Last 6 hours ·
+45g · 5.7u`.
+
+They are deliberately not drawn at the reading's own height: a marker sitting
+on the line would be read as a reading. The two take the graph and forecast
+colours from your theme rather than the alert ladder, since neither is a
+glucose state, and both are told apart by shape as well as colour so the
+colourblind preset still separates them.
+
+Entries with no amount — notes, finger sticks, sensor changes, which Nightscout
+keeps in the same collection — are left out. A site that logs nothing simply
+has no lane.
+
 ## Acting from the panel
 
 Under the reading are the two things worth doing at 3am. **Snooze 15m** and
