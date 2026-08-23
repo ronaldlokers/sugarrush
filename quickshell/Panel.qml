@@ -221,6 +221,37 @@ Panel {
   // to name it back.
   readonly property string siteName: doc && doc.site ? doc.site : ""
 
+  // The log form, collapsed until asked for: most opens are someone checking
+  // a number, and a panel that grows a data-entry form for all of them is
+  // paying for the exception.
+  property bool logging: false
+  property real logCarbs: 0
+  property real logInsulin: 0
+  readonly property bool logHasAmount: logCarbs > 0 || logInsulin > 0
+
+  // Single-quoted for the shell, with any quote in the name escaped: a site
+  // called "Alex's Libre" is a perfectly ordinary thing to configure.
+  function shellQuote(text) {
+    return "'" + String(text).replace(/'/g, "'\\''") + "'"
+  }
+
+  // The amounts go on the command line; the confirmation does not happen here.
+  // `treatment` prints what it is about to write and asks for the person's
+  // name before it touches a health record, and that check is the reason the
+  // panel hands off to a terminal instead of writing the record itself.
+  function reviewTreatment() {
+    if (!logHasAmount || siteName === "") return
+    var cmd = setting("onClick", "omarchy-launch-floating-terminal-with-presentation sugarrush")
+      + " treatment --site " + shellQuote(siteName)
+    if (logCarbs > 0) cmd += " --carbs " + logCarbs.toFixed(0)
+    if (logInsulin > 0) cmd += " --insulin " + logInsulin.toFixed(1)
+    root.close()
+    if (root.bar) root.bar.run(cmd)
+    root.logging = false
+    root.logCarbs = 0
+    root.logInsulin = 0
+  }
+
   // What the last action did, in words. Cleared on the way out, like the
   // clipboard note, so a stale "snoozed" never greets the next open.
   property string actionState: ""
@@ -280,7 +311,8 @@ Panel {
     Qt.callLater(function () { snapProc.running = true })
   }
 
-  onOpenedChanged: if (opened) { refresh(false); loadHealth(); copyState = ""; actionState = "" }
+  onOpenedChanged: if (opened) { refresh(false); loadHealth(); copyState = ""; actionState = ""
+                                     logging = false; logCarbs = 0; logInsulin = 0 }
 
   // A cached document belongs to the command that produced it. When the
   // command changes the cache is about something else, so drop it rather than
@@ -881,6 +913,72 @@ Panel {
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               fontSize: Style.font.caption
               onClicked: root.snooze("off")
+            }
+
+            Button {
+              text: root.logging ? "Cancel" : "Log"
+              bordered: true
+              focusable: false
+              // Nothing to write against a document that cannot name its
+              // site, which is what an older sugarrush sends.
+              enabled: root.siteName !== ""
+              foreground: root.barForeground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              fontSize: Style.font.caption
+              onClicked: {
+                root.logging = !root.logging
+                if (!root.logging) { root.logCarbs = 0; root.logInsulin = 0 }
+              }
+            }
+          }
+
+          // The form itself. Carbs and insulin only: they are what the chart
+          // draws and what the command needs, and the time is now — logging a
+          // meal three hours late is a job for the terminal, which takes an
+          // `--at` the panel would need a date picker to offer.
+          SettingRow {
+            visible: root.logging
+            label: "Carbs"
+            suffix: " g"
+            value: root.logCarbs
+            step: 5
+            onChanged: function (next) { root.logCarbs = Math.max(0, Math.min(300, next)) }
+          }
+
+          SettingRow {
+            visible: root.logging
+            label: "Insulin"
+            suffix: " U"
+            value: root.logInsulin
+            step: 0.5
+            decimals: 1
+            onChanged: function (next) { root.logInsulin = Math.max(0, Math.min(50, next)) }
+          }
+
+          Row {
+            visible: root.logging
+            spacing: Style.space(10)
+
+            Button {
+              text: "Review in terminal"
+              bordered: true
+              focusable: false
+              // Zero of both would be a write with nothing in it.
+              enabled: root.logHasAmount
+              foreground: root.barForeground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              fontSize: Style.font.caption
+              onClicked: root.reviewTreatment()
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              width: Math.max(0, parent.parent.width - Style.space(150))
+              wrapMode: Text.WordWrap
+              color: Qt.darker(root.barForeground, 1.35)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: "sugarrush confirms before writing"
             }
           }
 
