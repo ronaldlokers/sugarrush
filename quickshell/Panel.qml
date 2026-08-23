@@ -245,7 +245,7 @@ Panel {
   // name before it touches a health record, and that check is the reason the
   // panel hands off to a terminal instead of writing the record itself.
   function reviewTreatment() {
-    if (!logHasAmount || siteName === "") return
+    if (!logHasAmount || siteName === "" || !canWrite) return
     var cmd = setting("onClick", "omarchy-launch-floating-terminal-with-presentation sugarrush")
       + " treatment --site " + shellQuote(siteName)
     if (logCarbs > 0) cmd += " --carbs " + logCarbs.toFixed(0)
@@ -924,10 +924,14 @@ Panel {
               text: root.logging ? "Cancel" : "Log"
               bordered: true
               focusable: false
-              // Nothing to write against a document that cannot name its
-              // site (an older sugarrush), and nothing to write *with* on a
-              // site that has no treatment write token.
-              enabled: root.siteName !== "" && root.canWrite
+              // Gone, not greyed. Logging needs a treatment write token, and
+              // most people have not set one up — a permanently dead button
+              // is a standing invitation to poke at something that will never
+              // work. The README says how to turn it on; the panel of someone
+              // who has not is simply a panel without it. Also gone against a
+              // document that cannot name its site, which is what an older
+              // sugarrush sends.
+              visible: root.siteName !== "" && root.canWrite
               foreground: root.barForeground
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               fontSize: Style.font.caption
@@ -1002,11 +1006,6 @@ Panel {
               if (root.actionState !== "") return root.actionState
               if (root.health !== null && !root.watching)
                 return "Nothing is watching, so there is nothing to snooze."
-              // Worth saying rather than leaving a dead button to be poked:
-              // the fix is one field in the dashboard's settings.
-              if (root.doc !== null && !root.canWrite)
-                return "No treatment write token for this site — add one under "
-                  + "Site in the dashboard's settings to log from here."
               return ""
             }
           }

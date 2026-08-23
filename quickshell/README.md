@@ -226,11 +226,11 @@ to write and asks for the person's name first, and that confirmation is the
 guard on a health record rather than a formality to route around. Cancel, or
 closing the panel, clears the form.
 
-Logging needs a **treatment write token** for the site — a separate,
-write-capable Nightscout token, set under Site in the dashboard's settings.
-Without one the Log button is disabled and the panel says why; `sugarrush
-treatment` refuses such a site outright, and a button that leads to that
-refusal is worse than one that explains itself.
+**The Log button only appears on a site with a treatment write token** — a
+separate, write-capable Nightscout token, set under Site in the dashboard's
+settings. `sugarrush treatment` refuses a site without one, so the panel shows
+no button rather than a permanently dead one. If Log is missing and you expected
+it, that token is what is missing.
 
 Carbs and insulin are the only fields because they are the two the chart draws
 and the two the command needs. A meal remembered three hours late wants
