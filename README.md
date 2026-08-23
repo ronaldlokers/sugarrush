@@ -404,6 +404,21 @@ Colours follow your configured theme, so the colourblind-safe palette carries
 over to the bar. Plain `text` has no markup at all — use it in a shell prompt,
 a macOS menu-bar helper, or anything that colours its own output.
 
+Four facts is more than some bars have room for, so each part is switchable —
+from the settings screen's **Status bar** section, or in `config.toml`:
+
+```toml
+[bar]
+arrow = true      # the trend arrow after the reading
+delta = true      # the change since the previous reading
+units = true      # the unit label, for a bar that renders one
+sparkline = true  # the last hour, for a bar that draws it
+```
+
+The reading itself and the out-of-range marker are always shown. `units` and
+`sparkline` reach the JSON output only — the plain, polybar, tmux and i3blocks
+lines have never carried a unit and no text format draws a trace.
+
 Wiring it up:
 
 ```bash

@@ -49,6 +49,10 @@ pub enum Field {
     CacheDays,
     MinimapEnabled,
     MinimapSpan,
+    BarArrow,
+    BarDelta,
+    BarUnits,
+    BarSparkline,
     ThemeLow,
     ThemeInRange,
     ThemeHigh,
@@ -59,7 +63,7 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 44] = [
+    pub const ALL: [Field; 48] = [
         Field::SiteName,
         Field::SiteUrl,
         Field::SiteToken,
@@ -97,6 +101,10 @@ impl Field {
         Field::CacheDays,
         Field::MinimapEnabled,
         Field::MinimapSpan,
+        Field::BarArrow,
+        Field::BarDelta,
+        Field::BarUnits,
+        Field::BarSparkline,
         Field::ThemeLow,
         Field::ThemeInRange,
         Field::ThemeHigh,
@@ -145,6 +153,10 @@ impl Field {
             Field::CacheDays => "Cache retention",
             Field::MinimapEnabled => "Minimap",
             Field::MinimapSpan => "Minimap span",
+            Field::BarArrow => "Bar trend arrow",
+            Field::BarDelta => "Bar delta",
+            Field::BarUnits => "Bar units",
+            Field::BarSparkline => "Bar sparkline",
             Field::ThemeLow => "Color: low",
             Field::ThemeInRange => "Color: in range",
             Field::ThemeHigh => "Color: high",
@@ -192,6 +204,9 @@ impl Field {
             }
             Field::GraphStyle | Field::AgpDays | Field::MinimapEnabled | Field::MinimapSpan => {
                 "Graph"
+            }
+            Field::BarArrow | Field::BarDelta | Field::BarUnits | Field::BarSparkline => {
+                "Status bar"
             }
             Field::ThemeLow
             | Field::ThemeInRange
@@ -641,6 +656,10 @@ impl App {
                 self.cache_days = (self.cache_days as i32 + dir * 7).clamp(1, 90) as u32;
             }
             Field::MinimapEnabled => self.minimap_enabled = !self.minimap_enabled,
+            Field::BarArrow => self.bar.arrow = !self.bar.arrow,
+            Field::BarDelta => self.bar.delta = !self.bar.delta,
+            Field::BarUnits => self.bar.units = !self.bar.units,
+            Field::BarSparkline => self.bar.sparkline = !self.bar.sparkline,
             Field::MinimapSpan => {
                 let next = self.minimap_span_ms / MS_PER_HOUR + dir as i64 * 6;
                 self.minimap_span_ms = next.clamp(6, 72) * MS_PER_HOUR;
@@ -739,6 +758,7 @@ impl App {
         self.sensor_days = fresh.sensor_days;
         self.cache_enabled = fresh.cache_enabled;
         self.cache_days = fresh.cache_days;
+        self.bar = fresh.bar;
         self.minimap_enabled = fresh.minimap_enabled;
         self.minimap_span_ms = fresh.minimap_span_ms;
         self.theme = fresh.theme;
@@ -822,6 +842,7 @@ impl App {
                 enabled: self.cache_enabled,
                 retention_days: self.cache_days,
             },
+            bar: self.bar,
         }
     }
 
@@ -980,6 +1001,10 @@ impl App {
             .into(),
             Field::CacheDays => format!("{} days", self.cache_days),
             Field::MinimapEnabled => if self.minimap_enabled { "on" } else { "off" }.to_string(),
+            Field::BarArrow => if self.bar.arrow { "on" } else { "off" }.to_string(),
+            Field::BarDelta => if self.bar.delta { "on" } else { "off" }.to_string(),
+            Field::BarUnits => if self.bar.units { "on" } else { "off" }.to_string(),
+            Field::BarSparkline => if self.bar.sparkline { "on" } else { "off" }.to_string(),
             Field::MinimapSpan => format!("{}h", self.minimap_span_ms / MS_PER_HOUR),
             Field::Colorblind => if self.is_colorblind() { "on" } else { "off" }.to_string(),
             f => f

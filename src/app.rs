@@ -7,7 +7,7 @@ use chrono::{Local, TimeZone, Timelike};
 use ratatui::layout::Rect;
 
 use crate::alert::{self, Alert};
-use crate::config::{Alerts, AlertsConfig, Config, GraphStyle, MinimapConfig, Site};
+use crate::config::{Alerts, AlertsConfig, BarConfig, Config, GraphStyle, MinimapConfig, Site};
 use crate::nightscout::{DeviceStatus, Entry, Prediction, Treatment};
 use crate::sound;
 use crate::theme::{self, Theme, ThemeConfig};
@@ -178,6 +178,9 @@ pub struct App {
     pub sensor_days: u32,
     pub cache_enabled: bool,
     pub cache_days: u32,
+
+    /// Which parts of a reading a status bar draws.
+    pub bar: BarConfig,
 
     // Minimap navigator.
     pub minimap_enabled: bool,
@@ -356,6 +359,7 @@ impl App {
             sensor_days: cfg.sensor_days.min(30),
             cache_enabled: cfg.history_cache.enabled,
             cache_days: cfg.history_cache.retention_days.clamp(1, 90),
+            bar: cfg.bar,
             minimap_enabled: cfg.minimap.enabled,
             minimap_span_ms: cfg.minimap.span_hours.max(1) as i64 * MS_PER_HOUR,
             minimap_entries: Vec::new(),
@@ -1878,6 +1882,10 @@ mod tests {
         a.agp_days = 30;
         a.minimap_enabled = false;
         a.minimap_span_ms = 48 * MS_PER_HOUR;
+        a.bar.arrow = false;
+        a.bar.delta = false;
+        a.bar.units = false;
+        a.bar.sparkline = false;
         a.sites[0].url = "https://ns.example.com".into();
         a.sites[0].token = "tok".into();
 
@@ -1892,6 +1900,7 @@ mod tests {
         assert_eq!(cfg.graph_style, a.graph_style);
         assert_eq!(cfg.agp_days, a.agp_days);
         assert_eq!(cfg.minimap.enabled, a.minimap_enabled);
+        assert_eq!(cfg.bar, a.bar);
         assert_eq!(
             cfg.minimap.span_hours as i64,
             a.minimap_span_ms / MS_PER_HOUR
@@ -1928,6 +1937,59 @@ mod tests {
 
     /// Every settings row must render something and belong to a section — a
     /// row added to `Field::ALL` without a `field_value` arm shows up here.
+    #[test]
+    fn each_status_bar_part_toggles_from_its_row() {
+        let mut a = app();
+        assert_eq!(
+            a.bar,
+            crate::config::BarConfig::default(),
+            "all on to start"
+        );
+
+        for (field, off, on) in [
+            (
+                Field::BarArrow,
+                BarConfig {
+                    arrow: false,
+                    ..Default::default()
+                },
+                BarConfig::default(),
+            ),
+            (
+                Field::BarDelta,
+                BarConfig {
+                    delta: false,
+                    ..Default::default()
+                },
+                BarConfig::default(),
+            ),
+            (
+                Field::BarUnits,
+                BarConfig {
+                    units: false,
+                    ..Default::default()
+                },
+                BarConfig::default(),
+            ),
+            (
+                Field::BarSparkline,
+                BarConfig {
+                    sparkline: false,
+                    ..Default::default()
+                },
+                BarConfig::default(),
+            ),
+        ] {
+            a.settings_sel = Field::ALL.iter().position(|f| *f == field).unwrap();
+            a.settings_adjust(1);
+            assert_eq!(a.bar, off, "{field:?} did not switch its own part off");
+            assert_eq!(a.field_value(field), "off");
+            a.settings_adjust(-1);
+            assert_eq!(a.bar, on, "{field:?} did not switch back on");
+            assert_eq!(a.field_value(field), "on");
+        }
+    }
+
     #[test]
     fn every_settings_row_renders() {
         let a = app();

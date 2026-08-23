@@ -32,6 +32,10 @@ Item {
   // A number on a bar says nothing about what was measured; the unit is the
   // one word that does, since nothing else on a desktop is reported in
   // mmol/L. Off for anyone whose bar is already full.
+  //
+  // This and `showSparkline` only ever take something away: sugarrush's own
+  // `[bar]` config decides what the payload carries in the first place, so a
+  // part switched off there is gone from the pill whatever these say.
   readonly property bool showUnits: settings && settings.showUnits !== undefined
     ? settings.showUnits !== false
     : true
@@ -78,27 +82,74 @@ Item {
   // Composed from the parts rather than by editing `text`, so the unit lands
   // after the value without parsing a rendered line back apart. Falls back to
   // `text` against a sugarrush too old to send the parts.
-  readonly property string shownText: {
-    if (compact) {
-      var parts = label.split(" ")
-      return parts.length > 2 ? parts.slice(0, parts.length - 1).join("\n") : label
-    }
-    if (!showUnits || value === "" || units === "") return label
-    var line = value + " " + units
-    if (arrow !== "") line += " " + arrow
-    if (delta !== "") line += " " + delta
-    // The marker `text` carries for an out-of-range state ("!! ") is part of
-    // the reading, not decoration, so it stays.
-    var marker = label.indexOf("!") === 0 ? label.split(" ")[0] + " " : ""
-    return marker + line
+  // The marker `text` carries for an out-of-range state ("!! ", "! ", "? ") is
+  // part of the reading, not decoration, so every path keeps it.
+  readonly property string marker: /^[!?]/.test(label) ? label.split(" ")[0] : ""
+
+  // The chip's own colour is the bar's: a reading in range is one more thing
+  // on the bar, not a green light asking to be looked at. Colour is spent on
+  // the one case it is worth spending on, and only on the number itself —
+  // the unit, the arrow and the delta stay in the bar's foreground.
+  readonly property color foreground: bar ? bar.foreground : "white"
+
+  // True when the colour has something to say: the reading is out of range,
+  // or a forecast crossing is (`predicted-`, which apply_forecast sets only
+  // from in-range outwards). Stale is deliberately absent — the leading "?"
+  // carries that on its own.
+  readonly property bool alarming: stateClass === "low" || stateClass === "high"
+    || stateClass === "urgent-low" || stateClass === "urgent-high" || predicted
+
+  readonly property bool urgent: stateClass === "urgent-low" || stateClass === "urgent-high"
+
+  // The alert colour as a hex string, for the markup below. sugarrush sends
+  // it from the configured theme; an older one that does not gets the bar's
+  // urgent colour, so an alarm is never drawn as an ordinary reading.
+  readonly property string alertHex: {
+    if (stateColor !== "") return stateColor
+    if (!bar) return "#ff0000"
+    // A QML colour stringifies as "#aarrggbb" when it carries alpha, which is
+    // not a colour the markup below understands.
+    var hex = String(bar.urgent)
+    return hex.length === 9 ? "#" + hex.slice(3) : hex
   }
 
-  readonly property color foreground: {
-    if (stateColor !== "") return stateColor
-    // No colour in the payload (an older sugarrush): fall back to the bar's
-    // own two colours so an alarm still stands out.
-    if (!bar) return "white"
-    return (stateClass === "urgent-low" || stateClass === "urgent-high") ? bar.urgent : bar.foreground
+  function escapeMarkup(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  }
+
+  // Styled markup rather than a plain string, so the colour can stop at the
+  // reading. One Text element still: splitting into two would have to be
+  // re-laid-out per orientation, and the stacked vertical form has the
+  // reading and the arrow on separate lines.
+  readonly property string shownText: {
+    var esc = escapeMarkup
+    // No parts in the payload — a sugarrush older than they are. The rendered
+    // line is all there is, and the reading cannot be picked out of it.
+    if (value === "") {
+      if (!compact) return esc(label)
+      var parts = label.split(" ")
+      return esc(parts.length > 2 ? parts.slice(0, parts.length - 1).join("\n") : label)
+        .replace(/\n/g, "<br>")
+    }
+
+    var reading, rest
+    if (compact) {
+      // Composed from the parts, not by dropping the last word of the
+      // rendered line: with `bar.delta = false` in the config there is no
+      // delta to drop, and the old split ate the arrow instead.
+      reading = marker !== "" ? esc(marker) + "<br>" + esc(value) : esc(value)
+      rest = arrow !== "" ? "<br>" + esc(arrow) : ""
+    } else {
+      reading = marker !== "" ? esc(marker) + " " + esc(value) : esc(value)
+      rest = ""
+      if (showUnits && units !== "") rest += " " + esc(units)
+      if (arrow !== "") rest += " " + esc(arrow)
+      if (delta !== "") rest += " " + esc(delta)
+    }
+
+    if (urgent) reading = "<b>" + reading + "</b>"
+    if (alarming) reading = '<font color="' + alertHex + '">' + reading + "</font>"
+    return reading + rest
   }
 
   readonly property bool sparkVisible: !compact && showSparkline && series.length > 1
@@ -247,12 +298,13 @@ Item {
     anchors.left: root.compact ? undefined : (root.showMascot ? mascot.right : parent.left)
     anchors.leftMargin: root.compact ? 0 : (root.showMascot ? 5 : 6)
     text: root.shownText
+    // The colour stops at the reading, so the rest of the line is markup.
+    textFormat: Text.StyledText
     horizontalAlignment: Text.AlignHCenter
     lineHeight: 0.95
     color: root.foreground
     font.family: root.bar ? root.bar.fontFamily : "monospace"
     font.pixelSize: 12
-    font.bold: root.stateClass === "urgent-low" || root.stateClass === "urgent-high"
   }
 
   // The trace, drawn rather than composed of glyphs: a block-character
@@ -316,9 +368,9 @@ Item {
       ctx.stroke()
 
       // The newest reading, marked: without it the eye has to work out which
-      // end of the trace is now. Hollow when the colour is a forecast rather
-      // than the reading — the pill has gone amber for something that has not
-      // happened yet, and that difference has to be visible somewhere.
+      // end of the trace is now. Hollow when the reading itself is in range
+      // and only the forecast is out of it — the number has gone amber for
+      // something that has not happened yet, and the trace says so too.
       var lastY = pad + (1 - (points[points.length - 1][1] - lo) / span) * h
       ctx.beginPath()
       ctx.arc(w - 1.8, lastY, 1.8, 0, Math.PI * 2)

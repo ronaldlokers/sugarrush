@@ -8,6 +8,13 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Changed
 
+- **The Quickshell pill wears the bar's colour until something is wrong.** It
+  used to paint the whole reading — number, unit, arrow, delta and trace — in
+  the alert colour at all times, so a perfectly ordinary reading sat on the bar
+  as a green light. Now only the number takes colour, and only when it is out
+  of range or a forecast crossing is coming; everything else stays in the bar's
+  own foreground. Stale data is carried by its `?` marker alone.
+
 - **The panel's threshold lines are scale marks again.** They were drawn in
   their alert colours, so a red rule ran across the chart whether or not the
   reading ever went near it. The line already turns amber or red where it
@@ -15,6 +22,20 @@ All notable changes to sugarrush are documented here. The format is based on
   fainter than low and high so the target band reads first.
 
 ### Added
+
+- **The panel can switch the status bar's parts too.** A **Status bar** card in
+  the panel's Settings view toggles the same four parts as the dashboard, and
+  the pill redraws as soon as the write lands instead of waiting out its poll.
+  `sugarrush config` learned the `bar.*` keys that make it possible.
+
+- **The status bar's parts are switchable.** A pill carrying reading, arrow,
+  delta, unit and sparkline is more than some bars have room for, so each part
+  now has an on/off switch under **Status bar** in the settings screen, or as
+  `[bar]` in `config.toml`. Switching one off drops it from every format at
+  once — `sugarrush status`, `sugarrush waybar`, the Quickshell pill — so the
+  bars agree with each other. The reading itself and the out-of-range marker
+  always stay. `units` and `sparkline` affect the JSON output only; no text
+  format has ever carried them.
 
 - **The panel has a Profile view.** The ambulatory glucose profile — every day
   in the window folded onto one 24-hour clock, median over the middle half and

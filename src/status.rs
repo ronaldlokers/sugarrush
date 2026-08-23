@@ -129,6 +129,28 @@ impl Status {
 }
 
 impl Status {
+    /// Drop the parts the config switches off.
+    ///
+    /// At the source rather than per format: a part that is off is off on
+    /// every bar, and a bar composing its own line from the JSON keys sees the
+    /// same reading the plain text says. The value, the marker and the colour
+    /// are never dropped — a pill with no reading in it, or an alarm with
+    /// nothing to say it is one, is worse than a crowded one.
+    pub fn apply_bar(&mut self, bar: &crate::config::BarConfig) {
+        if !bar.arrow {
+            self.arrow.clear();
+        }
+        if !bar.delta {
+            self.delta.clear();
+        }
+        if !bar.units {
+            self.units = "";
+        }
+        if !bar.sparkline {
+            self.series.clear();
+        }
+    }
+
     /// The compact one-liner every format is built from.
     ///
     /// Non-in-range states carry a text marker, not just a colour: only the
@@ -136,13 +158,17 @@ impl Status {
     /// colour *was* the entire signal — and `--format text`, the one a shell
     /// prompt or a screen reader consumes, had no state at all.
     pub fn text(&self) -> String {
-        format!(
-            "{}{} {} {}",
-            self.marker(),
-            self.value,
-            self.arrow,
-            self.delta
-        )
+        let mut line = format!("{}{}", self.marker(), self.value);
+        // Joined rather than formatted with fixed gaps: a part switched off in
+        // the config must leave no double space behind it, because a bar
+        // renders the string it is handed.
+        for part in [&self.arrow, &self.delta] {
+            if !part.is_empty() {
+                line.push(' ');
+                line.push_str(part);
+            }
+        }
+        line
     }
 
     /// A terse severity prefix: `!!` urgent, `!` out of range, `?` no data.
@@ -157,7 +183,12 @@ impl Status {
 
     /// What fits when the bar is short on room: value and arrow only.
     pub fn short_text(&self) -> String {
-        format!("{}{} {}", self.marker(), self.value, self.arrow)
+        let mut line = format!("{}{}", self.marker(), self.value);
+        if !self.arrow.is_empty() {
+            line.push(' ');
+            line.push_str(&self.arrow);
+        }
+        line
     }
 
     /// Render for a bar.
@@ -201,7 +232,7 @@ impl Status {
 /// Fetch the last hour and build the status. Never fails: an error becomes a
 /// stale-looking status carrying the message, so the bar keeps rendering.
 pub async fn status(cfg: &Config) -> Status {
-    match build(cfg).await {
+    let mut status = match build(cfg).await {
         Ok(s) => s,
         Err(e) => Status {
             value: "—".into(),
@@ -216,7 +247,9 @@ pub async fn status(cfg: &Config) -> Status {
             forecast: None,
             predicted: None,
         },
-    }
+    };
+    status.apply_bar(&cfg.bar);
+    status
 }
 
 async fn build(cfg: &Config) -> Result<Status> {
@@ -457,6 +490,98 @@ mod tests {
         assert_eq!(Alert::InRange.color(&theme), theme.in_range);
         assert_eq!(Alert::High.color(&theme), theme.high);
         assert_eq!(Alert::Low.color(&theme), theme.low);
+    }
+
+    #[test]
+    fn a_part_switched_off_leaves_no_gap_where_it_was() {
+        let mut s = status();
+        s.apply_bar(&crate::config::BarConfig {
+            arrow: false,
+            delta: true,
+            units: true,
+            sparkline: true,
+        });
+        // Not "5.6  +0.2": a bar renders the string it is handed, so the
+        // spacing has to be right at the source.
+        assert_eq!(s.render(Format::Text), "5.6 +0.2");
+        assert_eq!(s.render(Format::I3blocks), "5.6 +0.2\n5.6\n#123456");
+
+        let mut s = status();
+        s.apply_bar(&crate::config::BarConfig {
+            arrow: true,
+            delta: false,
+            units: true,
+            sparkline: true,
+        });
+        assert_eq!(s.render(Format::Text), "5.6 \u{2192}");
+    }
+
+    #[test]
+    fn a_part_switched_off_is_absent_from_the_json_too() {
+        let mut s = status();
+        s.series = vec![(1_000, 5.0), (1_300, 5.6)];
+        s.apply_bar(&crate::config::BarConfig {
+            arrow: false,
+            delta: false,
+            units: false,
+            sparkline: false,
+        });
+        let json: serde_json::Value = serde_json::from_str(&s.render(Format::Json)).unwrap();
+        // Empty, not missing: a bar composing its own line reads the keys it
+        // expects, and a missing one would read as an older sugarrush.
+        assert_eq!(json["arrow"], "");
+        assert_eq!(json["delta"], "");
+        assert_eq!(json["units"], "");
+        assert_eq!(json["series"].as_array().map(Vec::len), Some(0));
+        // The reading itself is never dropped.
+        assert_eq!(json["value"], "5.6");
+        assert_eq!(json["text"], "5.6");
+    }
+
+    #[test]
+    fn an_out_of_range_marker_survives_every_part_being_off() {
+        let mut s = status();
+        s.state = Alert::UrgentLow;
+        s.apply_bar(&crate::config::BarConfig {
+            arrow: false,
+            delta: false,
+            units: false,
+            sparkline: false,
+        });
+        assert_eq!(s.render(Format::Text), "!! 5.6");
+        assert_eq!(s.short_text(), "!! 5.6");
+    }
+
+    /// The error branch, which needs no network: a config with no site fails
+    /// in `build` before a client is made. It is the same tail of `status` the
+    /// live path takes, so it pins the one thing the unit tests above cannot —
+    /// that the config is actually consulted.
+    #[tokio::test]
+    async fn the_config_reaches_the_status_the_bar_is_handed() {
+        let mut cfg = crate::config::Config::demo();
+        cfg.url = None;
+        cfg.token = None;
+        cfg.bar.units = false;
+        let s = super::status(&cfg).await;
+        assert_eq!(s.state, Alert::Stale, "no site configured");
+        assert_eq!(s.units, "", "the config was not applied");
+
+        let mut cfg = crate::config::Config::demo();
+        cfg.url = None;
+        cfg.token = None;
+        let s = super::status(&cfg).await;
+        assert_eq!(s.units, "mmol/L");
+    }
+
+    #[test]
+    fn every_part_is_on_by_default() {
+        let mut s = status();
+        s.series = vec![(1_000, 5.0), (1_300, 5.6)];
+        s.apply_bar(&crate::config::BarConfig::default());
+        assert_eq!(s.render(Format::Text), "5.6 \u{2192} +0.2");
+        let json: serde_json::Value = serde_json::from_str(&s.render(Format::Json)).unwrap();
+        assert_eq!(json["units"], "mmol/L");
+        assert_eq!(json["series"].as_array().map(Vec::len), Some(2));
     }
 
     #[test]
