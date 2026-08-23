@@ -73,6 +73,23 @@ Panel {
     }
   }
   readonly property var stats: doc && doc.stats ? doc.stats : null
+
+  // What was logged in the window the chart covers, as one line. The chart
+  // says when; this says how much, which is the number someone repeats out
+  // loud when asked what they had.
+  readonly property string treatmentTotals: {
+    var list = doc && doc.treatments ? doc.treatments : []
+    var carbs = 0
+    var insulin = 0
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].carbs > 0) carbs += list[i].carbs
+      if (list[i].insulin > 0) insulin += list[i].insulin
+    }
+    var parts = []
+    if (carbs > 0) parts.push(Math.round(carbs) + "g")
+    if (insulin > 0) parts.push(insulin.toFixed(1) + "u")
+    return parts.join(" · ")
+  }
   readonly property var sensor: doc && doc.sensor ? doc.sensor : null
   readonly property var forecast: doc && doc.forecast ? doc.forecast : null
 
@@ -887,6 +904,7 @@ Panel {
 
         Card {
           label: "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
+            + (root.treatmentTotals !== "" ? " · " + root.treatmentTotals : "")
           visible: root.loadError === "" && root.view === "glucose"
 
           Chart {

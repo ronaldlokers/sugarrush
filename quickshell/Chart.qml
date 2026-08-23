@@ -105,6 +105,16 @@ Item {
   readonly property color lowColor: themed("low", "#d79921")
   readonly property color highColor: themed("high", "#d79921")
   readonly property color inRangeColor: themed("in_range", "#98971a")
+  // Carbs and insulin are not glucose states, so they take neither the alert
+  // ladder nor each other's colour: the graph role for what was eaten, the
+  // forecast role for what was given. Both are already in the palette, so
+  // both follow the colourblind preset with everything else.
+  readonly property color carbColor: themed("graph", "#689d6a")
+  readonly property color insulinColor: themed("prediction", "#b16286")
+
+  // `[{at_ms, carbs, insulin}]`, oldest first, already filtered to the fetched
+  // window and to entries that carry an amount.
+  readonly property var treatments: doc && doc.treatments ? doc.treatments : []
 
   // The colour a reading is drawn in — the same ladder `alert.rs` classifies
   // by, so a segment of the line means what the pill means.
@@ -331,6 +341,69 @@ Item {
         ctx.stroke()
       }
       ctx.restore()
+
+      // ---- what was done, in its own lane along the foot of the plot
+      //
+      // A rise from 5 to 12 means one thing after 60g of pasta and another
+      // with nothing logged. Kept off the line entirely — a marker drawn at
+      // the reading's own height would be read as a reading.
+      if (root.treatments.length > 0) {
+        ctx.save()
+        ctx.beginPath()
+        ctx.rect(plotX, 0, width - plotX, plotH)
+        ctx.clip()
+
+        var carbY = plotH - 5
+        var insulinY = plotH - 13
+        // Only label when the markers are far enough apart to read; a busy
+        // pump day would otherwise draw its amounts on top of each other.
+        var lastLabelX = -1000
+        ctx.textAlign = "center"
+        ctx.font = "9px " + Style.font.family
+
+        for (var t = 0; t < root.treatments.length; t++) {
+          var item = root.treatments[t]
+          if (item.at_ms < root.firstAt || item.at_ms > root.lastAt) continue
+          var mx = root.xOf(item.at_ms)
+          var label = ""
+
+          if (item.carbs > 0) {
+            // Radius by amount, but bounded: a 90g dinner should read as
+            // bigger than a 15g correction without becoming a blot.
+            var r = Math.max(2, Math.min(4.5, 1.6 + item.carbs / 24))
+            ctx.fillStyle = root.carbColor
+            ctx.beginPath()
+            ctx.arc(mx, carbY, r, 0, Math.PI * 2)
+            ctx.fill()
+            label = Math.round(item.carbs) + "g"
+          }
+
+          if (item.insulin > 0) {
+            // A downward triangle, not a second dot: the two are told apart
+            // by shape as well as by colour, which is the point of drawing
+            // them in a palette someone may have chosen for that reason.
+            var w = Math.max(2.5, Math.min(4.5, 1.8 + item.insulin / 3))
+            ctx.fillStyle = root.insulinColor
+            ctx.beginPath()
+            ctx.moveTo(mx - w, insulinY - w)
+            ctx.lineTo(mx + w, insulinY - w)
+            ctx.lineTo(mx, insulinY + w)
+            ctx.closePath()
+            ctx.fill()
+            label = label === ""
+              ? item.insulin.toFixed(1) + "u"
+              : label + " · " + item.insulin.toFixed(1) + "u"
+          }
+
+          if (label !== "" && mx - lastLabelX > 46) {
+            ctx.fillStyle = Qt.rgba(root.foreground.r, root.foreground.g,
+                                    root.foreground.b, 0.75)
+            ctx.fillText(label, mx, insulinY - 8)
+            lastLabelX = mx
+          }
+        }
+        ctx.restore()
+      }
     }
   }
 
