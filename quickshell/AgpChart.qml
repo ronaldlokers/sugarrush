@@ -15,7 +15,7 @@ Canvas {
   property var agp: null
   property var range: null
   // `doc.theme`, or null against a sugarrush too old to send one.
-  property var palette: null
+  property var themeColors: null
   property color foreground: "white"
 
   readonly property int gutter: 34
@@ -23,13 +23,13 @@ Canvas {
 
   onAgpChanged: requestPaint()
   onRangeChanged: requestPaint()
-  onPaletteChanged: requestPaint()
+  onThemeColorsChanged: requestPaint()
   onForegroundChanged: requestPaint()
   onWidthChanged: requestPaint()
   onHeightChanged: requestPaint()
 
   function themed(role, fallback) {
-    return palette && palette[role] ? palette[role] : fallback
+    return themeColors && themeColors[role] ? themeColors[role] : fallback
   }
 
   // The same ladder `alert.rs` classifies by, in the same colours: low and

@@ -13,10 +13,10 @@ Item {
 
   property var stats: null
   // `doc.theme`, or null against a sugarrush too old to send one.
-  property var palette: null
+  property var themeColors: null
 
   function themed(role, fallback) {
-    return palette && palette[role] ? palette[role] : fallback
+    return themeColors && themeColors[role] ? themeColors[role] : fallback
   }
 
   readonly property var bands: stats && stats.tir

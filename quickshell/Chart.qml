@@ -97,9 +97,9 @@ Item {
   // The document's palette — the user's own, including the colourblind
   // preset, which a hard-coded copy of these three silently ignored. The
   // fallbacks are only for a sugarrush too old to send one.
-  readonly property var palette: doc && doc.theme ? doc.theme : null
+  readonly property var themeColors: doc && doc.theme ? doc.theme : null
   function themed(role, fallback) {
-    return palette && palette[role] ? palette[role] : fallback
+    return themeColors && themeColors[role] ? themeColors[role] : fallback
   }
   readonly property color urgentColor: themed("urgent", "#cc241d")
   readonly property color lowColor: themed("low", "#d79921")

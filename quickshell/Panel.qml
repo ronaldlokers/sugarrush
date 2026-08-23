@@ -86,10 +86,10 @@ Panel {
   // The resolved palette the document was built with — the user's own,
   // including the colourblind preset. The literals below are the fallback for
   // a sugarrush too old to send one, and nothing else.
-  readonly property var palette: doc && doc.theme ? doc.theme : null
+  readonly property var themeColors: doc && doc.theme ? doc.theme : null
 
   function themed(role, fallback) {
-    return palette && palette[role] ? palette[role] : fallback
+    return themeColors && themeColors[role] ? themeColors[role] : fallback
   }
 
   // The same ladder the chart and the pill use, so a number means the same
@@ -113,7 +113,7 @@ Panel {
     ? doc.range.stale_minutes
     : 15
 
-  readonly property bool stale: reading
+  readonly property bool readingStale: reading
     ? (reading.class === "stale" || reading.age_min >= staleMinutes)
     : false
 
@@ -151,7 +151,11 @@ Panel {
   readonly property bool hasInsights: insightDays > 0 && loadError === ""
     && doc && doc.insights && doc.insights.length > 0
 
-  function stale() {
+  // Whether the cached *document* is too old to reuse — nothing to do with
+  // whether the reading in it is stale, which is `readingStale` below. The two
+  // were briefly both called "stale", and the property silently shadowed this
+  // function, so every refresh threw and the panel showed no data at all.
+  function documentExpired() {
     return !doc || (Date.now() - fetchedAt) > cacheMinutes * 60000
   }
 
@@ -214,7 +218,7 @@ Panel {
   }
 
   function refresh(force) {
-    if (!force && !stale()) return
+    if (!force && !documentExpired()) return
     // Drop whatever is in flight and start again, deferred: setting `running`
     // false and true in one pass is not a change at all, and skipping the
     // fetch whenever the property happens to read true loses refreshes for
@@ -656,7 +660,7 @@ Panel {
               // its alert colour presents absence as a value.
               color: !root.reading
                 ? root.barForeground
-                : (root.stale
+                : (root.readingStale
                    ? Qt.darker(root.barForeground, 1.5)
                    : root.classColor(root.reading.class))
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -707,7 +711,7 @@ Panel {
               text: {
                 if (!root.reading) return ""
                 var units = root.doc ? root.doc.units : ""
-                if (root.stale) return units + " · last seen " + root.seenAt()
+                if (root.readingStale) return units + " · last seen " + root.seenAt()
                 return units + " · " + root.reading.arrow + " "
                   + root.trendWords(root.reading.direction)
               }
@@ -735,21 +739,21 @@ Panel {
               // A stale reading is the most misleading thing this panel can
               // show, and it used to be the least visible: the age sat in the
               // same grey pill at 3 minutes and at 40.
-              border.color: root.stale
+              border.color: root.readingStale
                 ? root.themed("urgent", "#cc241d")
                 : Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.28)
 
               Text {
                 id: pillText
                 anchors.centerIn: parent
-                color: root.stale
+                color: root.readingStale
                   ? root.themed("urgent", "#cc241d")
                   : Qt.darker(root.barForeground, 1.2)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
                 text: {
                   if (!root.reading) return ""
-                  if (root.stale) return "no reading for " + root.reading.age_min + " min"
+                  if (root.readingStale) return "no reading for " + root.reading.age_min + " min"
                   return "Δ " + root.reading.delta + " · " + root.reading.age_min + "m ago"
                 }
               }
@@ -779,7 +783,7 @@ Panel {
             width: parent.width
             height: Style.space(12)
             stats: root.stats
-            palette: root.palette
+            themeColors: root.themeColors
           }
 
           Text {
@@ -808,7 +812,7 @@ Panel {
             visible: root.agp !== null
             agp: root.agp
             range: root.doc && root.doc.range ? root.doc.range : null
-            palette: root.palette
+            themeColors: root.themeColors
             foreground: root.barForeground
           }
 
