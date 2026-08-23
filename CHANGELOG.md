@@ -41,6 +41,18 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The panel can silence the alarm that opened it.** A **Snooze 15m / 1h**
+  pair sits under the reading, and while one is running it becomes
+  `Wake now · 12m left`. The snooze state is read from the daemon's own health
+  report, so one set from the menu, the dashboard or another machine shows up
+  here too. When nothing is watching the buttons are dead and say why, rather
+  than offering to silence an alarm that is not running.
+
+- **A Log treatment button, next to it.** It opens the interactive
+  `sugarrush treatment` in a terminal on purpose: that command asks for the
+  person's name before it writes to a health record, and a panel button must
+  not be a way around it.
+
 - **The panel can switch the status bar's parts too.** A **Status bar** card in
   the panel's Settings view toggles the same four parts as the dashboard, and
   the pill redraws as soon as the write lands instead of waiting out its poll.
