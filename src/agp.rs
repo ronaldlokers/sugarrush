@@ -86,6 +86,57 @@ pub fn profile_in(entries: &[Entry], timezone: Option<Tz>) -> Vec<Band> {
     out
 }
 
+/// One value per distinct local day, per bucket — the days the percentile
+/// envelope is computed from, before it hides them.
+///
+/// A band says the middle half of your evenings look fine. It cannot say that
+/// three of the fourteen went low, which is the finding that changes a basal
+/// rate. Same bucketing and same timezone rule as [`profile_in`], so a bucket
+/// here is the same bucket there.
+pub fn samples_in(entries: &[Entry], timezone: Option<Tz>) -> Vec<(i64, Vec<f64>)> {
+    // bucket -> date -> (sum, count), so a day contributes one value rather
+    // than one per reading: an hour with twelve readings would otherwise
+    // outvote a day that only has two.
+    let mut buckets: Vec<std::collections::BTreeMap<String, (f64, usize)>> =
+        vec![std::collections::BTreeMap::new(); BUCKETS];
+    for e in entries {
+        let parts = match timezone {
+            Some(tz) => tz.timestamp_millis_opt(e.date).single().map(|dt| {
+                (
+                    dt.hour() as i64 * 60 + dt.minute() as i64,
+                    dt.date_naive().to_string(),
+                )
+            }),
+            None => Local.timestamp_millis_opt(e.date).single().map(|dt| {
+                (
+                    dt.hour() as i64 * 60 + dt.minute() as i64,
+                    dt.date_naive().to_string(),
+                )
+            }),
+        };
+        if let Some((minute, date)) = parts {
+            let idx = (minute / BUCKET_MIN).clamp(0, BUCKETS as i64 - 1) as usize;
+            let slot = buckets[idx].entry(date).or_insert((0.0, 0));
+            slot.0 += e.sgv;
+            slot.1 += 1;
+        }
+    }
+
+    let mut out = Vec::new();
+    for (i, by_date) in buckets.into_iter().enumerate() {
+        if by_date.is_empty() {
+            continue;
+        }
+        let mut values: Vec<f64> = by_date
+            .into_values()
+            .map(|(sum, count)| sum / count as f64)
+            .collect();
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        out.push((i as i64 * BUCKET_MIN + BUCKET_MIN / 2, values));
+    }
+    out
+}
+
 /// A recurring time-of-day pattern worth naming.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Insight {
@@ -252,6 +303,63 @@ fn percentile(sorted: &[f64], q: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn each_bucket_carries_one_value_per_day() {
+        // Two days, and the second is high in the same bucket. A percentile
+        // envelope reports the middle of them; these are the days themselves.
+        let day = 24 * 60 * 60_000;
+        let base = 1_755_795_600_000i64 - 1_755_795_600_000 % day; // a local midnight-ish anchor
+        let entries = vec![
+            Entry {
+                sgv: 100.0,
+                date: base + 8 * 3_600_000,
+                direction: None,
+            },
+            Entry {
+                sgv: 110.0,
+                date: base + 8 * 3_600_000 + 300_000,
+                direction: None,
+            },
+            Entry {
+                sgv: 260.0,
+                date: base + day + 8 * 3_600_000,
+                direction: None,
+            },
+        ];
+        let out = samples_in(&entries, Some(chrono_tz::UTC));
+        let bucket = out
+            .iter()
+            .find(|(_, values)| values.len() == 2)
+            .expect("the 08:00 bucket should hold both days");
+
+        // One value per day, not one per reading: the first day had two
+        // readings and must still count once, averaged.
+        assert_eq!(bucket.1.len(), 2);
+        assert!((bucket.1[0] - 105.0).abs() < 0.01, "got {:?}", bucket.1);
+        assert!((bucket.1[1] - 260.0).abs() < 0.01, "got {:?}", bucket.1);
+    }
+
+    #[test]
+    fn samples_use_the_same_buckets_the_profile_does() {
+        // The panel indexes one against the other; a different bucketing here
+        // would draw a day's dots over the wrong hour of the envelope.
+        let day = 24 * 60 * 60_000;
+        let base = 1_755_795_600_000i64;
+        let entries: Vec<Entry> = (0..40)
+            .map(|i| Entry {
+                sgv: 90.0 + i as f64,
+                date: base - i * day / 6,
+                direction: None,
+            })
+            .collect();
+        let bands = profile_in(&entries, Some(chrono_tz::UTC));
+        let samples = samples_in(&entries, Some(chrono_tz::UTC));
+        let band_minutes: Vec<i64> = bands.iter().map(|b| b.minute).collect();
+        let sample_minutes: Vec<i64> = samples.iter().map(|(m, _)| *m).collect();
+        assert_eq!(band_minutes, sample_minutes);
+    }
+
     use super::*;
 
     fn entry(sgv: f64, date: i64) -> Entry {

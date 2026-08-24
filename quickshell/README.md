@@ -246,6 +246,20 @@ with the fetch.
 It used to read once on open and cache for five minutes, so a panel left open
 went quietly out of date while the pill behind it kept moving.
 
+## An hour of the profile
+
+The typical-day chart draws a median and two envelopes, which is what a clinic
+reads — and which hides the individual days by design. **Tap an hour** and the
+days behind it appear as dots, with the caption naming the median, the spread,
+and how many of them fell out of range:
+
+```
+20:07 · median 7.1 · spread 5.1–13.0 · 1 of 13 days out of range
+```
+
+Tapping the same hour again clears it. Only one hour is ever drawn: all of them
+at once is the scatter plot the envelope exists to replace.
+
 ## The clinical summary
 
 The Profile view renders the same figures `sugarrush export` writes — mean,
