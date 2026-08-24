@@ -73,7 +73,12 @@ Panel {
     }
   }
   readonly property var stats: doc && doc.stats ? doc.stats : null
-  readonly property var baseline: doc && doc.baseline ? doc.baseline : null
+  // Not `baseline`: `Item` already has one — the anchor line — and it is
+  // FINAL, so declaring it stops the whole panel loading. Third time a
+  // document field has collided with a Qt property here, after `stale` and
+  // `palette`, so the rule is now explicit: names from the document get a
+  // suffix that says what they are.
+  readonly property var baselineStats: doc && doc.baseline ? doc.baseline : null
 
   // Whole days reads better than "336 h", and the baseline window is always
   // a whole number of them.
@@ -1125,7 +1130,7 @@ Panel {
           // Without the comparison there is nothing to read these against;
           // with it they are the same three numbers doing more work.
           Text {
-            visible: root.baseline === null
+            visible: root.baselineStats === null
             width: parent.width
             color: Qt.darker(root.barForeground, 1.2)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1138,29 +1143,29 @@ Panel {
           }
 
           Text {
-            visible: root.baseline !== null
+            visible: root.baselineStats !== null
             width: parent.width
             color: Qt.darker(root.barForeground, 1.7)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
-            text: root.baseline ? "against your last " + root.daysWords(root.baseline.window_h) : ""
+            text: root.baselineStats ? "against your last " + root.daysWords(root.baselineStats.window_h) : ""
           }
 
           CompareRow {
-            visible: root.baseline !== null
+            visible: root.baselineStats !== null
             label: "in range"
             now: root.stats ? root.stats.tir.in_range : 0
-            then: root.baseline ? root.baseline.tir.in_range : 0
+            then: root.baselineStats ? root.baselineStats.tir.in_range : 0
             suffix: "%"
             higherIsBetter: true
             nowColor: root.themed("in_range", "#98971a")
           }
 
           CompareRow {
-            visible: root.baseline !== null
+            visible: root.baselineStats !== null
             label: "below range"
             now: root.stats ? root.stats.tir.very_low + root.stats.tir.low : 0
-            then: root.baseline ? root.baseline.tir.very_low + root.baseline.tir.low : 0
+            then: root.baselineStats ? root.baselineStats.tir.very_low + root.baselineStats.tir.low : 0
             suffix: "%"
             // The one figure a clinic reads first, and the only one where
             // less is unambiguously better.
@@ -1169,10 +1174,10 @@ Panel {
           }
 
           CompareRow {
-            visible: root.baseline !== null
+            visible: root.baselineStats !== null
             label: "mean"
             now: root.stats ? root.stats.mean : 0
-            then: root.baseline ? root.baseline.mean : 0
+            then: root.baselineStats ? root.baselineStats.mean : 0
             // Neither direction is better on its own — a lower mean bought
             // with lows is worse — so the change is stated, not judged.
             neutral: true
@@ -1180,11 +1185,11 @@ Panel {
           }
 
           CompareRow {
-            visible: root.baseline !== null && root.stats !== null
-              && root.stats.cv !== undefined && root.baseline.cv !== undefined
+            visible: root.baselineStats !== null && root.stats !== null
+              && root.stats.cv !== undefined && root.baselineStats.cv !== undefined
             label: "CV"
             now: root.stats && root.stats.cv !== undefined ? root.stats.cv : 0
-            then: root.baseline && root.baseline.cv !== undefined ? root.baseline.cv : 0
+            then: root.baselineStats && root.baselineStats.cv !== undefined ? root.baselineStats.cv : 0
             suffix: "%"
             higherIsBetter: false
             nowColor: Qt.darker(root.barForeground, 1.1)
