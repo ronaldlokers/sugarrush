@@ -216,6 +216,13 @@ pub struct DayDoc {
 #[derive(Debug, Clone, Serialize)]
 pub struct Stats {
     pub window_h: i64,
+    /// How many readings the figures are computed from.
+    ///
+    /// A percentage over half a day of data is not a smaller truth than one
+    /// over a whole day — it is a different claim, and without this a window
+    /// with a four-hour sensor gap draws exactly the same confident stripe as
+    /// a complete one.
+    pub readings: usize,
     pub mean: f64,
     pub gmi: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -646,6 +653,7 @@ fn stats_for(entries: &[Entry], units: Units, alerts: &Alerts, window_h: i64) ->
     )?;
     Some(Stats {
         window_h,
+        readings: entries.len(),
         mean: scaled(units, mean),
         gmi: round1(crate::stats::gmi(mean)),
         cv: crate::stats::cv_pct(entries).map(round1),
@@ -1134,6 +1142,24 @@ mod tests {
         let days = json["days"].as_array().unwrap();
         assert_eq!(days.len(), 1, "one local day, not two");
         assert_eq!(days[0]["date"], "2026-08-22", "grouped in UTC, not locally");
+    }
+
+    #[test]
+    fn the_stats_say_how_many_readings_they_stand_on() {
+        // A window with a sensor gap draws the same confident bar as a whole
+        // one unless the count comes with it.
+        let sparse: Vec<Entry> = (0..6)
+            .map(|step| entry(110.0, NOW - step * 60 * MIN, "Flat"))
+            .collect();
+        let snap = build(input(sparse.clone(), sparse));
+        let json = serde_json::to_value(&snap).unwrap();
+
+        assert_eq!(json["stats"]["readings"], 6);
+        // `window_h` is the span actually covered — first reading to last —
+        // not the span asked for. Six hourly readings cover five hours, and
+        // six readings across five hours is 8% of the ~60 a CGM would produce
+        // in them. A consumer can only say that if it is told both numbers.
+        assert_eq!(json["stats"]["window_h"], 5);
     }
 
     #[test]

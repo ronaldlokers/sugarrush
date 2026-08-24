@@ -94,6 +94,17 @@ Panel {
     }
   }
   readonly property var stats: doc && doc.stats ? doc.stats : null
+
+  // How much of a window is actually behind its figures. A CGM produces about
+  // twelve readings an hour, so the count and the span together say whether a
+  // percentage stands on a full day or on the four hours around a sensor
+  // change — which are different claims, not a smaller and a larger one.
+  function coverage(block) {
+    if (!block || !block.window_h || block.readings === undefined) return 1
+    return Math.min(1, block.readings / Math.max(1, block.window_h * 12))
+  }
+
+  readonly property bool statsThin: stats !== null && coverage(stats) < 0.7
   // Not `baseline`: `Item` already has one — the anchor line — and it is
   // FINAL, so declaring it stops the whole panel loading. Third time a
   // document field has collided with a Qt property here, after `stale` and
@@ -1267,6 +1278,7 @@ Panel {
         Card {
           label: root.stats
             ? "Last " + root.stats.window_h + (root.stats.window_h === 1 ? " hour" : " hours")
+              + (root.statsThin ? " · partial" : "")
             : ""
           visible: root.stats !== null && root.loadError === "" && root.view === "glucose"
 
@@ -1289,6 +1301,21 @@ Panel {
               ? "mean " + root.stats.mean.toFixed(1)
                 + " · GMI " + root.stats.gmi.toFixed(1) + "%"
                 + " · CV " + (root.stats.cv === undefined ? "—" : root.stats.cv.toFixed(1) + "%")
+              : ""
+          }
+
+          // A gap in the readings is not time spent in range, and the bar
+          // above cannot tell the difference on its own.
+          Text {
+            visible: root.statsThin
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: root.themed("high", "#d79921")
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: root.stats
+              ? "Only " + Math.round(root.coverage(root.stats) * 100) + "% of these hours "
+                + "have readings — the rest is a gap, not time in range."
               : ""
           }
 

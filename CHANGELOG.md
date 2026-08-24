@@ -8,6 +8,19 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Changed
 
+- **The stats card admits when its window is full of holes.** A percentage
+  computed over a day with half its readings missing drew exactly the same
+  confident stripe as a complete one. The document now carries how many
+  readings each figure stands on, and below 70% of a full window the card is
+  marked "partial" and says how much of it is a gap rather than time in range.
+
+- **The alarm thresholds are one band, not four steppers.** The Settings view
+  draws all five zones with a handle at each threshold, in the colours the
+  reading itself uses. The handles cannot cross, so the crossed-threshold
+  configuration `sugarrush config` refuses is now unreachable rather than
+  rejected. The four stepper rows are gone — a handle lands on a tenth of a
+  mmol/L in about two pixels, so they were rows buying nothing.
+
 - **The panel draws itself while it loads.** A cold open used to collapse the
   whole panel to the line "waiting for the first reading" for as long as
   Nightscout took, which looks like a failure rather than a wait. It now draws
