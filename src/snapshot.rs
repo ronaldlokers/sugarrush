@@ -126,6 +126,10 @@ pub struct AgpDoc {
     pub step_min: i64,
     /// `[minute_of_local_day, p05, p25, p50, p75, p95]`, in display units.
     pub points: Vec<(i64, f64, f64, f64, f64, f64)>,
+    /// `[minute_of_local_day, [one value per day]]`, in display units — the
+    /// days behind the envelope, so a consumer can show the three that went
+    /// low rather than the median that hides them.
+    pub samples: Vec<(i64, Vec<f64>)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -399,7 +403,7 @@ pub fn build(input: BuildInput) -> Snapshot {
     // forecast here is a deliberate silence, not a failure.
     let forecast = crate::predict::outlook(&recent, &alerts, units);
     let overview = overview_for(&history, units);
-    let agp = agp_for(&bands, units);
+    let agp = agp_for(&bands, &crate::agp::samples_in(&history, timezone), units);
 
     Snapshot {
         schema: 1,
@@ -492,7 +496,11 @@ fn sensor_for(started_at: Option<i64>, days: u32, now_ms: i64) -> Option<SensorD
 const BAND_MIN_DAYS: usize = 3;
 
 /// The percentile profile as one composite day.
-fn agp_for(bands: &[crate::agp::Band], units: Units) -> Option<AgpDoc> {
+fn agp_for(
+    bands: &[crate::agp::Band],
+    samples: &[(i64, Vec<f64>)],
+    units: Units,
+) -> Option<AgpDoc> {
     let days = bands.iter().map(|b| b.days).max().unwrap_or(0);
     if bands.is_empty() || days < BAND_MIN_DAYS {
         return None;
@@ -510,6 +518,15 @@ fn agp_for(bands: &[crate::agp::Band], units: Units) -> Option<AgpDoc> {
                     scaled(units, b.p50),
                     scaled(units, b.p75),
                     scaled(units, b.p95),
+                )
+            })
+            .collect(),
+        samples: samples
+            .iter()
+            .map(|(minute, values)| {
+                (
+                    *minute,
+                    values.iter().map(|value| scaled(units, *value)).collect(),
                 )
             })
             .collect(),

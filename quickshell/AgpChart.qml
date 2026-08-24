@@ -14,6 +14,10 @@ Canvas {
   // `{ days, step_min, points: [[minute, p05, p25, p50, p75, p95], ...] }`
   property var agp: null
   property var range: null
+  // Minute-of-day of the selected bucket, or -1. The median is what a clinic
+  // reads; the days behind it are what changes a basal rate, and they are
+  // only worth the ink when someone asks for a particular hour.
+  property int selected: -1
   // `doc.theme`, or null against a sugarrush too old to send one.
   property var themeColors: null
   property color foreground: "white"
@@ -22,6 +26,7 @@ Canvas {
   readonly property int axisHeight: 14
 
   onAgpChanged: requestPaint()
+  onSelectedChanged: requestPaint()
   onRangeChanged: requestPaint()
   onThemeColorsChanged: requestPaint()
   onForegroundChanged: requestPaint()
@@ -146,6 +151,70 @@ Canvas {
       if (h < 24) {
         ctx.fillText(h === 0 ? "00" : String(h), Math.max(hx, gutter + 6), plotH + 12)
       }
+    }
+
+    // ---- the days behind the envelope, for one bucket
+    //
+    // The band says the middle half of your evenings look fine. It cannot say
+    // that three of the fourteen went low, and that is the finding worth
+    // acting on. Only ever drawn for the bucket someone asked about: all of
+    // them at once is the scatter plot the envelope exists to replace.
+    if (root.selected >= 0) {
+      var values = root.samplesAt(root.selected)
+      var sx = x(root.selected)
+
+      ctx.strokeStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.35)
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(sx, 0)
+      ctx.lineTo(sx, plotH)
+      ctx.stroke()
+
+      for (var s = 0; s < values.length; s++) {
+        var vy = y(values[s])
+        if (vy < 0 || vy > plotH) continue
+        // Nudged apart horizontally so two days at the same value are two
+        // dots rather than one: the count is the point.
+        var jitter = (s % 2 === 0 ? -1 : 1) * Math.min(3, 1 + Math.floor(s / 2))
+        ctx.beginPath()
+        ctx.arc(sx + jitter, vy, 2, 0, Math.PI * 2)
+        ctx.fillStyle = root.colorFor(values[s])
+        ctx.fill()
+      }
+    }
+  }
+
+  // The values behind one bucket, by its minute-of-day.
+  function samplesAt(minute) {
+    var list = agp && agp.samples ? agp.samples : []
+    for (var i = 0; i < list.length; i++) {
+      if (list[i][0] === minute) return list[i][1]
+    }
+    return []
+  }
+
+  // The bucket nearest an x position, or -1 when the chart has no profile.
+  function bucketAt(px) {
+    var pts = agp && agp.points ? agp.points : []
+    if (pts.length === 0) return -1
+    var plotW = width - gutter
+    var minute = Math.max(0, Math.min(1440, (px - gutter) / Math.max(1, plotW) * 1440))
+    var best = pts[0][0]
+    var bestDistance = Infinity
+    for (var i = 0; i < pts.length; i++) {
+      var d = Math.abs(pts[i][0] - minute)
+      if (d < bestDistance) { bestDistance = d; best = pts[i][0] }
+    }
+    return best
+  }
+
+  MouseArea {
+    anchors.fill: parent
+    onClicked: function (mouse) {
+      var at = root.bucketAt(mouse.x)
+      // Tapping the selected hour again clears it, so the chart goes back to
+      // being a profile rather than needing a second control to undo this one.
+      root.selected = (at === root.selected) ? -1 : at
     }
   }
 }

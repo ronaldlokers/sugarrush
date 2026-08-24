@@ -148,6 +148,32 @@ Panel {
     return share === undefined ? "—" : share.toFixed(1) + "%"
   }
 
+  // What one hour of the profile actually held: the middle of it, the spread,
+  // and — the reason for the whole feature — how many of the days went out of
+  // range there, which no percentile band can say.
+  function hourWords(minute, values) {
+    if (!values || values.length === 0) return "No readings in that hour."
+    var range = doc && doc.range ? doc.range : null
+    var decimals = doc && doc.units === "mg/dL" ? 0 : 1
+    var sorted = values.slice().sort(function (a, b) { return a - b })
+    var median = sorted[Math.floor(sorted.length / 2)]
+    var out = 0
+    if (range) {
+      for (var i = 0; i < sorted.length; i++) {
+        if (sorted[i] < range.low || sorted[i] > range.high) out++
+      }
+    }
+    var clock = ("0" + Math.floor(minute / 60)).slice(-2) + ":"
+      + ("0" + (minute % 60)).slice(-2)
+    var line = clock + " · median " + median.toFixed(decimals)
+      + " · spread " + sorted[0].toFixed(decimals) + "–"
+      + sorted[sorted.length - 1].toFixed(decimals)
+    if (range) {
+      line += " · " + out + " of " + sorted.length + " days out of range"
+    }
+    return line
+  }
+
   // "11 Aug", from the document's own `YYYY-MM-DD`.
   function dayLabel(date) {
     if (!date) return ""
@@ -1474,6 +1500,7 @@ Panel {
           visible: root.loadError === "" && root.view === "profile"
 
           AgpChart {
+            id: agpChart
             width: parent.width
             height: Style.space(150)
             visible: root.agp !== null
@@ -1489,10 +1516,17 @@ Panel {
             color: Qt.darker(root.barForeground, 1.2)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
-            text: root.agp
-              ? "median, with the middle half and the outer 5–95% behind it"
-              : "Not enough days yet — a profile drawn from one or two of them "
-                + "cannot tell a habit from a bad Tuesday."
+            text: {
+              if (!root.agp) {
+                return "Not enough days yet — a profile drawn from one or two of them "
+                  + "cannot tell a habit from a bad Tuesday."
+              }
+              if (agpChart.selected < 0) {
+                return "median, with the middle half and the outer 5–95% behind it"
+                  + " · tap an hour for the days behind it"
+              }
+              return root.hourWords(agpChart.selected, agpChart.samplesAt(agpChart.selected))
+            }
           }
 
           // The same text `sugarrush export` writes, on the clipboard: the

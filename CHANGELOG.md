@@ -70,6 +70,13 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Tap an hour of the profile to see the days behind it.** A percentile band
+  says the middle half of your evenings look fine; it cannot say that three of
+  the fourteen went low, which is the finding that changes a basal rate. Tapping
+  an hour marks it, draws each day's value for that hour as a dot, and says the
+  median, the spread and how many days fell out of range. Tapping it again
+  clears it.
+
 - **The panel keeps itself current while it is open.** It used to fetch once on
   open and then sit there — watch a low come up and the panel quietly stopped
   being true while the pill behind it kept updating, the two disagreeing with
