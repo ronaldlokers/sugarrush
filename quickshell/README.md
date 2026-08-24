@@ -236,6 +236,23 @@ One config write happens when a handle is released, not while it moves. There
 are no stepper rows any more: a handle lands on a tenth of a mmol/L in about
 two pixels at panel width, so the card is now the shape it describes.
 
+## While it is open
+
+The panel refetches at the pill's own poll interval (`interval`, 60s by
+default) for as long as it is on screen, and stops when it closes. The header
+counts down to the next fetch; the refresh button restarts that countdown along
+with the fetch.
+
+It used to read once on open and cache for five minutes, so a panel left open
+went quietly out of date while the pill behind it kept moving.
+
+## The clinical summary
+
+The Profile view renders the same figures `sugarrush export` writes — mean,
+GMI, CV, and the five bands with their boundaries in your own units — over the
+history window. **Copy summary** puts the exported text on the clipboard; the
+card is so that you have read it first.
+
 ## Today against your own baseline
 
 Under the time-in-range bar, four figures are read against the whole history

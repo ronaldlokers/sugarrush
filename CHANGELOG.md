@@ -70,6 +70,19 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The panel keeps itself current while it is open.** It used to fetch once on
+  open and then sit there — watch a low come up and the panel quietly stopped
+  being true while the pill behind it kept updating, the two disagreeing with
+  the bigger surface being the wrong one. It now refetches at the pill's own
+  interval for as long as it is on screen, and the header counts down to the
+  next one: what a spinner should have said all along is not that something is
+  happening, but when.
+
+- **The clinical summary is on screen before it is on the clipboard.** The
+  Profile view shows the same figures `sugarrush export` writes — mean, GMI, CV
+  and the five bands with their boundaries spelled out — so you are not sending
+  a clinician a block of text you have never read.
+
 - **The panel takes the keyboard.** `1` `2` `3` jump to a view, `←` `→` step
   between them, `r` fetches, `d` opens the dashboard, `Esc` closes, and `?`
   shows the list. It ships to people running Hyprland, where the mouse is a
