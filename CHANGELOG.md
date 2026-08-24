@@ -6,6 +6,20 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2026.8.3] - 2026-08-25
+
+This release is mostly about the Quickshell panel, which grew from three cards
+to ten: it now opens on last night's window, draws carbs and insulin under the
+trace, reads today against your own fortnight, shows a fortnight of time in
+range one bar per day, and lets you tap an hour of the profile to see the
+individual days the median hides. It can also act — snooze the alarm that woke
+you, or log a treatment — and it says what the alarm actually did, including a
+delivery that never arrived. The bar pill wears your theme's colour only when
+something is wrong, and each of its parts can be switched off. Two fixes worth
+naming: `sugarrush config units mgdl` used to be refused outright because it
+reinterpreted your thresholds rather than converting them, and the panel
+ignored the colourblind palette entirely.
+
 ### Changed
 
 - **Views cross-fade instead of popping.** One set of cards used to vanish and
@@ -1174,7 +1188,10 @@ self-hosted [Nightscout](https://nightscout.github.io/) CGM data.
 - **Distribution** — published to crates.io, the AUR (`sugarrush-bin`), and a
   Homebrew tap; prebuilt binaries + shell/PowerShell installers via cargo-dist.
 
-[Unreleased]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.3...HEAD
+[Unreleased]: https://github.com/ronaldlokers/sugarrush/compare/v2026.8.3...HEAD
+[2026.8.3]: https://github.com/ronaldlokers/sugarrush/compare/v2026.8.2...v2026.8.3
+[2026.8.2]: https://github.com/ronaldlokers/sugarrush/compare/v2026.8.1...v2026.8.2
+[2026.8.1]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.3...v2026.8.1
 [2026.7.3]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.2...v2026.7.3
 [2026.7.2]: https://github.com/ronaldlokers/sugarrush/compare/v2026.7.1...v2026.7.2
 [2026.7.1]: https://github.com/ronaldlokers/sugarrush/releases/tag/v2026.7.1
