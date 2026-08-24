@@ -246,6 +246,22 @@ with the fetch.
 It used to read once on open and cache for five minutes, so a panel left open
 went quietly out of date while the pill behind it kept moving.
 
+## What the alarm did
+
+The Profile view lists recent alarm episodes from `sugarrush alerts` — the
+local record `alertlog.rs` keeps — with the reading each began at and how long
+it lasted. An episode still running says `still going` rather than reporting a
+duration it does not have.
+
+Underneath, in red, any episode whose delivery failed: `04:55 · push never
+arrived`. That is the most important line in the log and was the least visible
+— it means an alarm was raised and nobody was told. Failures are attached to
+the episode they happened in, because "a push failed at 04:55" means nothing on
+its own.
+
+An empty list reads as "No alarms in this window", which is a good fortnight
+rather than a card that failed to load.
+
 ## An hour of the profile
 
 The typical-day chart draws a median and two envelopes, which is what a clinic

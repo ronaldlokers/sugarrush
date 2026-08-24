@@ -70,6 +70,13 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The panel shows what the alarm actually did.** `sugarrush alerts` has been
+  recording every episode and every delivery attempt since it was written, and
+  nothing displayed any of it. The Profile view now lists recent alarms with
+  how long each lasted — and, in red, any whose delivery never arrived. A push
+  that failed means an alarm was raised and nobody was told, which was until
+  now the least visible line in the whole system.
+
 - **Tap an hour of the profile to see the days behind it.** A percentile band
   says the middle half of your evenings look fine; it cannot say that three of
   the fourteen went low, which is the finding that changes a basal rate. Tapping
