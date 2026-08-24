@@ -7,6 +7,8 @@
 //! Split in two on purpose: [`build`] is pure and takes entries, so every
 //! shape and conversion is unit-testable; `fetch` only talks to Nightscout.
 
+use chrono::{Local, TimeZone};
+use chrono_tz::Tz;
 use serde::Serialize;
 
 use crate::config::{Alerts, Config, Site};
@@ -93,6 +95,9 @@ pub struct Snapshot {
     /// window and no way to compute the other.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baseline: Option<Stats>,
+    /// Time in range per local day, oldest first, over the history window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub days: Option<Vec<DayDoc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub insights: Option<Vec<InsightDoc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,6 +194,23 @@ pub struct TreatmentDoc {
     pub carbs: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub insulin: Option<f64>,
+}
+
+/// One local day's time in range.
+///
+/// Per day rather than folded onto one clock like the profile: the profile
+/// answers "what do my nights look like", and this answers the other question
+/// people actually track — whether it is getting better.
+#[derive(Debug, Clone, Serialize)]
+pub struct DayDoc {
+    /// Local date, `YYYY-MM-DD`, in the site's timezone.
+    pub date: String,
+    /// How many readings the day is computed from. A day behind a sensor
+    /// change has a handful, and a bar drawn from those is a rumour — the
+    /// count is here so a consumer can say so instead of drawing it the same
+    /// as a full day.
+    pub readings: usize,
+    pub tir: TirDoc,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -392,6 +414,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         treatments: Some(logged),
         stats,
         baseline,
+        days: days_for(&history, timezone, &alerts),
         insights: Some(insights),
         band,
         agp,
@@ -551,6 +574,60 @@ fn bucket_at(
 /// `--days 0` the only entries are the chart's few hours, and reporting
 /// "100% in range" over three hours as a 24-hour figure is a claim the data
 /// does not support. So the label is the covered span, capped at the request.
+/// Time in range for each local day in `entries`, oldest first.
+///
+/// Grouped in the site's timezone, like the profile: a day boundary is a local
+/// midnight, and someone in Auckland reading a UTC split would see every night
+/// cut in half.
+fn days_for(entries: &[Entry], timezone: Option<Tz>, alerts: &Alerts) -> Option<Vec<DayDoc>> {
+    if entries.is_empty() {
+        return None;
+    }
+    let mut by_date: std::collections::BTreeMap<String, Vec<Entry>> =
+        std::collections::BTreeMap::new();
+    for entry in entries {
+        let date = match timezone {
+            Some(tz) => tz
+                .timestamp_millis_opt(entry.date)
+                .single()
+                .map(|dt| dt.date_naive().to_string()),
+            None => Local
+                .timestamp_millis_opt(entry.date)
+                .single()
+                .map(|dt| dt.date_naive().to_string()),
+        };
+        if let Some(date) = date {
+            by_date.entry(date).or_default().push(entry.clone());
+        }
+    }
+
+    // BTreeMap keys are `YYYY-MM-DD` strings, which sort chronologically.
+    let days: Vec<DayDoc> = by_date
+        .into_iter()
+        .filter_map(|(date, entries)| {
+            let tir = crate::stats::tir(
+                &entries,
+                alerts.urgent_low,
+                alerts.low,
+                alerts.high,
+                alerts.urgent_high,
+            )?;
+            Some(DayDoc {
+                date,
+                readings: entries.len(),
+                tir: TirDoc {
+                    very_low: round1(tir.very_low),
+                    low: round1(tir.low),
+                    in_range: round1(tir.in_range),
+                    high: round1(tir.high),
+                    very_high: round1(tir.very_high),
+                },
+            })
+        })
+        .collect();
+    (!days.is_empty()).then_some(days)
+}
+
 fn stats_for(entries: &[Entry], units: Units, alerts: &Alerts, window_h: i64) -> Option<Stats> {
     if entries.len() < 2 {
         return None;
@@ -607,6 +684,7 @@ pub fn error_doc(now_ms: i64, theme: &Theme, message: &str) -> Snapshot {
         series: None,
         stats: None,
         baseline: None,
+        days: None,
         insights: None,
         band: None,
         sensor: None,
@@ -990,6 +1068,64 @@ mod tests {
                 > json["stats"]["window_h"].as_i64().unwrap(),
             "the baseline covers no more ground than the recent window"
         );
+    }
+
+    #[test]
+    fn each_local_day_gets_its_own_time_in_range() {
+        // Two days, told apart by their readings: a low day and a good one.
+        let day_ms = 24 * 60 * MIN;
+        let mut history = Vec::new();
+        for step in 0..24 {
+            history.push(entry(60.0, NOW - day_ms - step * 60 * MIN, "Flat"));
+        }
+        for step in 0..24 {
+            history.push(entry(110.0, NOW - step * 60 * MIN, "Flat"));
+        }
+        let snap = build(input(
+            vec![history[24].clone(), history[25].clone()],
+            history,
+        ));
+        let json = serde_json::to_value(&snap).unwrap();
+        let days = json["days"].as_array().unwrap();
+
+        assert!(days.len() >= 2, "expected a day each, got {}", days.len());
+        // Oldest first, and the older day is the one below range.
+        let first = &days[0];
+        let last = &days[days.len() - 1];
+        assert!(
+            first["date"].as_str() < last["date"].as_str(),
+            "not oldest first"
+        );
+        // 60 mg/dL is below `low` (70) but above `urgent_low` (55), so it
+        // lands in the low band rather than the very-low one.
+        let below =
+            first["tir"]["very_low"].as_f64().unwrap() + first["tir"]["low"].as_f64().unwrap();
+        assert!(below > 0.0, "the low day did not read as low, got {below}");
+        assert_eq!(last["tir"]["in_range"], 100.0);
+        // The count is what lets a consumer tell a full day from a rumour.
+        assert!(last["readings"].as_u64().unwrap() >= 20);
+    }
+
+    #[test]
+    fn days_split_at_local_midnight_not_utc() {
+        // 22:30 and 23:30 UTC. In Auckland (+12) both are already tomorrow,
+        // so a UTC split would cut the night in half and report two days
+        // where the person had one.
+        let utc_evening = chrono::DateTime::parse_from_rfc3339("2026-08-21T22:30:00Z")
+            .unwrap()
+            .timestamp_millis();
+        let history = vec![
+            entry(110.0, utc_evening, "Flat"),
+            entry(112.0, utc_evening + 60 * MIN, "Flat"),
+        ];
+        let snap = build(BuildInput {
+            timezone: Some("Pacific/Auckland".parse().unwrap()),
+            ..input(history.clone(), history)
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+        let days = json["days"].as_array().unwrap();
+        assert_eq!(days.len(), 1, "one local day, not two");
+        assert_eq!(days[0]["date"], "2026-08-22", "grouped in UTC, not locally");
     }
 
     #[test]

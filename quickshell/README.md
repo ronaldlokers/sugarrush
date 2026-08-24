@@ -209,6 +209,21 @@ Entries with no amount — notes, finger sticks, sensor changes, which Nightscou
 keeps in the same collection — are left out. A site that logs nothing simply
 has no lane.
 
+## A fortnight, one bar per day
+
+The Profile view draws time in range as one stacked bar per day, oldest on the
+left, under the typical-day chart. The bands are in the same order as the
+time-in-range bar on the Glucose view, so a column here and that bar are read
+the same way round.
+
+Days are grouped at **local midnight** in the site's timezone, not UTC — a
+night split across a UTC boundary would be reported as two days the person did
+not have.
+
+A day whose bar is computed from too few readings is drawn faded. One thin
+morning after a sensor change is 100% in range on a technicality, and drawn
+solid it would read as the best day of the fortnight.
+
 ## Today against your own baseline
 
 Under the time-in-range bar, four figures are read against the whole history
