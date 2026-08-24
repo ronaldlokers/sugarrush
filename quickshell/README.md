@@ -250,9 +250,11 @@ went quietly out of date while the pill behind it kept moving.
 ## Two columns
 
 On a horizontal bar the panel is wide enough for two columns of cards: the
-reading beside last night, the clinical summary beside the alarms. Everything
-that wants the room — the chart, the day strip, the profile — keeps a full row
-to itself.
+reading beside the last 24 hours, the clinical summary beside the alarms.
+Everything that wants the room — the six-hour chart, last night's trace, the day
+strip, the profile — keeps a full row to itself.
+
+Paired cards take the taller one's height, so a row has a single bottom edge.
 
 It is a `Flow`, not a second layout: a card given half the width shares its row,
 and a card at full width takes its own. There is no wide-mode tree to keep in

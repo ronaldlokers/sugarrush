@@ -11,8 +11,8 @@ All notable changes to sugarrush are documented here. The format is based on
 - **The panel uses the width it has.** It was one 380px column in a scroll
   view, on a desktop, and it has grown from three cards to nine — the Glucose
   view scrolled past its own statistics and the Profile view past its patterns.
-  On a horizontal bar it is wider now, with the reading beside last night and
-  the clinical summary beside the alarms. A vertical bar keeps the narrow
+  On a horizontal bar it is wider now, with the reading beside the last 24
+  hours and the clinical summary beside the alarms; the charts keep full rows. A vertical bar keeps the narrow
   column, where it is the right answer, and `wideLayout false` turns it off.
 
 - **The stats card admits when its window is full of holes.** A percentage
