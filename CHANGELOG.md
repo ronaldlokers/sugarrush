@@ -41,6 +41,15 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **A fortnight of time in range, one bar per day.** The Profile view gains a
+  strip of stacked daily bars, oldest on the left, under the typical-day chart.
+  The profile answers "what do my nights look like"; this answers the other
+  question people track — whether it is getting better — and neither can be
+  read off the other. Days grouped at local midnight, so a night is not cut in
+  half by a UTC boundary. A day with too few readings to trust is drawn faded
+  rather than as a full bar, since one thin morning would otherwise read as the
+  best day of the fortnight.
+
 - **The panel says whether today is better than usual.** "76% in range" is a
   number with no scale, and the comparison that changes what someone does is
   against themselves a fortnight ago. The stats card now reads time in range,

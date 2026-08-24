@@ -79,6 +79,27 @@ Panel {
   // `palette`, so the rule is now explicit: names from the document get a
   // suffix that says what they are.
   readonly property var baselineStats: doc && doc.baseline ? doc.baseline : null
+  readonly property var dayList: doc && doc.days ? doc.days : []
+
+  // The average of the days drawn, which is the number someone reads the
+  // column heights against.
+  readonly property real dayAverage: {
+    var list = dayList
+    if (list.length === 0) return 0
+    var total = 0
+    for (var i = 0; i < list.length; i++) total += list[i].tir ? list[i].tir.in_range : 0
+    return total / list.length
+  }
+
+  // "11 Aug", from the document's own `YYYY-MM-DD`.
+  function dayLabel(date) {
+    if (!date) return ""
+    var parts = String(date).split("-")
+    if (parts.length !== 3) return date
+    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    return parseInt(parts[2], 10) + " " + months[parseInt(parts[1], 10) - 1]
+  }
 
   // Whole days reads better than "336 h", and the baseline window is always
   // a whole number of them.
@@ -1248,6 +1269,54 @@ Panel {
               font.pixelSize: Style.font.caption
               text: root.copyState
             }
+          }
+        }
+
+        // Beside the typical day rather than in it: the profile says what a day
+        // looks like, and this says whether the days are getting better.
+        Card {
+          label: "Time in range · " + root.dayList.length
+            + (root.dayList.length === 1 ? " day" : " days")
+          visible: root.dayList.length > 1 && root.loadError === "" && root.view === "profile"
+
+          DayStrip {
+            width: parent.width
+            height: Style.space(46)
+            days: root.dayList
+            themeColors: root.themeColors
+            foreground: root.barForeground
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: firstDay.implicitHeight
+
+            Text {
+              id: firstDay
+              anchors.left: parent.left
+              color: Qt.darker(root.barForeground, 1.7)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.dayList.length > 0 ? root.dayLabel(root.dayList[0].date) : ""
+            }
+
+            Text {
+              anchors.right: parent.right
+              color: Qt.darker(root.barForeground, 1.7)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: "today"
+            }
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: Qt.darker(root.barForeground, 1.2)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: "average " + root.dayAverage.toFixed(0) + "% in range"
+              + " · faded days have too few readings to trust"
           }
         }
 
