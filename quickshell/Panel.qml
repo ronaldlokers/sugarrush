@@ -90,6 +90,12 @@ Panel {
   // a card called Now. "Dashboard" is taken — that is the TUI, which the
   // button beside these chips opens.
   property string view: "glucose"
+
+  // Whether the panel moves at all. Off leaves every view switch instant,
+  // which is what someone who turns motion down is asking for.
+  readonly property bool animate: setting("animations", true)
+
+
   // key -> value, as `sugarrush config` prints it.
   property var config: ({})
   property string configError: ""
@@ -97,6 +103,13 @@ Panel {
   // switched on. Every switch reading "on" in the meantime is the panel
   // asserting a state it has not read — briefly, but wrongly, and the two
   // switches that were actually off proved it.
+  // A `bar.*` switch as the config file has it. Unset reads as on, which is
+  // what the defaults are and what the pill would draw.
+  function previewOn(key) {
+    var raw = config[key]
+    return raw === undefined || raw === "" ? true : raw !== "false"
+  }
+
   readonly property bool configLoaded: config && Object.keys(config).length > 0
   property double fetchedAt: 0
   // Seconds until the next automatic fetch. Driven by the ticker below, and
@@ -553,7 +566,18 @@ Panel {
     return isNaN(raw) ? fallback : raw
   }
 
-  onViewChanged: if (view === "settings") loadConfig()
+  // One handler: a second `onViewChanged` is not an addition, it is
+  // "Property value set multiple times" and a panel that does not load.
+  //
+  // Fade out, swap, fade back — the cards change while the panel is at its
+  // dimmest, so a view switch reads as one movement rather than two.
+  onViewChanged: {
+    if (view === "settings") loadConfig()
+    if (animate) {
+      column.opacity = 0.35
+      fadeBack.restart()
+    }
+  }
   onConfigCommandChanged: if (view === "settings") loadConfig()
 
   function apply(out) {
@@ -644,6 +668,12 @@ Panel {
         root.loadHealth()
       }
     }
+  }
+
+  Timer {
+    id: fadeBack
+    interval: 60
+    onTriggered: column.opacity = 1
   }
 
   Timer {
@@ -1019,6 +1049,19 @@ Panel {
           id: column
           width: panelFlick.width
           spacing: Style.space(10)
+
+          // Views used to pop: one set of cards vanished and another appeared
+          // in the same frame, which reads as a redraw rather than a move. A
+          // short fade says the panel is still the same panel.
+          //
+          // Short on purpose, and skippable: `animations false` turns it off
+          // for anyone who does not want movement on a health panel, which is
+          // the nearest a QML widget gets to honouring reduced motion.
+          opacity: 1
+          Behavior on opacity {
+            enabled: root.animate
+            NumberAnimation { duration: 110; easing.type: Easing.OutQuad }
+          }
 
         // Wordmark left, controls right, on one line.
         Item {
@@ -1928,6 +1971,40 @@ Panel {
           // four settings; this shows the one thing they actually are — a
           // target band between two guard rails. A handle lands on a tenth of
           // a mmol/L in about two pixels, so precision did not go with them.
+          // The unit every number in the panel is written in, and the one
+          // setting that changes what the four below mean. It sits above them
+          // for that reason.
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(unitsLabel.implicitHeight, unitsChoice.implicitHeight)
+
+            Text {
+              id: unitsLabel
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              color: Qt.darker(root.barForeground, 1.35)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: "Units"
+            }
+
+            ButtonGroup {
+              id: unitsChoice
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              options: [{ value: "mmol", label: "mmol/L" },
+                        { value: "mgdl", label: "mg/dL" }]
+              value: root.config["units"] === "mgdl" ? "mgdl" : "mmol"
+              foreground: root.barForeground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              fontSize: Style.font.caption
+              focusable: false
+              // The thresholds convert with it, so the band below keeps
+              // meaning what it meant a second ago.
+              onChanged: function (next) { root.setConfig("units", next) }
+            }
+          }
+
           ThresholdBand {
             width: parent.width
             urgentLow: root.num("alerts.urgent_low", 3.5)
@@ -2004,6 +2081,85 @@ Panel {
           SwitchRow {
             label: "Sparkline"
             key: "bar.sparkline"
+          }
+
+          // The pill these four switches are describing, drawn as they leave
+          // it. You were editing something that lives somewhere else on the
+          // screen, at whatever size your bar happens to be — so you had to
+          // look away to see what you had done.
+          Item {
+            width: parent.width
+            implicitHeight: previewPill.implicitHeight + Style.space(10)
+
+            Rectangle {
+              id: previewPill
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              implicitWidth: previewRow.implicitWidth + Style.space(16)
+              implicitHeight: previewRow.implicitHeight + Style.space(8)
+              radius: height / 2
+              color: "transparent"
+              border.width: 1
+              border.color: Qt.rgba(root.barForeground.r, root.barForeground.g,
+                                    root.barForeground.b, 0.22)
+
+              Row {
+                id: previewRow
+                anchors.centerIn: parent
+                spacing: Style.space(5)
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  // Coloured the way the pill colours itself: the bar's own
+                  // foreground unless the reading is out of range.
+                  color: root.reading && root.reading.class !== "in-range"
+                         && root.reading.class !== "stale"
+                    ? root.classColor(root.reading.class)
+                    : root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: root.reading
+                    && (root.reading.class === "urgent-low" || root.reading.class === "urgent-high")
+                  text: root.reading ? root.reading.value : "—"
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: root.previewOn("bar.units")
+                  color: root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  text: root.units
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: root.previewOn("bar.arrow")
+                  color: root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  text: root.reading ? root.reading.arrow : ""
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: root.previewOn("bar.delta")
+                  color: root.barForeground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  text: root.reading ? root.reading.delta : ""
+                }
+
+                PillSpark {
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: root.previewOn("bar.sparkline")
+                  width: Style.space(30)
+                  height: Style.space(10)
+                  series: root.doc && root.doc.series ? root.doc.series : []
+                  foreground: root.barForeground
+                }
+              }
+            }
           }
 
           Text {
