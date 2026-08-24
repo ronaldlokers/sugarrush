@@ -106,6 +106,10 @@ pub struct Snapshot {
     /// Alarm episodes over the history window, newest first.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alerts: Option<Vec<AlertDoc>>,
+    /// The night just gone. `None` when no history was fetched, or when it
+    /// holds no readings inside the window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub night: Option<NightDoc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub band: Option<BandDoc>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -245,6 +249,31 @@ pub struct AlertDoc {
     /// a destination or a token — the log does not hold those either.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<String>,
+}
+
+/// The night just gone, as one block.
+///
+/// Nobody opens a CGM panel in the morning to browse six hours of chart. They
+/// open it to find out whether the night was fine, and that answer was only
+/// reachable by scrolling the overview and reading a shape.
+///
+/// 23:00 to 07:00 in the site's timezone, because a night is a local thing.
+#[derive(Debug, Clone, Serialize)]
+pub struct NightDoc {
+    pub from_ms: i64,
+    pub to_ms: i64,
+    /// True when the window has not closed yet — it is still before 07:00, and
+    /// the figures below describe a night in progress rather than a finished
+    /// one.
+    pub in_progress: bool,
+    pub readings: usize,
+    pub tir: TirDoc,
+    /// The lowest reading of the night, in display units. The number someone
+    /// actually wants, and the one a mean hides.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lowest: Option<f64>,
+    /// `[epoch_ms, value]`, oldest first — enough to draw the shape of it.
+    pub series: Vec<(i64, f64)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -459,6 +488,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         days: days_for(&history, timezone, &alerts),
         insights: Some(insights),
         alerts: Some(alerts_for(&alert_records, units, now_ms)),
+        night: night_for(&history, timezone, &alerts, units, now_ms),
         band,
         agp,
         sensor,
@@ -630,6 +660,104 @@ fn bucket_at(
 /// `--days 0` the only entries are the chart's few hours, and reporting
 /// "100% in range" over three hours as a 24-hour figure is a claim the data
 /// does not support. So the label is the covered span, capped at the request.
+/// The last night, 23:00 to 07:00 in the site's timezone.
+///
+/// The window ends at 07:00 or at `now`, whichever comes first: at 3am the
+/// night is still happening, and reporting it as finished would be a claim
+/// about hours that have not occurred.
+fn night_for(
+    history: &[Entry],
+    timezone: Option<Tz>,
+    alerts: &Alerts,
+    units: Units,
+    now_ms: i64,
+) -> Option<NightDoc> {
+    use chrono::{Duration, NaiveTime};
+    if history.is_empty() {
+        return None;
+    }
+
+    let local_now = match timezone {
+        Some(tz) => tz.timestamp_millis_opt(now_ms).single()?.naive_local(),
+        None => Local.timestamp_millis_opt(now_ms).single()?.naive_local(),
+    };
+    let night_start = NaiveTime::from_hms_opt(23, 0, 0)?;
+    let night_end = NaiveTime::from_hms_opt(7, 0, 0)?;
+
+    // Before 07:00 the night that started yesterday is still running; after
+    // it, the one that ended this morning is the night just gone.
+    let start_date = if local_now.time() < night_end {
+        local_now.date() - Duration::days(1)
+    } else if local_now.time() >= night_start {
+        local_now.date()
+    } else {
+        local_now.date() - Duration::days(1)
+    };
+
+    let to_local = |naive: chrono::NaiveDateTime| -> Option<i64> {
+        match timezone {
+            Some(tz) => tz
+                .from_local_datetime(&naive)
+                .single()
+                .map(|dt| dt.timestamp_millis()),
+            None => Local
+                .from_local_datetime(&naive)
+                .single()
+                .map(|dt| dt.timestamp_millis()),
+        }
+    };
+
+    let from_ms = to_local(start_date.and_time(night_start))?;
+    let planned_end = to_local((start_date + Duration::days(1)).and_time(night_end))?;
+    let to_ms = planned_end.min(now_ms);
+    if to_ms <= from_ms {
+        return None;
+    }
+
+    let mut nightly: Vec<&Entry> = history
+        .iter()
+        .filter(|e| e.date >= from_ms && e.date <= to_ms)
+        .collect();
+    if nightly.is_empty() {
+        return None;
+    }
+    nightly.sort_by_key(|e| e.date);
+
+    let owned: Vec<Entry> = nightly.iter().map(|e| (*e).clone()).collect();
+    let tir = crate::stats::tir(
+        &owned,
+        alerts.urgent_low,
+        alerts.low,
+        alerts.high,
+        alerts.urgent_high,
+    )?;
+
+    Some(NightDoc {
+        from_ms,
+        to_ms,
+        in_progress: to_ms < planned_end,
+        readings: owned.len(),
+        tir: TirDoc {
+            very_low: round1(tir.very_low),
+            low: round1(tir.low),
+            in_range: round1(tir.in_range),
+            high: round1(tir.high),
+            very_high: round1(tir.very_high),
+        },
+        lowest: owned
+            .iter()
+            .map(|e| e.sgv)
+            .fold(None, |acc: Option<f64>, sgv| {
+                Some(acc.map_or(sgv, |low: f64| low.min(sgv)))
+            })
+            .map(|sgv| scaled(units, sgv)),
+        series: owned
+            .iter()
+            .map(|e| (e.date, scaled(units, e.sgv)))
+            .collect(),
+    })
+}
+
 /// Episodes and the deliveries that failed during them, newest first.
 ///
 /// Failures are attached to the episode they happened in rather than listed
@@ -776,6 +904,7 @@ pub fn error_doc(now_ms: i64, theme: &Theme, message: &str) -> Snapshot {
         days: None,
         insights: None,
         alerts: None,
+        night: None,
         band: None,
         sensor: None,
         forecast: None,
@@ -1317,6 +1446,58 @@ mod tests {
         // A list of alarms is read from the most recent one back.
         assert_eq!(json["alerts"][0]["state"], "HIGH");
         assert_eq!(json["alerts"][1]["state"], "LOW");
+    }
+
+    #[test]
+    fn the_night_runs_from_last_evening_to_this_morning() {
+        // NOW is 17:00 UTC, which is after 07:00 and before 23:00 — so the
+        // night just gone is yesterday 23:00 to this morning 07:00, and it has
+        // closed.
+        let history: Vec<Entry> = (0..48)
+            .map(|step| entry(110.0, NOW - step * 30 * MIN, "Flat"))
+            .collect();
+        let snap = build(BuildInput {
+            timezone: Some(chrono_tz::UTC),
+            ..input(vec![history[0].clone(), history[1].clone()], history)
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+        let night = &json["night"];
+
+        let from = night["from_ms"].as_i64().unwrap();
+        let to = night["to_ms"].as_i64().unwrap();
+        let hour = |ms: i64| {
+            chrono::DateTime::from_timestamp_millis(ms)
+                .unwrap()
+                .format("%H:%M")
+                .to_string()
+        };
+        assert_eq!(hour(from), "23:00", "the night starts at 23:00 local");
+        assert_eq!(hour(to), "07:00", "and ends at 07:00 local");
+        assert_eq!(night["in_progress"], false, "that night has ended");
+        assert!(night["readings"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn a_night_still_running_says_so_and_stops_at_now() {
+        // 03:00 UTC: the night that started at 23:00 is still happening, and
+        // reporting it as finished would be a claim about hours that have not
+        // occurred yet.
+        let three_am = NOW - 14 * 60 * MIN; // 17:00 → 03:00 the same day
+        let history: Vec<Entry> = (0..24)
+            .map(|step| entry(110.0, three_am - step * 15 * MIN, "Flat"))
+            .collect();
+        let snap = build(BuildInput {
+            now_ms: three_am,
+            timezone: Some(chrono_tz::UTC),
+            ..input(vec![history[0].clone(), history[1].clone()], history)
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+        assert_eq!(json["night"]["in_progress"], true);
+        assert_eq!(
+            json["night"]["to_ms"].as_i64().unwrap(),
+            three_am,
+            "an unfinished night ends now, not at 07:00"
+        );
     }
 
     #[test]

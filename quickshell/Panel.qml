@@ -119,6 +119,16 @@ Panel {
   readonly property var baselineStats: doc && doc.baseline ? doc.baseline : null
   readonly property var dayList: doc && doc.days ? doc.days : []
   readonly property var alertList: doc && doc.alerts ? doc.alerts : []
+  readonly property var night: doc && doc.night ? doc.night : null
+
+  // The alarms that fired inside the night window — the same episodes the
+  // Alarms card lists, asked a narrower question.
+  readonly property var nightAlarms: {
+    if (!night) return []
+    return alertList.filter(function (a) {
+      return a.at_ms >= night.from_ms && a.at_ms <= night.to_ms
+    })
+  }
 
   // "04:55", or "Sat 21:10" once it is not today — an alarm three days ago
   // needs a day name more than it needs a date.
@@ -1407,6 +1417,77 @@ Panel {
             height: Style.space(130)
             doc: root.doc
             foreground: root.barForeground
+          }
+        }
+
+        // Nobody opens a CGM panel in the morning to browse six hours of
+        // chart. They open it to find out whether the night was fine.
+        Card {
+          label: {
+            if (!root.night) return "Last night"
+            var from = Qt.formatTime(new Date(root.night.from_ms), "HH:mm")
+            var to = Qt.formatTime(new Date(root.night.to_ms), "HH:mm")
+            return (root.night.in_progress ? "Tonight so far · " : "Last night · ")
+              + from + "–" + to
+          }
+          visible: root.night !== null && root.loadError === "" && root.view === "glucose"
+
+          NightTrace {
+            width: parent.width
+            height: Style.space(54)
+            series: root.night ? root.night.series : []
+            range: root.doc && root.doc.range ? root.doc.range : null
+            themeColors: root.themeColors
+            foreground: root.barForeground
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: nightRange.implicitHeight
+
+            Text {
+              id: nightRange
+              anchors.left: parent.left
+              color: Qt.darker(root.barForeground, 1.2)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.night
+                ? root.night.tir.in_range.toFixed(0) + "% in range"
+                  + (root.night.lowest !== undefined
+                     ? " · low " + root.night.lowest.toFixed(1) : "")
+                : ""
+            }
+
+            Text {
+              anchors.right: parent.right
+              color: root.nightAlarms.length > 0
+                ? root.themed("urgent", "#cc241d")
+                : Qt.darker(root.barForeground, 1.5)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              // "no alarms" is the answer people are hoping for, and it
+              // should be printed rather than left as an absence.
+              text: root.nightAlarms.length === 0
+                ? "no alarms"
+                : root.nightAlarms.length + (root.nightAlarms.length === 1 ? " alarm" : " alarms")
+            }
+          }
+
+          Repeater {
+            model: root.nightAlarms.slice(0, 3)
+
+            Text {
+              required property var modelData
+              width: column.width - Style.space(24)
+              color: Qt.darker(root.barForeground, 1.35)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.alarmWhen(modelData.at_ms) + " · " + modelData.state.toLowerCase()
+                + (modelData.value !== undefined ? " " + modelData.value.toFixed(1) : "")
+                + " · " + root.alarmLength(modelData)
+                + (modelData.failed && modelData.failed.length > 0
+                   ? " · " + modelData.failed.join(" and ") + " never arrived" : "")
+            }
           }
         }
 
