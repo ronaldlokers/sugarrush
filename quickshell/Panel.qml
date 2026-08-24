@@ -41,6 +41,22 @@ Panel {
   // Set by `setConfig` for a key the pill renders; cleared when it is redrawn.
   property bool refetchPillAfterSet: false
 
+  // The three views, in the order the switcher shows them, so a digit and an
+  // arrow key mean the same thing as a click.
+  readonly property var views: ["glucose", "profile", "settings"]
+
+  function stepView(direction) {
+    var at = views.indexOf(view)
+    if (at < 0) return
+    // Clamped rather than wrapped: arrowing off the end of a three-item
+    // switcher and landing back at the start reads as a glitch.
+    view = views[Math.max(0, Math.min(views.length - 1, at + direction))]
+  }
+
+  // Whether the shortcut list is on screen. Only ever opened by pressing `?`,
+  // so it costs nothing to anyone who never does.
+  property bool showKeys: false
+
   // "glucose" or "settings". A view, not a second panel: the cards below
   // simply swap, so the header, the strip and the popout identity stay put.
   //
@@ -52,6 +68,11 @@ Panel {
   // key -> value, as `sugarrush config` prints it.
   property var config: ({})
   property string configError: ""
+  // Until `sugarrush config` answers, the panel knows nothing about what is
+  // switched on. Every switch reading "on" in the meantime is the panel
+  // asserting a state it has not read — briefly, but wrongly, and the two
+  // switches that were actually off proved it.
+  readonly property bool configLoaded: config && Object.keys(config).length > 0
   property double fetchedAt: 0
 
   readonly property var reading: doc && doc.now ? doc.now : null
@@ -80,6 +101,9 @@ Panel {
   // suffix that says what they are.
   readonly property var baselineStats: doc && doc.baseline ? doc.baseline : null
   readonly property var dayList: doc && doc.days ? doc.days : []
+
+  // Nothing yet, and nothing wrong: the first fetch of a cold open.
+  readonly property bool loading: doc === null && loadError === ""
 
   // The average of the days drawn, which is the number someone reads the
   // column heights against.
@@ -365,7 +389,8 @@ Panel {
   }
 
   onOpenedChanged: if (opened) { refresh(false); loadHealth(); copyState = ""; actionState = ""
-                                     logging = false; logCarbs = 0; logInsulin = 0 }
+                                     logging = false; logCarbs = 0; logInsulin = 0
+                                     showKeys = false }
 
   // A cached document belongs to the command that produced it. When the
   // command changes the cache is about something else, so drop it rather than
@@ -651,6 +676,22 @@ Panel {
     }
   }
 
+  // A bar standing in for a value that has not arrived. Deliberately quiet
+  // and slow: it is saying "not yet", and a busy shimmer on a health panel
+  // reads as something happening.
+  component Skeleton: Rectangle {
+    implicitHeight: Style.space(11)
+    radius: 3
+    color: Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.10)
+
+    SequentialAnimation on opacity {
+      running: true
+      loops: Animation.Infinite
+      NumberAnimation { from: 0.55; to: 1.0; duration: 900; easing.type: Easing.InOutQuad }
+      NumberAnimation { from: 1.0; to: 0.55; duration: 900; easing.type: Easing.InOutQuad }
+    }
+  }
+
   // One on/off setting. The switch reads the config document rather than
   // holding its own state, so a write the CLI refuses leaves it showing what
   // the file actually says.
@@ -766,6 +807,30 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function (direction) { root.switchPanel(direction) }
 
+      // This ships to people running Hyprland, where the mouse is a last
+      // resort, and every one of the panel's three views and dozen settings
+      // rows needed a pointer to reach.
+      Keys.onPressed: function (event) {
+        switch (event.key) {
+        case Qt.Key_1: root.view = root.views[0]; break
+        case Qt.Key_2: root.view = root.views[1]; break
+        case Qt.Key_3: root.view = root.views[2]; break
+        case Qt.Key_Left: root.stepView(-1); break
+        case Qt.Key_Right: root.stepView(1); break
+        case Qt.Key_R: root.refresh(true); break
+        case Qt.Key_D:
+          root.close()
+          if (root.bar) {
+            root.bar.run(root.setting("onClick",
+              "omarchy-launch-floating-terminal-with-presentation sugarrush"))
+          }
+          break
+        case Qt.Key_Question: root.showKeys = !root.showKeys; break
+        default: return
+        }
+        event.accepted = true
+      }
+
       // Content can outgrow the room a popup is allowed — a patterns card on
       // top of the other three does it on a short screen — and a capped
       // KeyboardPanel would simply clip the overflow. Scroll it instead, the
@@ -793,11 +858,48 @@ Panel {
             id: mark
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            width: Math.round(parent.width / 2)
+            // A third, not a half. You know which app this is — you clicked
+            // its pill to get here — and the number you came for was below
+            // the fold on every view but one.
+            width: Math.round(parent.width * 0.32)
             source: Qt.resolvedUrl("logo.png")
             sourceSize.width: parent.width * 1.5
             fillMode: Image.PreserveAspectFit
             smooth: true
+          }
+
+          // The reading, in the one place that survives scrolling and view
+          // switches. On Settings it is the only reminder that the numbers
+          // being edited are about something happening right now.
+          Row {
+            anchors.left: mark.right
+            anchors.leftMargin: Style.space(10)
+            anchors.right: controls.left
+            anchors.rightMargin: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(5)
+            visible: root.reading !== null
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              color: !root.reading
+                ? root.barForeground
+                : (root.readingStale
+                   ? Qt.darker(root.barForeground, 1.5)
+                   : root.classColor(root.reading.class))
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.body
+              font.bold: true
+              text: root.reading ? root.reading.value : ""
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              color: Qt.darker(root.barForeground, 1.5)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.reading ? root.reading.arrow : ""
+            }
           }
 
           Row {
@@ -843,14 +945,41 @@ Panel {
 
         // Whatever went wrong replaces the cards: there is nothing to put in
         // them, and three empty boxes explain less than one sentence does.
+        // A failure replaces the cards, because there is nothing to put in
+        // them and three empty boxes explain less than one sentence does.
         Text {
-          visible: (root.loadError !== "" || !root.reading) && root.view === "glucose"
+          visible: root.loadError !== "" && root.view === "glucose"
           width: parent.width
           wrapMode: Text.WordWrap
           color: root.barForeground
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.body
-          text: root.loadError !== "" ? root.loadError : "waiting for the first reading"
+          text: root.loadError
+        }
+
+        // Waiting is not a failure, and it used to look like one: the whole
+        // panel collapsed to a single line of text for as long as Nightscout
+        // took. Draw the cards that are about to be filled instead — it tells
+        // the eye where to look when the numbers land, and the panel keeps a
+        // shape of its own rather than being assembled on arrival.
+        Card {
+          label: "Now"
+          visible: root.loading && root.view === "glucose"
+          Skeleton { width: Math.round(parent.width * 0.45); height: Style.space(30) }
+          Skeleton { width: Math.round(parent.width * 0.3) }
+        }
+
+        Card {
+          label: "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
+          visible: root.loading && root.view === "glucose"
+          Skeleton { width: parent.width; height: Style.space(64) }
+        }
+
+        Card {
+          label: "Last 24 hours"
+          visible: root.loading && root.view === "glucose"
+          Skeleton { width: parent.width; height: Style.space(12) }
+          Skeleton { width: Math.round(parent.width * 0.6) }
         }
 
         // Two numbers at the same size: the reading, and where it lands in
@@ -1355,6 +1484,8 @@ Panel {
         Card {
           label: "Alarm thresholds · " + (root.config["units"] === "mgdl" ? "mg/dL" : "mmol/L")
           visible: root.view === "settings"
+          enabled: root.configLoaded
+          opacity: root.configLoaded ? 1 : 0.45
 
           SettingRow {
             label: "Urgent low"
@@ -1402,6 +1533,8 @@ Panel {
         Card {
           label: "Alarm"
           visible: root.view === "settings"
+          enabled: root.configLoaded
+          opacity: root.configLoaded ? 1 : 0.45
 
           SwitchRow {
             label: "Audible alarm"
@@ -1425,6 +1558,8 @@ Panel {
         Card {
           label: "Status bar"
           visible: root.view === "settings"
+          enabled: root.configLoaded
+          opacity: root.configLoaded ? 1 : 0.45
 
           SwitchRow {
             label: "Trend arrow"
@@ -1504,6 +1639,47 @@ Panel {
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
             text: "Everything else — sites, tokens, quiet hours, themes — lives in the dashboard."
+          }
+        }
+
+        // Only when asked for. A shortcut list nobody opened is a panel
+        // explaining itself to someone who did not ask a question.
+        Card {
+          label: "Keys"
+          visible: root.showKeys
+
+          Repeater {
+            model: [
+              { key: "1 · 2 · 3", what: "jump to a view" },
+              { key: "← →", what: "step between views" },
+              { key: "r", what: "fetch now" },
+              { key: "d", what: "open the dashboard" },
+              { key: "Esc", what: "close" },
+              { key: "?", what: "hide this" }
+            ]
+
+            Item {
+              required property var modelData
+              width: column.width - Style.space(24)
+              implicitHeight: keyName.implicitHeight
+
+              Text {
+                id: keyName
+                anchors.left: parent.left
+                color: Qt.darker(root.barForeground, 1.35)
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                text: parent.modelData.key
+              }
+
+              Text {
+                anchors.right: parent.right
+                color: root.barForeground
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                text: parent.modelData.what
+              }
+            }
           }
         }
 

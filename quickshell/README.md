@@ -267,6 +267,17 @@ and the two the command needs. A meal remembered three hours late wants
 terminal.
 A panel that dismisses when focus moves is the wrong place to type a token.
 
+## Keys
+
+| Key | What it does |
+|---|---|
+| `1` `2` `3` | jump to Glucose, Profile, Settings |
+| `←` `→` | step between views |
+| `r` | fetch now |
+| `d` | open the dashboard |
+| `Esc` | close |
+| `?` | show or hide this list, in the panel |
+
 ## Omarchy menu entries
 
 [`omarchy-menu.jsonc`](omarchy-menu.jsonc) has a sugarrush submenu — dashboard,
