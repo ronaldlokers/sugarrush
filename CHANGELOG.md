@@ -41,6 +41,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The panel says whether today is better than usual.** "76% in range" is a
+  number with no scale, and the comparison that changes what someone does is
+  against themselves a fortnight ago. The stats card now reads time in range,
+  time below range, mean and CV against the whole history window, with the
+  change named and coloured — where there is a better direction. Mean has none:
+  a lower average bought with lows is not an improvement, so its change is
+  stated rather than judged.
+
 - **The panel's chart shows what you did, not only what happened.** Carbs and
   insulin logged on the site are drawn in their own lane along the foot of the
   chart — a dot sized by the amount for carbs, a triangle for insulin, labelled

@@ -209,6 +209,20 @@ Entries with no amount — notes, finger sticks, sensor changes, which Nightscou
 keeps in the same collection — are left out. A site that logs nothing simply
 has no lane.
 
+## Today against your own baseline
+
+Under the time-in-range bar, four figures are read against the whole history
+window rather than left on their own: time in range, time below range, mean and
+CV, each with the change named.
+
+The colour answers "is this better", which is the only reason to print two
+numbers instead of one — green for an improvement, amber for the other way.
+Mean is deliberately never coloured: a lower average bought with more lows is
+not an improvement, so the change is stated and left to be read.
+
+The baseline comes from `baseline` in `sugarrush snapshot`, computed over
+whatever `--days` fetched, and the card names the span it covers.
+
 ## Acting from the panel
 
 Under the reading are the two things worth doing at 3am. **Snooze 15m** and

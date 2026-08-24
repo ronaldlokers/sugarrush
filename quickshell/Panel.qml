@@ -73,6 +73,33 @@ Panel {
     }
   }
   readonly property var stats: doc && doc.stats ? doc.stats : null
+  // Not `baseline`: `Item` already has one — the anchor line — and it is
+  // FINAL, so declaring it stops the whole panel loading. Third time a
+  // document field has collided with a Qt property here, after `stale` and
+  // `palette`, so the rule is now explicit: names from the document get a
+  // suffix that says what they are.
+  readonly property var baselineStats: doc && doc.baseline ? doc.baseline : null
+
+  // Whole days reads better than "336 h", and the baseline window is always
+  // a whole number of them.
+  function daysWords(hours) {
+    var days = Math.max(1, Math.round(hours / 24))
+    return days + (days === 1 ? " day" : " days")
+  }
+
+  // Lower is better for some of these and higher for others, so the direction
+  // that counts as an improvement is named per row rather than assumed.
+  function betterColor(delta, higherIsBetter) {
+    if (Math.abs(delta) < 0.05) return Qt.darker(barForeground, 1.35)
+    var good = higherIsBetter ? delta > 0 : delta < 0
+    return good ? themed("in_range", "#98971a") : themed("high", "#d79921")
+  }
+
+  function signed(value, decimals) {
+    var text = Math.abs(value).toFixed(decimals)
+    if (Math.abs(value) < (decimals === 0 ? 0.5 : 0.05)) return "="
+    return (value > 0 ? "+" : "−") + text
+  }
 
   // What was logged in the window the chart covers, as one line. The chart
   // says when; this says how much, which is the number someone repeats out
@@ -536,6 +563,69 @@ Panel {
         id: cardContent
         width: parent.width
         spacing: Style.space(6)
+      }
+    }
+  }
+
+  // One figure, now against the longer window, with the change named. The
+  // colour is the answer to "is this better", which is the only reason to
+  // print two numbers instead of one.
+  component CompareRow: Item {
+    id: compare
+    property string label: ""
+    property real now: 0
+    property real then: 0
+    property int decimals: 1
+    property string suffix: ""
+    property bool higherIsBetter: true
+    // Some figures have no better direction: a lower mean bought with lows is
+    // not an improvement, and colouring it green would say it was.
+    property bool neutral: false
+    property color nowColor: root.barForeground
+
+    width: parent ? parent.width : 0
+    implicitHeight: Math.max(compareLabel.implicitHeight, compareNow.implicitHeight)
+
+    Text {
+      id: compareLabel
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      color: Qt.darker(root.barForeground, 1.35)
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.caption
+      text: compare.label
+    }
+
+    Row {
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(6)
+
+      Text {
+        id: compareNow
+        anchors.verticalCenter: parent.verticalCenter
+        color: compare.nowColor
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.caption
+        text: compare.now.toFixed(compare.decimals) + compare.suffix
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        color: Qt.darker(root.barForeground, 1.7)
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.caption
+        text: "vs " + compare.then.toFixed(compare.decimals) + compare.suffix
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        color: compare.neutral
+          ? Qt.darker(root.barForeground, 1.35)
+          : root.betterColor(compare.now - compare.then, compare.higherIsBetter)
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.caption
+        text: root.signed(compare.now - compare.then, compare.decimals)
       }
     }
   }
@@ -1037,7 +1127,10 @@ Panel {
             themeColors: root.themeColors
           }
 
+          // Without the comparison there is nothing to read these against;
+          // with it they are the same three numbers doing more work.
           Text {
+            visible: root.baselineStats === null
             width: parent.width
             color: Qt.darker(root.barForeground, 1.2)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1047,6 +1140,59 @@ Panel {
                 + " · GMI " + root.stats.gmi.toFixed(1) + "%"
                 + " · CV " + (root.stats.cv === undefined ? "—" : root.stats.cv.toFixed(1) + "%")
               : ""
+          }
+
+          Text {
+            visible: root.baselineStats !== null
+            width: parent.width
+            color: Qt.darker(root.barForeground, 1.7)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            text: root.baselineStats ? "against your last " + root.daysWords(root.baselineStats.window_h) : ""
+          }
+
+          CompareRow {
+            visible: root.baselineStats !== null
+            label: "in range"
+            now: root.stats ? root.stats.tir.in_range : 0
+            then: root.baselineStats ? root.baselineStats.tir.in_range : 0
+            suffix: "%"
+            higherIsBetter: true
+            nowColor: root.themed("in_range", "#98971a")
+          }
+
+          CompareRow {
+            visible: root.baselineStats !== null
+            label: "below range"
+            now: root.stats ? root.stats.tir.very_low + root.stats.tir.low : 0
+            then: root.baselineStats ? root.baselineStats.tir.very_low + root.baselineStats.tir.low : 0
+            suffix: "%"
+            // The one figure a clinic reads first, and the only one where
+            // less is unambiguously better.
+            higherIsBetter: false
+            nowColor: root.themed("low", "#d79921")
+          }
+
+          CompareRow {
+            visible: root.baselineStats !== null
+            label: "mean"
+            now: root.stats ? root.stats.mean : 0
+            then: root.baselineStats ? root.baselineStats.mean : 0
+            // Neither direction is better on its own — a lower mean bought
+            // with lows is worse — so the change is stated, not judged.
+            neutral: true
+            nowColor: Qt.darker(root.barForeground, 1.1)
+          }
+
+          CompareRow {
+            visible: root.baselineStats !== null && root.stats !== null
+              && root.stats.cv !== undefined && root.baselineStats.cv !== undefined
+            label: "CV"
+            now: root.stats && root.stats.cv !== undefined ? root.stats.cv : 0
+            then: root.baselineStats && root.baselineStats.cv !== undefined ? root.baselineStats.cv : 0
+            suffix: "%"
+            higherIsBetter: false
+            nowColor: Qt.darker(root.barForeground, 1.1)
           }
         }
 
