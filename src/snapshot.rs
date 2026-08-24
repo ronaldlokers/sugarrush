@@ -84,6 +84,15 @@ pub struct Snapshot {
     pub treatments: Option<Vec<TreatmentDoc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stats: Option<Stats>,
+    /// The same figures over the whole history window, as something to read
+    /// the recent ones against.
+    ///
+    /// "76% in range" is a number with no scale. Clinical targets exist, but
+    /// the comparison that changes what someone does is against themselves a
+    /// fortnight ago, and only this document can make it — a consumer has one
+    /// window and no way to compute the other.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<Stats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub insights: Option<Vec<InsightDoc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -319,6 +328,9 @@ pub fn build(input: BuildInput) -> Snapshot {
         .cloned()
         .collect();
     let stats = stats_for(&stats_entries, units, &alerts, stats_window_h);
+    // Over everything fetched, not a fixed fortnight: the window is whatever
+    // `--days` asked for, and the figure is named by the span it covers.
+    let baseline = stats_for(&history, units, &alerts, 24 * 400);
 
     // Oldest first, to match `series`, and only the ones with an amount: a
     // note or a finger stick logged in the same collection would otherwise
@@ -379,6 +391,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         series: Some(series),
         treatments: Some(logged),
         stats,
+        baseline,
         insights: Some(insights),
         band,
         agp,
@@ -593,6 +606,7 @@ pub fn error_doc(now_ms: i64, theme: &Theme, message: &str) -> Snapshot {
         theme: ThemeDoc::of(theme),
         series: None,
         stats: None,
+        baseline: None,
         insights: None,
         band: None,
         sensor: None,
@@ -942,6 +956,40 @@ mod tests {
         // And never the token itself, whatever else the document grows.
         let text = serde_json::to_string(&yes).unwrap();
         assert!(!text.contains("token"), "the document mentions a token");
+    }
+
+    #[test]
+    fn the_baseline_covers_the_history_the_recent_window_is_a_slice_of() {
+        // Two days of history, the newest of which is also the stats window:
+        // the two figures must be computed over different sets, or the
+        // comparison is a number against itself.
+        let mut history = Vec::new();
+        // A steady 200 across the older day, a steady 100 across today.
+        for step in 0..24 {
+            history.push(entry(200.0, NOW - (30 + step) * 60 * MIN, "Flat"));
+        }
+        for step in 0..12 {
+            history.push(entry(100.0, NOW - step * 60 * MIN, "Flat"));
+        }
+        let snap = build(input(
+            vec![history[24].clone(), history[25].clone()],
+            history,
+        ));
+        let json = serde_json::to_value(&snap).unwrap();
+
+        let recent = json["stats"]["mean"].as_f64().unwrap();
+        let baseline = json["baseline"]["mean"].as_f64().unwrap();
+        assert!(
+            recent < baseline,
+            "today ({recent}) should read lower than the fortnight ({baseline})"
+        );
+        // And the baseline names the span it actually covers, not the recent
+        // window's, or the label would claim a day of history for a fortnight.
+        assert!(
+            json["baseline"]["window_h"].as_i64().unwrap()
+                > json["stats"]["window_h"].as_i64().unwrap(),
+            "the baseline covers no more ground than the recent window"
+        );
     }
 
     #[test]
