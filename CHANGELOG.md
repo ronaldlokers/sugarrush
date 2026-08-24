@@ -8,6 +8,22 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Changed
 
+- **The panel draws itself while it loads.** A cold open used to collapse the
+  whole panel to the line "waiting for the first reading" for as long as
+  Nightscout took, which looks like a failure rather than a wait. It now draws
+  the cards it is about to fill.
+
+- **The reading rides in the panel's header.** The wordmark was sized to half
+  the panel width, and the number you opened it for scrolled off the top — on
+  the Settings view it was not on screen at all. The mark is a third now, with
+  the reading and its arrow beside it, so it survives scrolling and view
+  switches.
+
+- **The panel's settings no longer claim a state they have not read.** Every
+  switch showed "on" until `sugarrush config` answered, so for a moment the
+  Status bar card asserted four settings were enabled when two of them were
+  not. Those cards are dimmed and inert until the file has actually been read.
+
 - **The Quickshell panel obeys your theme.** Its chart, profile, time-in-range
   bar, sensor countdown and alarm chip all carried a hard-coded copy of the
   default palette, so anyone on the colourblind preset — the one setting whose
@@ -40,6 +56,11 @@ All notable changes to sugarrush are documented here. The format is based on
   fainter than low and high so the target band reads first.
 
 ### Added
+
+- **The panel takes the keyboard.** `1` `2` `3` jump to a view, `←` `→` step
+  between them, `r` fetches, `d` opens the dashboard, `Esc` closes, and `?`
+  shows the list. It ships to people running Hyprland, where the mouse is a
+  last resort, and every view and settings row needed a pointer to reach.
 
 - **A fortnight of time in range, one bar per day.** The Profile view gains a
   strip of stacked daily bars, oldest on the left, under the typical-day chart.
