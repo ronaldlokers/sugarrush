@@ -224,6 +224,18 @@ A day whose bar is computed from too few readings is drawn faded. One thin
 morning after a sensor change is 100% in range on a technicality, and drawn
 solid it would read as the best day of the fortnight.
 
+## Thresholds as a band
+
+The Settings view draws the four alarm thresholds as one band with a handle at
+each, in the same colours the reading is drawn in — so it doubles as a legend
+for the rest of the panel. Drag a handle to move a threshold; they clamp
+against their neighbours and cannot cross, which makes the crossed
+configuration `sugarrush config` refuses unreachable rather than rejected.
+
+One config write happens when a handle is released, not while it moves. There
+are no stepper rows any more: a handle lands on a tenth of a mmol/L in about
+two pixels at panel width, so the card is now the shape it describes.
+
 ## Today against your own baseline
 
 Under the time-in-range bar, four figures are read against the whole history
