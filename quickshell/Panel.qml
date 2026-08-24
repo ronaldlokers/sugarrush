@@ -33,6 +33,28 @@ Panel {
   // The pill's own poll interval, reused: an open panel refreshing faster than
   // the pill behind it would make the two disagree in the other direction.
   readonly property int refreshSeconds: Math.max(15, setting("interval", 60))
+
+  // Two columns on a horizontal bar. The panel was one 380px column of cards
+  // in a scroll view, on a desktop, and it has grown from three cards to nine
+  // — the Glucose view scrolled past its own stats, the Profile view past its
+  // patterns. Scrolling in a popup that closes when you look away is a poor
+  // bargain.
+  //
+  // A vertical bar keeps the narrow column, where it is the right answer.
+  readonly property bool wide: setting("wideLayout", true)
+    && (bar ? bar.vertical !== true : true)
+  readonly property int panelWidth: wide ? 780 : 420
+
+  // The width a card takes when two share a row.
+  //
+  // A pixel of slack below the exact half: the Flow wraps when two items plus
+  // the spacing exceed the row by any fraction, and a card that wraps is a
+  // card sitting alone with half the panel empty beside it — which is worse
+  // than no pairing at all, because it looks like a mistake rather than a
+  // layout.
+  function halfOf(total) {
+    return wide ? Math.floor((total - Style.space(10)) / 2) - 1 : total
+  }
   readonly property string snapshotCommand: setting("snapshotCommand", "sugarrush snapshot")
   // The same binary, asked a different question. Derived so a widget pointed
   // at a build directory edits that build's config too.
@@ -942,7 +964,9 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keys
-    contentWidth: surface.fittedContentWidth(Style.space(420))
+    // `fitted…` clamps to what the screen actually allows, so a wide panel on
+    // a small display simply gets what there is.
+    contentWidth: surface.fittedContentWidth(Style.space(root.panelWidth))
     contentHeight: surface.fittedContentHeight(column.implicitHeight)
 
     PanelKeyCatcher {
@@ -988,7 +1012,10 @@ Panel {
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height
 
-        Column {
+        // A Flow rather than a Column: a card given half the width shares its
+        // row with the next one, and a card at full width takes its own. Two
+        // columns without a second layout to keep in step with the first.
+        Flow {
           id: column
           width: panelFlick.width
           spacing: Style.space(10)
@@ -1088,6 +1115,10 @@ Panel {
         }
 
         ButtonGroup {
+          // Its own row. The switcher is only as wide as its three chips, and
+          // in a Flow that left room for the next card to sit down beside it —
+          // which is what made the wide layout look wrong.
+          width: parent.width
           options: [{ value: "glucose", label: "Glucose" },
                     { value: "profile", label: "Profile" },
                     { value: "settings", label: "Settings" }]
@@ -1142,8 +1173,18 @@ Panel {
         // half an hour. A 9.6 rising to 10.4 is a different evening from a 9.6
         // settling, and that difference is the one the panel exists to show.
         Card {
+          id: nowCard
           label: "Now"
           visible: root.reading !== null && root.loadError === "" && root.view === "glucose"
+          // Shares its row with the last 24 hours: what it is now, and what
+          // the day around it looked like.
+          width: root.halfOf(column.width)
+          // Both cards take the taller one's height. Two boxes side by side
+          // with different bottoms read as a mistake, and the shorter one has
+          // nothing to lose by having room to spare.
+          height: root.wide && visible && statsCard.visible
+            ? Math.max(implicitHeight, statsCard.implicitHeight)
+            : implicitHeight
 
           Item {
             width: parent.width
@@ -1276,7 +1317,13 @@ Panel {
           // The reason someone opens this panel at 3am is to silence the thing
           // that woke them. Both commands already ship; neither was reachable
           // from the panel the alarm made them open.
-          Row {
+          //
+          // A Flow, not a Row: at half the panel width these three buttons are
+          // wider than the card, and a Row does not wrap — it just runs out
+          // over the edge, which is what made the two-column layout look
+          // broken rather than tight.
+          Flow {
+            width: parent.width
             spacing: Style.space(8)
 
             Button {
@@ -1361,8 +1408,9 @@ Panel {
             onChanged: function (next) { root.logInsulin = Math.max(0, Math.min(50, next)) }
           }
 
-          Row {
+          Flow {
             visible: root.logging
+            width: parent.width
             spacing: Style.space(10)
 
             Button {
@@ -1378,8 +1426,6 @@ Panel {
             }
 
             Text {
-              anchors.verticalCenter: parent.verticalCenter
-              width: Math.max(0, parent.parent.width - Style.space(150))
               wrapMode: Text.WordWrap
               color: Qt.darker(root.barForeground, 1.35)
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1408,95 +1454,16 @@ Panel {
         }
 
         Card {
-          label: "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
-            + (root.treatmentTotals !== "" ? " · " + root.treatmentTotals : "")
-          visible: root.loadError === "" && root.view === "glucose"
-
-          Chart {
-            width: parent.width
-            height: Style.space(130)
-            doc: root.doc
-            foreground: root.barForeground
-          }
-        }
-
-        // Nobody opens a CGM panel in the morning to browse six hours of
-        // chart. They open it to find out whether the night was fine.
-        Card {
-          label: {
-            if (!root.night) return "Last night"
-            var from = Qt.formatTime(new Date(root.night.from_ms), "HH:mm")
-            var to = Qt.formatTime(new Date(root.night.to_ms), "HH:mm")
-            return (root.night.in_progress ? "Tonight so far · " : "Last night · ")
-              + from + "–" + to
-          }
-          visible: root.night !== null && root.loadError === "" && root.view === "glucose"
-
-          NightTrace {
-            width: parent.width
-            height: Style.space(54)
-            series: root.night ? root.night.series : []
-            range: root.doc && root.doc.range ? root.doc.range : null
-            themeColors: root.themeColors
-            foreground: root.barForeground
-          }
-
-          Item {
-            width: parent.width
-            implicitHeight: nightRange.implicitHeight
-
-            Text {
-              id: nightRange
-              anchors.left: parent.left
-              color: Qt.darker(root.barForeground, 1.2)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              text: root.night
-                ? root.night.tir.in_range.toFixed(0) + "% in range"
-                  + (root.night.lowest !== undefined
-                     ? " · low " + root.night.lowest.toFixed(1) : "")
-                : ""
-            }
-
-            Text {
-              anchors.right: parent.right
-              color: root.nightAlarms.length > 0
-                ? root.themed("urgent", "#cc241d")
-                : Qt.darker(root.barForeground, 1.5)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              // "no alarms" is the answer people are hoping for, and it
-              // should be printed rather than left as an absence.
-              text: root.nightAlarms.length === 0
-                ? "no alarms"
-                : root.nightAlarms.length + (root.nightAlarms.length === 1 ? " alarm" : " alarms")
-            }
-          }
-
-          Repeater {
-            model: root.nightAlarms.slice(0, 3)
-
-            Text {
-              required property var modelData
-              width: column.width - Style.space(24)
-              color: Qt.darker(root.barForeground, 1.35)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              text: root.alarmWhen(modelData.at_ms) + " · " + modelData.state.toLowerCase()
-                + (modelData.value !== undefined ? " " + modelData.value.toFixed(1) : "")
-                + " · " + root.alarmLength(modelData)
-                + (modelData.failed && modelData.failed.length > 0
-                   ? " · " + modelData.failed.join(" and ") + " never arrived" : "")
-            }
-          }
-        }
-
-        Card {
           label: root.stats
             ? "Last " + root.stats.window_h + (root.stats.window_h === 1 ? " hour" : " hours")
               + (root.statsThin ? " · partial" : "")
             : ""
+          id: statsCard
           visible: root.stats !== null && root.loadError === "" && root.view === "glucose"
+          width: root.halfOf(column.width)
+          height: root.wide && visible && nowCard.visible
+            ? Math.max(implicitHeight, nowCard.implicitHeight)
+            : implicitHeight
 
           TirBar {
             width: parent.width
@@ -1586,6 +1553,91 @@ Panel {
             suffix: "%"
             higherIsBetter: false
             nowColor: Qt.darker(root.barForeground, 1.1)
+          }
+        }
+
+        Card {
+          label: "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
+            + (root.treatmentTotals !== "" ? " · " + root.treatmentTotals : "")
+          visible: root.loadError === "" && root.view === "glucose"
+
+          Chart {
+            width: parent.width
+            height: Style.space(130)
+            doc: root.doc
+            foreground: root.barForeground
+          }
+        }
+
+        // Nobody opens a CGM panel in the morning to browse six hours of
+        // chart. They open it to find out whether the night was fine.
+        Card {
+          label: {
+            if (!root.night) return "Last night"
+            var from = Qt.formatTime(new Date(root.night.from_ms), "HH:mm")
+            var to = Qt.formatTime(new Date(root.night.to_ms), "HH:mm")
+            return (root.night.in_progress ? "Tonight so far · " : "Last night · ")
+              + from + "–" + to
+          }
+          id: nightCard
+          visible: root.night !== null && root.loadError === "" && root.view === "glucose"
+
+          NightTrace {
+            width: parent.width
+            height: Style.space(54)
+            series: root.night ? root.night.series : []
+            range: root.doc && root.doc.range ? root.doc.range : null
+            themeColors: root.themeColors
+            foreground: root.barForeground
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: nightRange.implicitHeight
+
+            Text {
+              id: nightRange
+              anchors.left: parent.left
+              color: Qt.darker(root.barForeground, 1.2)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.night
+                ? root.night.tir.in_range.toFixed(0) + "% in range"
+                  + (root.night.lowest !== undefined
+                     ? " · low " + root.night.lowest.toFixed(1) : "")
+                : ""
+            }
+
+            Text {
+              anchors.right: parent.right
+              color: root.nightAlarms.length > 0
+                ? root.themed("urgent", "#cc241d")
+                : Qt.darker(root.barForeground, 1.5)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              // "no alarms" is the answer people are hoping for, and it
+              // should be printed rather than left as an absence.
+              text: root.nightAlarms.length === 0
+                ? "no alarms"
+                : root.nightAlarms.length + (root.nightAlarms.length === 1 ? " alarm" : " alarms")
+            }
+          }
+
+          Repeater {
+            model: root.nightAlarms.slice(0, 3)
+
+            Text {
+              required property var modelData
+              width: column.width - Style.space(24)
+              color: Qt.darker(root.barForeground, 1.35)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.alarmWhen(modelData.at_ms) + " · " + modelData.state.toLowerCase()
+                + (modelData.value !== undefined ? " " + modelData.value.toFixed(1) : "")
+                + " · " + root.alarmLength(modelData)
+                + (modelData.failed && modelData.failed.length > 0
+                   ? " · " + modelData.failed.join(" and ") + " never arrived" : "")
+            }
           }
         }
 
@@ -1708,7 +1760,14 @@ Panel {
           label: root.baselineStats
             ? "Clinical summary · " + root.daysWords(root.baselineStats.window_h)
             : "Clinical summary"
+          id: summaryCard
           visible: root.baselineStats !== null && root.loadError === "" && root.view === "profile"
+          // Beside the alarms: the figures a clinician reads, and what the
+          // alarm did over the same window.
+          width: root.halfOf(column.width)
+          height: root.wide && visible && alarmsCard.visible
+            ? Math.max(implicitHeight, alarmsCard.implicitHeight)
+            : implicitHeight
 
           SummaryRow {
             label: "mean glucose"
@@ -1756,7 +1815,12 @@ Panel {
         Card {
           label: "Alarms · " + (root.baselineStats
             ? root.daysWords(root.baselineStats.window_h) : "recent")
+          id: alarmsCard
           visible: root.loadError === "" && root.view === "profile"
+          width: root.halfOf(column.width)
+          height: root.wide && visible && summaryCard.visible
+            ? Math.max(implicitHeight, summaryCard.implicitHeight)
+            : implicitHeight
 
           Repeater {
             model: root.alertList.slice(0, 8)
