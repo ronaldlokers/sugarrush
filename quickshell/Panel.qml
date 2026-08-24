@@ -33,6 +33,22 @@ Panel {
   // The pill's own poll interval, reused: an open panel refreshing faster than
   // the pill behind it would make the two disagree in the other direction.
   readonly property int refreshSeconds: Math.max(15, setting("interval", 60))
+
+  // Two columns on a horizontal bar. The panel was one 380px column of cards
+  // in a scroll view, on a desktop, and it has grown from three cards to nine
+  // — the Glucose view scrolled past its own stats, the Profile view past its
+  // patterns. Scrolling in a popup that closes when you look away is a poor
+  // bargain.
+  //
+  // A vertical bar keeps the narrow column, where it is the right answer.
+  readonly property bool wide: setting("wideLayout", true)
+    && (bar ? bar.vertical !== true : true)
+  readonly property int panelWidth: wide ? 780 : 420
+
+  // The width a card takes when two share a row.
+  function halfOf(total) {
+    return wide ? Math.floor((total - Style.space(10)) / 2) : total
+  }
   readonly property string snapshotCommand: setting("snapshotCommand", "sugarrush snapshot")
   // The same binary, asked a different question. Derived so a widget pointed
   // at a build directory edits that build's config too.
@@ -942,7 +958,9 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keys
-    contentWidth: surface.fittedContentWidth(Style.space(420))
+    // `fitted…` clamps to what the screen actually allows, so a wide panel on
+    // a small display simply gets what there is.
+    contentWidth: surface.fittedContentWidth(Style.space(root.panelWidth))
     contentHeight: surface.fittedContentHeight(column.implicitHeight)
 
     PanelKeyCatcher {
@@ -988,7 +1006,10 @@ Panel {
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height
 
-        Column {
+        // A Flow rather than a Column: a card given half the width shares its
+        // row with the next one, and a card at full width takes its own. Two
+        // columns without a second layout to keep in step with the first.
+        Flow {
           id: column
           width: panelFlick.width
           spacing: Style.space(10)
@@ -1144,6 +1165,9 @@ Panel {
         Card {
           label: "Now"
           visible: root.reading !== null && root.loadError === "" && root.view === "glucose"
+          // Shares its row with last night: the reading and how the night went
+          // are the two things a morning glance wants, side by side.
+          width: root.halfOf(column.width)
 
           Item {
             width: parent.width
@@ -1407,19 +1431,6 @@ Panel {
           }
         }
 
-        Card {
-          label: "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
-            + (root.treatmentTotals !== "" ? " · " + root.treatmentTotals : "")
-          visible: root.loadError === "" && root.view === "glucose"
-
-          Chart {
-            width: parent.width
-            height: Style.space(130)
-            doc: root.doc
-            foreground: root.barForeground
-          }
-        }
-
         // Nobody opens a CGM panel in the morning to browse six hours of
         // chart. They open it to find out whether the night was fine.
         Card {
@@ -1431,6 +1442,7 @@ Panel {
               + from + "–" + to
           }
           visible: root.night !== null && root.loadError === "" && root.view === "glucose"
+          width: root.halfOf(column.width)
 
           NightTrace {
             width: parent.width
@@ -1488,6 +1500,19 @@ Panel {
                 + (modelData.failed && modelData.failed.length > 0
                    ? " · " + modelData.failed.join(" and ") + " never arrived" : "")
             }
+          }
+        }
+
+        Card {
+          label: "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
+            + (root.treatmentTotals !== "" ? " · " + root.treatmentTotals : "")
+          visible: root.loadError === "" && root.view === "glucose"
+
+          Chart {
+            width: parent.width
+            height: Style.space(130)
+            doc: root.doc
+            foreground: root.barForeground
           }
         }
 
@@ -1709,6 +1734,9 @@ Panel {
             ? "Clinical summary · " + root.daysWords(root.baselineStats.window_h)
             : "Clinical summary"
           visible: root.baselineStats !== null && root.loadError === "" && root.view === "profile"
+          // Beside the alarms: the figures a clinician reads, and what the
+          // alarm did over the same window.
+          width: root.halfOf(column.width)
 
           SummaryRow {
             label: "mean glucose"
@@ -1757,6 +1785,7 @@ Panel {
           label: "Alarms · " + (root.baselineStats
             ? root.daysWords(root.baselineStats.window_h) : "recent")
           visible: root.loadError === "" && root.view === "profile"
+          width: root.halfOf(column.width)
 
           Repeater {
             model: root.alertList.slice(0, 8)

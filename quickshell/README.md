@@ -122,6 +122,7 @@ Set with `omarchy bar set <widget> <key> <value>`:
 | `command` | `sugarrush waybar` | the command the pill reads a reading from |
 | `onClick` | `omarchy-launch-floating-terminal-with-presentation sugarrush` | what the panel's "Open dashboard" runs, and the left-click fallback when the panel cannot load |
 | `onRightClick` | the same, plus `--screen settings` | right click |
+| `wideLayout` | `true` | two columns of cards on a horizontal bar; off gives the narrow single column |
 | `panelHours` | `6` | how much of the overview the chart shows at once |
 | `overviewHours` | `24` | how much history is drawn at full resolution (6-72) |
 | `scrollbackHours` | `72` | how far the chart pans, and the span of the strip (6-336) |
@@ -245,6 +246,21 @@ with the fetch.
 
 It used to read once on open and cache for five minutes, so a panel left open
 went quietly out of date while the pill behind it kept moving.
+
+## Two columns
+
+On a horizontal bar the panel is wide enough for two columns of cards: the
+reading beside last night, the clinical summary beside the alarms. Everything
+that wants the room — the chart, the day strip, the profile — keeps a full row
+to itself.
+
+It is a `Flow`, not a second layout: a card given half the width shares its row,
+and a card at full width takes its own. There is no wide-mode tree to keep in
+step with the narrow one.
+
+A vertical bar keeps the single column, where it is the right answer, and
+`omarchy bar set sugarrush.glucose wideLayout false` returns the narrow panel
+on any bar.
 
 ## Last night
 
