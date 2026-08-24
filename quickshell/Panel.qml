@@ -573,10 +573,10 @@ Panel {
   // dimmest, so a view switch reads as one movement rather than two.
   onViewChanged: {
     if (view === "settings") loadConfig()
-    if (animate) {
-      column.opacity = 0.35
-      fadeBack.restart()
-    }
+    // The cards for the new view are already there when this runs, so they
+    // fade in rather than the old ones fading out — which is the half of a
+    // cross-fade that can actually be seen.
+    if (animate) viewFade.restart()
   }
   onConfigCommandChanged: if (view === "settings") loadConfig()
 
@@ -668,12 +668,6 @@ Panel {
         root.loadHealth()
       }
     }
-  }
-
-  Timer {
-    id: fadeBack
-    interval: 60
-    onTriggered: column.opacity = 1
   }
 
   Timer {
@@ -1051,16 +1045,25 @@ Panel {
           spacing: Style.space(10)
 
           // Views used to pop: one set of cards vanished and another appeared
-          // in the same frame, which reads as a redraw rather than a move. A
-          // short fade says the panel is still the same panel.
+          // in the same frame, which reads as a redraw rather than a move.
           //
-          // Short on purpose, and skippable: `animations false` turns it off
-          // for anyone who does not want movement on a health panel, which is
-          // the nearest a QML widget gets to honouring reduced motion.
+          // An explicit animation, not a Behavior nudged by a timer. The first
+          // attempt dipped opacity to 0.35 and set it back 60ms later, so the
+          // fade-out was still running when the fade-back began and the whole
+          // thing amounted to a flicker too small to see.
+          //
+          // Skippable: `animations false` leaves every switch instant, which
+          // is the nearest a QML widget gets to honouring reduced motion.
           opacity: 1
-          Behavior on opacity {
-            enabled: root.animate
-            NumberAnimation { duration: 110; easing.type: Easing.OutQuad }
+
+          NumberAnimation {
+            id: viewFade
+            target: column
+            property: "opacity"
+            from: 0
+            to: 1
+            duration: 170
+            easing.type: Easing.OutQuad
           }
 
         // Wordmark left, controls right, on one line.
