@@ -655,6 +655,32 @@ fn unknown_key(key: &str) -> String {
     )
 }
 
+impl AlertsConfig {
+    /// Re-express the glucose thresholds from one display unit in another.
+    ///
+    /// Only the four bounds: minutes are minutes, and a snooze is a snooze.
+    fn convert(&mut self, from: Units, to: Units) {
+        if from == to {
+            return;
+        }
+        let redo = |value: &mut Option<f64>| {
+            if let Some(shown) = value {
+                let mgdl = from.to_mgdl(*shown);
+                *shown = match to {
+                    // The precision each unit is written in: a tenth of a
+                    // mmol/L, a whole mg/dL.
+                    Units::Mmol => (to.from_mgdl(mgdl) * 10.0).round() / 10.0,
+                    Units::Mgdl => to.from_mgdl(mgdl).round(),
+                };
+            }
+        };
+        redo(&mut self.urgent_low);
+        redo(&mut self.low);
+        redo(&mut self.high);
+        redo(&mut self.urgent_high);
+    }
+}
+
 impl Config {
     /// The keys `sugarrush config` will read and write.
     ///
@@ -743,11 +769,25 @@ impl Config {
 
         match key {
             "units" => {
-                self.units = match value {
+                let next = match value {
                     "mmol" | "mmol/L" => Units::Mmol,
                     "mgdl" | "mg/dL" => Units::Mgdl,
                     _ => return Err(format!("units is mmol or mgdl, got {value:?}")),
+                };
+                // Thresholds are stored in the display unit, so changing the
+                // unit without converting them reinterprets every number: 3.9
+                // mmol/L becomes 3.9 mg/dL, which is not a low, it is a
+                // reading no living person has. The check on the way out
+                // caught that and refused the write, which made this key
+                // unusable rather than dangerous — the settings screen has
+                // always converted, because it holds mg/dL internally.
+                self.alerts.convert(self.units, next);
+                for site in &mut self.sites {
+                    if let Some(alerts) = site.alerts.as_mut() {
+                        alerts.convert(self.units, next);
+                    }
                 }
+                self.units = next;
             }
             "refresh_secs" => self.refresh_secs = whole(key)?.clamp(5, 600) as u64,
             "agp_days" => self.agp_days = whole(key)?.clamp(1, 90) as u32,
@@ -1304,6 +1344,66 @@ desktop = false
 
         let err = cfg.set_key("units", "mmol/l/L").unwrap_err();
         assert!(err.contains("mmol or mgdl"), "got {err}");
+    }
+
+    #[test]
+    fn changing_units_carries_the_thresholds_with_it() {
+        // Thresholds live in the display unit, so switching the unit without
+        // converting reinterprets every one of them: 3.9 mmol/L would become
+        // 3.9 mg/dL, which is not a low but a reading no living person has.
+        // The guard on the way out caught that and refused the write, which
+        // made this key unusable.
+        let mut cfg = Config::demo();
+        cfg.units = Units::Mmol;
+        cfg.alerts.urgent_low = Some(3.5);
+        cfg.alerts.low = Some(4.8);
+        cfg.alerts.high = Some(10.0);
+        cfg.alerts.urgent_high = Some(13.9);
+
+        cfg.set_key("units", "mgdl").unwrap();
+        assert_eq!(cfg.alerts.urgent_low, Some(63.0));
+        assert_eq!(cfg.alerts.low, Some(86.0));
+        assert_eq!(cfg.alerts.high, Some(180.0));
+        assert_eq!(cfg.alerts.urgent_high, Some(250.0));
+
+        // And the change the app makes on load is now a no-op rather than a
+        // repair: the numbers are already in range for the unit they claim.
+        let (_, warnings) = cfg.alerts.resolve_checked(cfg.units);
+        assert!(
+            warnings.is_empty(),
+            "converted thresholds were repaired: {warnings:?}"
+        );
+
+        // Back again, landing on the numbers it started with.
+        cfg.set_key("units", "mmol").unwrap();
+        assert_eq!(cfg.alerts.urgent_low, Some(3.5));
+        assert_eq!(cfg.alerts.high, Some(10.0));
+    }
+
+    #[test]
+    fn a_site_with_its_own_thresholds_is_converted_too() {
+        // A follower's overrides are in the same display unit, and leaving
+        // them behind would quietly give one site nonsense bounds.
+        let mut cfg = Config::demo();
+        cfg.units = Units::Mmol;
+        cfg.sites = vec![Site {
+            id: String::new(),
+            name: "Sam".into(),
+            url: "https://ns.example.com".into(),
+            token: "t".into(),
+            write_token: None,
+            timezone: None,
+            alerts: Some(AlertsConfig {
+                low: Some(4.0),
+                high: Some(9.0),
+                ..AlertsConfig::default()
+            }),
+        }];
+
+        cfg.set_key("units", "mgdl").unwrap();
+        let site = cfg.sites[0].alerts.as_ref().unwrap();
+        assert_eq!(site.low, Some(72.0));
+        assert_eq!(site.high, Some(162.0));
     }
 
     #[test]

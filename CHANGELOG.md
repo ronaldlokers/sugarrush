@@ -8,6 +8,10 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Changed
 
+- **Views cross-fade instead of popping.** One set of cards used to vanish and
+  another appear in the same frame, which reads as a redraw rather than a move.
+  `animations false` turns it off.
+
 - **The panel uses the width it has.** It was one 380px column in a scroll
   view, on a desktop, and it has grown from three cards to nine — the Glucose
   view scrolled past its own statistics and the Profile view past its patterns.
@@ -76,6 +80,15 @@ All notable changes to sugarrush are documented here. The format is based on
   fainter than low and high so the target band reads first.
 
 ### Added
+
+- **The Status bar card shows the pill it is describing.** Four switches that
+  changed something at the other end of the screen now draw it: the reading,
+  the unit, the arrow, the delta and the sparkline, in the pill's own colours,
+  updating as you flip them. You no longer have to look away to see what you
+  did.
+
+- **Units are switchable from the panel.** A mmol/L · mg/dL choice above the
+  threshold band, which converts the thresholds with it.
 
 - **Last night, as one card.** Nobody opens a CGM panel in the morning to
   browse six hours of chart — they open it to find out whether the night was
@@ -334,6 +347,13 @@ happening.
   stylesheet.
 
 ### Fixed
+
+- **`sugarrush config units mgdl` works.** It used to be refused outright —
+  thresholds are stored in the display unit, so changing the unit alone
+  reinterpreted every one of them (3.9 mmol/L becoming 3.9 mg/dL), and the
+  check on the way out correctly refused to write it. The thresholds now
+  convert with the unit, for the site and for any per-site overrides, exactly
+  as the settings screen has always done on save.
 
 - **`--help` fits a terminal again.** The new command signatures outgrew the
   fixed column, so every row past it ran to 138 characters and the description
