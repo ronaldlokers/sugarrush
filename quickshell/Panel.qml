@@ -30,6 +30,9 @@ Panel {
   readonly property int scrollbackHours: Math.max(overviewHours, setting("scrollbackHours", 72))
   readonly property int insightDays: setting("insightDays", 14)
   readonly property int cacheMinutes: setting("panelCacheMinutes", 5)
+  // The pill's own poll interval, reused: an open panel refreshing faster than
+  // the pill behind it would make the two disagree in the other direction.
+  readonly property int refreshSeconds: Math.max(15, setting("interval", 60))
   readonly property string snapshotCommand: setting("snapshotCommand", "sugarrush snapshot")
   // The same binary, asked a different question. Derived so a widget pointed
   // at a build directory edits that build's config too.
@@ -74,6 +77,9 @@ Panel {
   // switches that were actually off proved it.
   readonly property bool configLoaded: config && Object.keys(config).length > 0
   property double fetchedAt: 0
+  // Seconds until the next automatic fetch. Driven by the ticker below, and
+  // only while the panel is on screen.
+  property int nextIn: 0
 
   readonly property var reading: doc && doc.now ? doc.now : null
 
@@ -124,6 +130,22 @@ Panel {
     var total = 0
     for (var i = 0; i < list.length; i++) total += list[i].tir ? list[i].tir.in_range : 0
     return total / list.length
+  }
+
+  readonly property string units: doc && doc.units ? doc.units : ""
+
+  // A threshold as the summary prints it, in the reader's own units.
+  function bound(role) {
+    var range = doc && doc.range ? doc.range : null
+    if (!range || range[role] === undefined) return "—"
+    return range[role].toFixed(doc && doc.units === "mg/dL" ? 0 : 1)
+  }
+
+  // A band's share of the baseline window, one decimal, as a clinic reads it.
+  function tirOf(band) {
+    if (!baselineStats || !baselineStats.tir) return "—"
+    var share = baselineStats.tir[band]
+    return share === undefined ? "—" : share.toFixed(1) + "%"
   }
 
   // "11 Aug", from the document's own `YYYY-MM-DD`.
@@ -399,7 +421,8 @@ Panel {
     Qt.callLater(function () { snapProc.running = true })
   }
 
-  onOpenedChanged: if (opened) { refresh(false); loadHealth(); copyState = ""; actionState = ""
+  onOpenedChanged: if (opened) { refresh(false); loadHealth(); nextIn = refreshSeconds
+                                     copyState = ""; actionState = ""
                                      logging = false; logCarbs = 0; logInsulin = 0
                                      showKeys = false }
 
@@ -523,6 +546,28 @@ Panel {
         root.loadHealth()
         if (root.hostWidget) root.hostWidget.refresh()
         actionClear.restart()
+      }
+    }
+  }
+
+  // The document was fetched on open, cached for five minutes, and never
+  // refreshed while someone sat there watching it. A low coming up would
+  // leave the panel quietly untrue while the pill behind it kept updating —
+  // the two disagreeing, with the bigger surface being the wrong one.
+  //
+  // One tick a second, only while open, so the countdown is honest rather
+  // than a spinner that says something is happening without saying when.
+  Timer {
+    id: liveTick
+    interval: 1000
+    repeat: true
+    running: root.opened
+    onTriggered: {
+      root.nextIn = root.nextIn - 1
+      if (root.nextIn <= 0) {
+        root.nextIn = root.refreshSeconds
+        root.refresh(true)
+        root.loadHealth()
       }
     }
   }
@@ -684,6 +729,42 @@ Panel {
         font.pixelSize: Style.font.caption
         text: root.signed(compare.now - compare.then, compare.decimals)
       }
+    }
+  }
+
+  // One line of the summary: what it is on the left, what it reads on the
+  // right. Tinted only for the five bands, where the colour is the same one
+  // the reading is drawn in everywhere else.
+  component SummaryRow: Item {
+    id: summaryRow
+    property string label: ""
+    property string value: ""
+    property color tint: root.barForeground
+
+    width: parent ? parent.width : 0
+    implicitHeight: Math.max(summaryLabel.implicitHeight, summaryValue.implicitHeight)
+
+    Text {
+      id: summaryLabel
+      anchors.left: parent.left
+      anchors.right: summaryValue.left
+      anchors.rightMargin: Style.space(8)
+      anchors.verticalCenter: parent.verticalCenter
+      elide: Text.ElideRight
+      color: Qt.darker(root.barForeground, 1.35)
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.caption
+      text: summaryRow.label
+    }
+
+    Text {
+      id: summaryValue
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      color: summaryRow.tint
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.caption
+      text: summaryRow.value
     }
   }
 
@@ -919,12 +1000,24 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(4)
 
+            // What a spinner should have said all along: not that something
+            // is happening, but when.
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              rightPadding: Style.space(4)
+              color: Qt.darker(root.barForeground, 1.8)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              visible: root.nextIn > 0 && root.loadError === ""
+              text: root.nextIn + "s"
+            }
+
             PanelActionButton {
               iconText: ""
               tooltipText: "Fetch now"
               foreground: root.barForeground
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-              onClicked: root.refresh(true)
+              onClicked: { root.nextIn = root.refreshSeconds; root.refresh(true) }
             }
 
             PanelActionButton {
@@ -1473,6 +1566,57 @@ Panel {
             font.pixelSize: Style.font.caption
             text: "average " + root.dayAverage.toFixed(0) + "% in range"
               + " · faded days have too few readings to trust"
+          }
+        }
+
+        // The text `sugarrush export` writes, on screen before it goes on the
+        // clipboard. You should not be sending a clinician a block of text you
+        // have never read, and the five bands with their boundaries spelled
+        // out is the form they read it in.
+        Card {
+          label: root.baselineStats
+            ? "Clinical summary · " + root.daysWords(root.baselineStats.window_h)
+            : "Clinical summary"
+          visible: root.baselineStats !== null && root.loadError === "" && root.view === "profile"
+
+          SummaryRow {
+            label: "mean glucose"
+            value: root.baselineStats ? root.baselineStats.mean.toFixed(1) + " " + root.units : "—"
+          }
+          SummaryRow {
+            label: "GMI"
+            value: root.baselineStats ? root.baselineStats.gmi.toFixed(1) + "%" : "—"
+          }
+          SummaryRow {
+            label: "CV"
+            value: root.baselineStats && root.baselineStats.cv !== undefined
+              ? root.baselineStats.cv.toFixed(1) + "%" : "—"
+          }
+
+          SummaryRow {
+            label: "very low · below " + root.bound("urgent_low")
+            value: root.tirOf("very_low")
+            tint: root.themed("urgent", "#cc241d")
+          }
+          SummaryRow {
+            label: "low · " + root.bound("urgent_low") + "–" + root.bound("low")
+            value: root.tirOf("low")
+            tint: root.themed("low", "#d79921")
+          }
+          SummaryRow {
+            label: "in range · " + root.bound("low") + "–" + root.bound("high")
+            value: root.tirOf("in_range")
+            tint: root.themed("in_range", "#98971a")
+          }
+          SummaryRow {
+            label: "high · " + root.bound("high") + "–" + root.bound("urgent_high")
+            value: root.tirOf("high")
+            tint: root.themed("high", "#d79921")
+          }
+          SummaryRow {
+            label: "very high · above " + root.bound("urgent_high")
+            value: root.tirOf("very_high")
+            tint: root.themed("urgent", "#cc241d")
           }
         }
 
