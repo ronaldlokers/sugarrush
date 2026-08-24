@@ -118,6 +118,22 @@ Panel {
   // suffix that says what they are.
   readonly property var baselineStats: doc && doc.baseline ? doc.baseline : null
   readonly property var dayList: doc && doc.days ? doc.days : []
+  readonly property var alertList: doc && doc.alerts ? doc.alerts : []
+
+  // "04:55", or "Sat 21:10" once it is not today — an alarm three days ago
+  // needs a day name more than it needs a date.
+  function alarmWhen(ms) {
+    var at = new Date(ms)
+    var today = new Date(doc ? doc.generated_at : Date.now())
+    var sameDay = at.toDateString() === today.toDateString()
+    var clock = Qt.formatTime(at, "HH:mm")
+    return sameDay ? clock : Qt.formatDateTime(at, "ddd") + " " + clock
+  }
+
+  function alarmLength(item) {
+    if (item.minutes === undefined) return "still going"
+    return item.minutes + "m"
+  }
 
   // Nothing yet, and nothing wrong: the first fetch of a cold open.
   readonly property bool loading: doc === null && loadError === ""
@@ -1651,6 +1667,77 @@ Panel {
             label: "very high · above " + root.bound("urgent_high")
             value: root.tirOf("very_high")
             tint: root.themed("urgent", "#cc241d")
+          }
+        }
+
+        // The alarm's own record, which `alertlog.rs` has been keeping since it
+        // was written and nothing has ever displayed.
+        Card {
+          label: "Alarms · " + (root.baselineStats
+            ? root.daysWords(root.baselineStats.window_h) : "recent")
+          visible: root.loadError === "" && root.view === "profile"
+
+          Repeater {
+            model: root.alertList.slice(0, 8)
+
+            Item {
+              required property var modelData
+              width: column.width - Style.space(24)
+              implicitHeight: alarmState.implicitHeight
+
+              Text {
+                id: alarmState
+                anchors.left: parent.left
+                color: root.classColor(
+                  parent.modelData.state.indexOf("URGENT") === 0
+                    ? (parent.modelData.state.indexOf("LOW") > 0 ? "urgent-low" : "urgent-high")
+                    : (parent.modelData.state.indexOf("LOW") >= 0 ? "low" : "high"))
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                text: parent.modelData.state.toLowerCase()
+                  + (parent.modelData.value !== undefined
+                     ? " " + parent.modelData.value.toFixed(1) : "")
+              }
+
+              Text {
+                anchors.right: parent.right
+                color: Qt.darker(root.barForeground, 1.35)
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                text: root.alarmWhen(parent.modelData.at_ms)
+                  + " · " + root.alarmLength(parent.modelData)
+              }
+            }
+          }
+
+          // The line that matters most in the whole log: an alarm was raised
+          // and never arrived.
+          Repeater {
+            model: root.alertList.filter(function (a) { return a.failed && a.failed.length > 0 })
+                                 .slice(0, 3)
+
+            Text {
+              required property var modelData
+              width: column.width - Style.space(24)
+              wrapMode: Text.WordWrap
+              color: root.themed("urgent", "#cc241d")
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.alarmWhen(modelData.at_ms) + " · "
+                + modelData.failed.join(" and ") + " never arrived"
+            }
+          }
+
+          Text {
+            visible: root.alertList.length === 0
+            width: parent.width
+            wrapMode: Text.WordWrap
+            color: Qt.darker(root.barForeground, 1.2)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            // An empty log is a good fortnight, and should read as one rather
+            // than as a card that failed to load.
+            text: "No alarms in this window."
           }
         }
 

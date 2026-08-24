@@ -37,6 +37,9 @@ pub struct BuildInput {
     pub recent: Vec<Entry>,
     /// Newest first — the last `--days`. Empty when history was not asked for.
     pub history: Vec<Entry>,
+    /// Alarm episodes read from the local alert log, oldest first. Empty when
+    /// nothing has fired, which is the ordinary case for a good fortnight.
+    pub alert_records: Vec<crate::alertlog::Record>,
     /// Carbs and insulin logged inside the `recent` window. Empty when the
     /// site logs none, or when the request for them failed — a document
     /// without them is still a document.
@@ -100,6 +103,9 @@ pub struct Snapshot {
     pub days: Option<Vec<DayDoc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub insights: Option<Vec<InsightDoc>>,
+    /// Alarm episodes over the history window, newest first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alerts: Option<Vec<AlertDoc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub band: Option<BandDoc>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -217,6 +223,30 @@ pub struct DayDoc {
     pub tir: TirDoc,
 }
 
+/// One alarm episode, and what the delivery attempts around it did.
+///
+/// `alertlog.rs` has recorded every episode and every delivery outcome since
+/// it was written, and nothing in any UI reads it. A failed push is the most
+/// important line in that file and the least visible: it means an alarm was
+/// raised and never arrived.
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertDoc {
+    pub at_ms: i64,
+    /// The alert label, e.g. `"URGENT LOW"`.
+    pub state: String,
+    /// How long it lasted. Absent when it was still open at the end of the
+    /// window — not the same as an episode that lasted no time at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minutes: Option<i64>,
+    /// The reading when it began, in display units.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    /// Delivery channels that failed while it was open, e.g. `"push"`. Never
+    /// a destination or a token — the log does not hold those either.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub failed: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Stats {
     pub window_h: i64,
@@ -316,6 +346,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         timezone,
         recent,
         history,
+        alert_records,
         treatments,
         stats_window_h,
         sensor_start_ms,
@@ -427,6 +458,7 @@ pub fn build(input: BuildInput) -> Snapshot {
         baseline,
         days: days_for(&history, timezone, &alerts),
         insights: Some(insights),
+        alerts: Some(alerts_for(&alert_records, units, now_ms)),
         band,
         agp,
         sensor,
@@ -598,6 +630,38 @@ fn bucket_at(
 /// `--days 0` the only entries are the chart's few hours, and reporting
 /// "100% in range" over three hours as a 24-hour figure is a claim the data
 /// does not support. So the label is the covered span, capped at the request.
+/// Episodes and the deliveries that failed during them, newest first.
+///
+/// Failures are attached to the episode they happened in rather than listed
+/// separately: "a push failed at 04:55" means nothing on its own, and "the
+/// 04:55 low never reached your phone" means everything.
+fn alerts_for(records: &[crate::alertlog::Record], units: Units, now_ms: i64) -> Vec<AlertDoc> {
+    let mut out: Vec<AlertDoc> = crate::alertlog::episodes(records)
+        .into_iter()
+        .map(|episode| {
+            let ends = episode.end.unwrap_or(now_ms);
+            let failed: Vec<String> = records
+                .iter()
+                .filter(|r| r.event == "delivery" && r.ts >= episode.start && r.ts <= ends)
+                .filter(|r| r.outcome.as_deref().is_some_and(|o| o != "accepted"))
+                .filter_map(|r| r.channel.clone())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            AlertDoc {
+                at_ms: episode.start,
+                state: episode.state.clone(),
+                minutes: episode.minutes(),
+                value: episode.sgv.map(|sgv| scaled(units, sgv)),
+                failed,
+            }
+        })
+        .collect();
+    // Newest first: a list of alarms is read from the most recent one back.
+    out.sort_by_key(|episode| std::cmp::Reverse(episode.at_ms));
+    out
+}
+
 /// Time in range for each local day in `entries`, oldest first.
 ///
 /// Grouped in the site's timezone, like the profile: a day boundary is a local
@@ -711,6 +775,7 @@ pub fn error_doc(now_ms: i64, theme: &Theme, message: &str) -> Snapshot {
         baseline: None,
         days: None,
         insights: None,
+        alerts: None,
         band: None,
         sensor: None,
         forecast: None,
@@ -773,6 +838,10 @@ async fn collect(
         .await
         .unwrap_or_default();
 
+    // Local, not fetched: the alert log is what this machine's alarm did, and
+    // it is the only record of a delivery that never arrived.
+    let alert_records = crate::alertlog::read(now_ms - i64::from(days.max(1)) * 24 * 3_600_000);
+
     Ok(build(BuildInput {
         now_ms,
         site: site.name.clone(),
@@ -789,6 +858,7 @@ async fn collect(
             .and_then(|name| name.parse::<chrono_tz::Tz>().ok()),
         recent,
         history,
+        alert_records,
         treatments,
         stats_window_h: 24,
         sensor_start_ms,
@@ -829,6 +899,9 @@ pub fn demo(
         history,
         // Two of them, spaced the way a meal and its bolus actually land, so
         // the demo chart shows the markers rather than an empty lane.
+        // Demo mode has no alarm history, and inventing one would put words
+        // in the mouth of the thing people trust overnight.
+        alert_records: Vec::new(),
         treatments: crate::demo::treatments(now_ms),
         stats_window_h: 24,
         // Demo data has no sensor history to speak of, and inventing a
@@ -884,6 +957,7 @@ mod tests {
             timezone: Some(chrono_tz::UTC),
             recent,
             history,
+            alert_records: Vec::new(),
             treatments: Vec::new(),
             stats_window_h: 24,
             sensor_start_ms: None,
@@ -1177,6 +1251,72 @@ mod tests {
         // six readings across five hours is 8% of the ~60 a CGM would produce
         // in them. A consumer can only say that if it is told both numbers.
         assert_eq!(json["stats"]["window_h"], 5);
+    }
+
+    fn alert_record(ts: i64, event: &str, state: &str) -> crate::alertlog::Record {
+        crate::alertlog::Record {
+            ts,
+            site: "Alex".into(),
+            site_id: None,
+            event: event.into(),
+            state: state.into(),
+            sgv: Some(58.0),
+            channel: None,
+            outcome: None,
+        }
+    }
+
+    #[test]
+    fn an_alarm_carries_the_delivery_that_failed_during_it() {
+        // "A push failed at 04:55" means nothing on its own. "The 04:55 low
+        // never reached your phone" means everything, so the failure belongs
+        // to the episode rather than to a list of its own.
+        let start = NOW - 60 * MIN;
+        let mut push = alert_record(start + 10 * MIN, "delivery", "URGENT LOW");
+        push.channel = Some("push".into());
+        push.outcome = Some("failed".into());
+        let mut desktop = alert_record(start + 11 * MIN, "delivery", "URGENT LOW");
+        desktop.channel = Some("desktop".into());
+        desktop.outcome = Some("accepted".into());
+
+        let records = vec![
+            alert_record(start, "alert", "URGENT LOW"),
+            push,
+            desktop,
+            alert_record(start + 20 * MIN, "recovered", "URGENT LOW"),
+        ];
+        let snap = build(BuildInput {
+            alert_records: records,
+            ..input(vec![entry(115.0, NOW - 4 * MIN, "Flat")], vec![])
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+
+        assert_eq!(json["alerts"][0]["state"], "URGENT LOW");
+        assert_eq!(json["alerts"][0]["minutes"], 20);
+        // Only the one that failed — an accepted delivery is not news.
+        assert_eq!(json["alerts"][0]["failed"][0], "push");
+        assert_eq!(
+            json["alerts"][0]["failed"].as_array().map(Vec::len),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn alarms_are_newest_first() {
+        let records = vec![
+            alert_record(NOW - 300 * MIN, "alert", "LOW"),
+            alert_record(NOW - 290 * MIN, "recovered", "LOW"),
+            alert_record(NOW - 60 * MIN, "alert", "HIGH"),
+            alert_record(NOW - 50 * MIN, "recovered", "HIGH"),
+        ];
+        let snap = build(BuildInput {
+            alert_records: records,
+            ..input(vec![entry(115.0, NOW - 4 * MIN, "Flat")], vec![])
+        });
+        let json = serde_json::to_value(&snap).unwrap();
+        // A list of alarms is read from the most recent one back.
+        assert_eq!(json["alerts"][0]["state"], "HIGH");
+        assert_eq!(json["alerts"][1]["state"], "LOW");
     }
 
     #[test]
