@@ -1487,38 +1487,29 @@ Panel {
           enabled: root.configLoaded
           opacity: root.configLoaded ? 1 : 0.45
 
-          SettingRow {
-            label: "Urgent low"
-            value: root.num("alerts.urgent_low", 3.5)
-            step: root.config["units"] === "mgdl" ? 1 : 0.1
-            decimals: root.config["units"] === "mgdl" ? 0 : 1
-            onChanged: function (next) { root.setConfig("alerts.urgent_low", next.toFixed(decimals)) }
-          }
-          SettingRow {
-            label: "Low"
-            value: root.num("alerts.low", 3.9)
-            step: root.config["units"] === "mgdl" ? 1 : 0.1
-            decimals: root.config["units"] === "mgdl" ? 0 : 1
-            onChanged: function (next) { root.setConfig("alerts.low", next.toFixed(decimals)) }
-          }
-          SettingRow {
-            label: "High"
-            value: root.num("alerts.high", 10.0)
-            step: root.config["units"] === "mgdl" ? 1 : 0.1
-            decimals: root.config["units"] === "mgdl" ? 0 : 1
-            onChanged: function (next) { root.setConfig("alerts.high", next.toFixed(decimals)) }
-          }
-          SettingRow {
-            label: "Urgent high"
-            value: root.num("alerts.urgent_high", 13.9)
-            step: root.config["units"] === "mgdl" ? 1 : 0.1
-            decimals: root.config["units"] === "mgdl" ? 0 : 1
-            onChanged: function (next) { root.setConfig("alerts.urgent_high", next.toFixed(decimals)) }
+          // The band, and only the band. Four numbered stepper rows showed
+          // four settings; this shows the one thing they actually are — a
+          // target band between two guard rails. A handle lands on a tenth of
+          // a mmol/L in about two pixels, so precision did not go with them.
+          ThresholdBand {
+            width: parent.width
+            urgentLow: root.num("alerts.urgent_low", 3.5)
+            low: root.num("alerts.low", 3.9)
+            high: root.num("alerts.high", 10.0)
+            urgentHigh: root.num("alerts.urgent_high", 13.9)
+            units: root.config["units"] === "mgdl" ? "mgdl" : "mmol"
+            themeColors: root.themeColors
+            foreground: root.barForeground
+            onChanged: function (role, value) {
+              root.setConfig(role, value.toFixed(root.config["units"] === "mgdl" ? 0 : 1))
+            }
           }
 
-          // The CLI refuses a value the app would have quietly repaired —
-          // crossed thresholds, mostly — and that refusal belongs on screen
-          // rather than in a log nobody reads.
+          // The CLI refuses a value the app would have quietly repaired, and
+          // that refusal belongs on screen rather than in a log nobody reads.
+          // Crossed thresholds used to be the common case; the handles make
+          // those unreachable, so what is left here is the physiological
+          // bounds and whatever a future key rejects.
           Text {
             visible: root.configError !== ""
             width: parent.width
