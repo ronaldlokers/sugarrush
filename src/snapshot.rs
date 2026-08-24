@@ -852,7 +852,11 @@ mod tests {
             units: Units::Mmol,
             alerts: alerts(),
             theme: Theme::default(),
-            timezone: None,
+            // Fixed, not the machine's: anything that groups by local day —
+            // `days_for`, the profile — otherwise splits `NOW` differently in
+            // every offset. That is not hypothetical; the day-strip test
+            // passed at +02:00 and failed in CI's UTC for exactly this.
+            timezone: Some(chrono_tz::UTC),
             recent,
             history,
             treatments: Vec::new(),
@@ -1073,13 +1077,17 @@ mod tests {
     #[test]
     fn each_local_day_gets_its_own_time_in_range() {
         // Two days, told apart by their readings: a low day and a good one.
+        //
+        // Half-hourly rather than hourly, and 15 hours rather than 24: `NOW`
+        // is 17:00 UTC, so a full day back from it straddles midnight and the
+        // newest day would hold only the 18 readings after it.
         let day_ms = 24 * 60 * MIN;
         let mut history = Vec::new();
-        for step in 0..24 {
-            history.push(entry(60.0, NOW - day_ms - step * 60 * MIN, "Flat"));
+        for step in 0..30 {
+            history.push(entry(60.0, NOW - day_ms - step * 30 * MIN, "Flat"));
         }
-        for step in 0..24 {
-            history.push(entry(110.0, NOW - step * 60 * MIN, "Flat"));
+        for step in 0..30 {
+            history.push(entry(110.0, NOW - step * 30 * MIN, "Flat"));
         }
         let snap = build(input(
             vec![history[24].clone(), history[25].clone()],
