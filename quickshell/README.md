@@ -246,6 +246,21 @@ with the fetch.
 It used to read once on open and cache for five minutes, so a panel left open
 went quietly out of date while the pill behind it kept moving.
 
+## Last night
+
+The Glucose view leads with the night just gone — 23:00 to 07:00 in the site's
+timezone, since a night is a local thing. The trace is deliberately not the
+six-hour chart shrunk: no axes and no clock, because it answers one question.
+Underneath it, time in range, the lowest reading, and how many alarms fired,
+each listed with what the delivery did.
+
+Every excursion below range is marked, not just the lowest point: two separate
+lows at 3am and 5am is a different night from one long one.
+
+Before 07:00 the card says **tonight so far** and ends at the current reading.
+A night reported as finished before it has finished is a claim about hours that
+have not happened.
+
 ## What the alarm did
 
 The Profile view lists recent alarm episodes from `sugarrush alerts` — the

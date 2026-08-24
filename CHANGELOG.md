@@ -70,6 +70,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **Last night, as one card.** Nobody opens a CGM panel in the morning to
+  browse six hours of chart — they open it to find out whether the night was
+  fine. The Glucose view now leads with 23:00–07:00 in your own timezone: the
+  shape of it, time in range, the lowest reading, and what the alarm did, with
+  every excursion below range marked rather than only the worst one. Before
+  07:00 it says "tonight so far" and stops at now, because reporting a night as
+  finished before it is would be a claim about hours that have not happened.
+
 - **The panel shows what the alarm actually did.** `sugarrush alerts` has been
   recording every episode and every delivery attempt since it was written, and
   nothing displayed any of it. The Profile view now lists recent alarms with
