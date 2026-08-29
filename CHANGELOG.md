@@ -18,6 +18,20 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Fixed
 
+- **Six small defects in the panel, found by reviewing it.** Switching views
+  faded the header, the chips and the status strip along with the cards — so
+  the chip you had just clicked blinked out and back, which is feedback
+  contradicting the click; only the cards fade now. The loading skeletons were
+  full width while the cards they stand in for are halves, so a cold open
+  reflowed from one column into two; they now match the layout they precede,
+  including one for last night. A config write that failed without printing
+  anything left the switch silently unmoved — stderr and the exit code are read
+  now. A `SENSOR GAP` episode was drawn in the high-glucose colour, because any
+  label without `URGENT` or `LOW` in it fell through to "high". The snooze
+  countdown and the alarm chip sat frozen beside a "next fetch" that ticked
+  every second. And `Ctrl+R` refetched while `Shift+D` launched a terminal,
+  because the shortcuts ignored modifiers.
+
 - **A stray click can no longer move an alarm threshold.** Pressing anywhere on
   the threshold band used to grab the nearest of the four handles, jump it to
   the press point, and write it on release — so one mis-aimed click silently set
