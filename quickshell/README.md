@@ -149,6 +149,23 @@ Two notes on those:
 - `omarchy plugin disable` drops the widget's options along with its place on
   the bar, so set them again after re-enabling.
 
+## When nothing is watching
+
+The pill carries a **⚠** when `sugarrush health --json` says the alarm daemon
+is not running, in the same colour an out-of-range reading takes. It polls on
+the same interval as the reading, from the same binary.
+
+This is the worst state the system can be in — you believe you are covered and
+you are not — and it was the only bad state that never reached the bar. A stale
+reading gets a `?`, an out-of-range one gets colour, and a dead watcher got a
+perfectly ordinary-looking pill until you thought to open the panel and check.
+
+Until the first answer arrives the pill says nothing: the absence of an answer
+is not evidence that nothing is watching, and a widget that cries wolf on every
+login is one you stop reading.
+
+Install the daemon with `sugarrush watch --install-service`.
+
 ## Colours
 
 In range, the pill is the bar's own foreground — one more thing on the bar

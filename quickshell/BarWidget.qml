@@ -29,6 +29,9 @@ Item {
   // module, and setting any of them would stop this widget from loading at all.
   readonly property int refreshInterval: (settings && settings.interval > 0 ? settings.interval : 60) * 1000
   readonly property string command: settings && settings.command ? settings.command : "sugarrush waybar"
+  // The same binary, asked whether the alarm is running. Derived so a pill
+  // pointed at a build directory checks that build's daemon.
+  readonly property string healthCommand: command.replace(/waybar.*$/, "health --json")
   // A number on a bar says nothing about what was measured; the unit is the
   // one word that does, since nothing else on a desktop is reported in
   // mmol/L. Off for anyone whose bar is already full.
@@ -70,6 +73,20 @@ Item {
   property var series: []
   // Where the reading is heading; null when forecasts are switched off.
   property var forecast: null
+
+  // Whether anything is actually watching overnight.
+  //
+  // This is the worst state the system can be in — you believe you are
+  // covered and you are not — and it was the only bad state that never
+  // reached the bar. Stale readings get a "?", out-of-range gets colour, and
+  // a dead alarm daemon got a perfectly ordinary-looking pill until you
+  // thought to open the panel and look.
+  //
+  // `null` until the first answer: absence of an answer is not evidence that
+  // nothing is watching, and a pill that cries wolf on startup would be
+  // ignored by the second night.
+  property var watching: null
+  readonly property bool alarmDown: watching === false
   // True when the colour is the forecast talking rather than the reading. The
   // class says `predicted-` in that case, and nothing else in the pill should
   // shout: a projection is not an alarm.
@@ -98,6 +115,7 @@ Item {
   // carries that on its own.
   readonly property bool alarming: stateClass === "low" || stateClass === "high"
     || stateClass === "urgent-low" || stateClass === "urgent-high" || predicted
+    || alarmDown
 
   readonly property bool urgent: stateClass === "urgent-low" || stateClass === "urgent-high"
 
@@ -116,6 +134,11 @@ Item {
   function escapeMarkup(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   }
+
+  // "!!" and "!" come from the reading itself and "?" from its age; this one
+  // is about the machinery behind them, so it is a different glyph rather
+  // than a fourth severity of the same one.
+  readonly property string watchMark: alarmDown ? "⚠ " : ""
 
   // Styled markup rather than a plain string, so the colour can stop at the
   // reading. One Text element still: splitting into two would have to be
@@ -138,9 +161,11 @@ Item {
       // rendered line: with `bar.delta = false` in the config there is no
       // delta to drop, and the old split ate the arrow instead.
       reading = marker !== "" ? esc(marker) + "<br>" + esc(value) : esc(value)
+      if (watchMark !== "") reading = esc(watchMark.trim()) + "<br>" + reading
       rest = arrow !== "" ? "<br>" + esc(arrow) : ""
     } else {
       reading = marker !== "" ? esc(marker) + " " + esc(value) : esc(value)
+      if (watchMark !== "") reading = esc(watchMark) + reading
       rest = ""
       if (showUnits && units !== "") rest += " " + esc(units)
       if (arrow !== "") rest += " " + esc(arrow)
@@ -169,7 +194,8 @@ Item {
   // change at all, and would leave the widget with no fetch running.
   function refresh() {
     statusProc.running = false
-    Qt.callLater(function () { statusProc.running = true })
+    healthProc.running = false
+    Qt.callLater(function () { statusProc.running = true; healthProc.running = true })
   }
 
   // The bar injects `settings` after the widget is built, so the first poll
@@ -215,6 +241,27 @@ Item {
       id: errCollector
       waitForEnd: true
       onStreamFinished: if (errCollector.text.trim() !== "") console.warn("sugarrush", errCollector.text.trim())
+    }
+  }
+
+  // Local, cheap, and on the same cadence as the reading: `health --json`
+  // reads this machine's own state rather than the site's.
+  Process {
+    id: healthProc
+    command: ["bash", "-lc", root.healthCommand]
+    stdout: StdioCollector {
+      id: healthOut
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var report = JSON.parse(String(healthOut.text || ""))
+          root.watching = report.watcher_alive === true && report.alarm_configured === true
+        } catch (e) {
+          // A sugarrush too old to answer, or a command that died. Say
+          // nothing rather than accuse the alarm of being down.
+          root.watching = null
+        }
+      }
     }
   }
 

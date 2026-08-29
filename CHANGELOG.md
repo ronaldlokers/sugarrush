@@ -6,6 +6,16 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The bar pill says when nothing is watching.** A ⚠ appears on the pill when
+  the alarm daemon is not running, polled from `sugarrush health --json` on the
+  pill's own interval. It was the only bad state that never reached the bar — a
+  stale reading gets a `?`, an out-of-range one gets colour, and a dead watcher
+  looked exactly like a healthy one until you opened the panel. Nothing is shown
+  until the first answer arrives, so an unanswered check never accuses the alarm
+  of being down.
+
 ### Changed
 
 - **The panel answers the morning question first.** Last night sat fourth, under
