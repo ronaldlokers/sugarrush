@@ -737,6 +737,11 @@ Panel {
     id: card
     property string label: ""
     default property alias content: cardContent.data
+    // Set to make the card's own header tappable. Only the chart uses it, to
+    // return a panned view to live — the label already says "tap to return",
+    // and the label is the thing being disputed, so it is the thing to press.
+    signal headerTapped()
+    property bool headerClickable: false
 
     width: parent ? parent.width : 0
     implicitHeight: cardColumn.implicitHeight + Style.space(18)
@@ -757,6 +762,11 @@ Panel {
         text: card.label
         foreground: root.barForeground
         fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+
+        TapHandler {
+          enabled: card.headerClickable
+          onTapped: card.headerTapped()
+        }
       }
 
       Column {
@@ -1603,15 +1613,31 @@ Panel {
         }
 
         Card {
-          label: "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
+          // Panned, the card names the hours on screen instead of claiming
+          // the live window: a chart showing 3am must not say "last 6 hours".
+          // `windowLabel` and `follow()` have been in Chart.qml since it was
+          // written and were referenced nowhere.
+          label: (glucoseChart.live
+                  ? "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
+                  : glucoseChart.windowLabel)
             + (root.treatmentTotals !== "" ? " · " + root.treatmentTotals : "")
+            + (glucoseChart.live ? "" : " · tap to return")
+          headerClickable: !glucoseChart.live
+          onHeaderTapped: glucoseChart.follow()
           visible: root.loadError === "" && root.view === "glucose"
 
           Chart {
+            id: glucoseChart
             width: parent.width
             height: Style.space(130)
             doc: root.doc
             foreground: root.barForeground
+            // These were never passed. The chart defaulted to 6 hours and 72
+            // of scrollback while the settings rows above wrote values nobody
+            // read — so "Chart window: 3h" relabelled this card and drew six,
+            // and "Scroll back" moved a number and changed nothing.
+            viewHours: root.panelHours
+            scrollbackHours: root.scrollbackHours
           }
         }
 
@@ -1674,7 +1700,7 @@ Panel {
 
             Text {
               required property var modelData
-              width: column.width - Style.space(24)
+              width: parent.width
               color: Qt.darker(root.barForeground, 1.35)
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
@@ -1873,12 +1899,15 @@ Panel {
 
             Item {
               required property var modelData
-              width: column.width - Style.space(24)
+              width: parent.width
               implicitHeight: alarmState.implicitHeight
 
               Text {
                 id: alarmState
                 anchors.left: parent.left
+                anchors.right: alarmWhen.left
+                anchors.rightMargin: Style.space(8)
+                elide: Text.ElideRight
                 color: root.classColor(
                   parent.modelData.state.indexOf("URGENT") === 0
                     ? (parent.modelData.state.indexOf("LOW") > 0 ? "urgent-low" : "urgent-high")
@@ -1891,6 +1920,7 @@ Panel {
               }
 
               Text {
+                id: alarmWhen
                 anchors.right: parent.right
                 color: Qt.darker(root.barForeground, 1.35)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1909,7 +1939,7 @@ Panel {
 
             Text {
               required property var modelData
-              width: column.width - Style.space(24)
+              width: parent.width
               wrapMode: Text.WordWrap
               color: root.themed("urgent", "#cc241d")
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1943,7 +1973,7 @@ Panel {
 
             Text {
               required property var modelData
-              width: column.width - Style.space(24)
+              width: parent.width
               wrapMode: Text.WordWrap
               color: root.barForeground
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -2247,7 +2277,7 @@ Panel {
 
             Item {
               required property var modelData
-              width: column.width - Style.space(24)
+              width: parent.width
               implicitHeight: keyName.implicitHeight
 
               Text {
