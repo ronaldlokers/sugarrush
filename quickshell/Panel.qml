@@ -1232,14 +1232,15 @@ Panel {
           id: nowCard
           label: "Now"
           visible: root.reading !== null && root.loadError === "" && root.view === "glucose"
-          // Shares its row with the last 24 hours: what it is now, and what
-          // the day around it looked like.
+          // Shares its row with last night: at 07:30 the two questions are
+          // "what is it now" and "was the night fine", and they should be
+          // answerable without moving your eyes down the panel.
           width: root.halfOf(column.width)
           // Both cards take the taller one's height. Two boxes side by side
           // with different bottoms read as a mistake, and the shorter one has
           // nothing to lose by having room to spare.
-          height: root.wide && visible && statsCard.visible
-            ? Math.max(implicitHeight, statsCard.implicitHeight)
+          height: root.wide && visible && nightCard.visible
+            ? Math.max(implicitHeight, nightCard.implicitHeight)
             : implicitHeight
 
           Item {
@@ -1509,6 +1510,111 @@ Panel {
           }
         }
 
+        // Nobody opens a CGM panel in the morning to browse six hours of
+        // chart. They open it to find out whether the night was fine.
+        Card {
+          label: {
+            if (!root.night) return "Last night"
+            var from = Qt.formatTime(new Date(root.night.from_ms), "HH:mm")
+            var to = Qt.formatTime(new Date(root.night.to_ms), "HH:mm")
+            return (root.night.in_progress ? "Tonight so far · " : "Last night · ")
+              + from + "–" + to
+          }
+          id: nightCard
+          visible: root.night !== null && root.loadError === "" && root.view === "glucose"
+          width: root.halfOf(column.width)
+          height: root.wide && visible && nowCard.visible
+            ? Math.max(implicitHeight, nowCard.implicitHeight)
+            : implicitHeight
+
+          NightTrace {
+            width: parent.width
+            height: Style.space(54)
+            series: root.night ? root.night.series : []
+            range: root.doc && root.doc.range ? root.doc.range : null
+            themeColors: root.themeColors
+            foreground: root.barForeground
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: nightRange.implicitHeight
+
+            Text {
+              id: nightRange
+              anchors.left: parent.left
+              color: Qt.darker(root.barForeground, 1.2)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.night
+                ? root.night.tir.in_range.toFixed(0) + "% in range"
+                  + (root.night.lowest !== undefined
+                     ? " · low " + root.night.lowest.toFixed(1) : "")
+                : ""
+            }
+
+            Text {
+              anchors.right: parent.right
+              color: root.nightAlarms.length > 0
+                ? root.themed("urgent", "#cc241d")
+                : Qt.darker(root.barForeground, 1.5)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              // "no alarms" is the answer people are hoping for, and it
+              // should be printed rather than left as an absence.
+              text: root.nightAlarms.length === 0
+                ? "no alarms"
+                : root.nightAlarms.length + (root.nightAlarms.length === 1 ? " alarm" : " alarms")
+            }
+          }
+
+          Repeater {
+            model: root.nightAlarms.slice(0, 3)
+
+            Text {
+              required property var modelData
+              width: parent.width
+              color: Qt.darker(root.barForeground, 1.35)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.alarmWhen(modelData.at_ms) + " · " + modelData.state.toLowerCase()
+                + (modelData.value !== undefined ? " " + modelData.value.toFixed(1) : "")
+                + " · " + root.alarmLength(modelData)
+                + (modelData.failed && modelData.failed.length > 0
+                   ? " · " + modelData.failed.join(" and ") + " never arrived" : "")
+            }
+          }
+        }
+
+        Card {
+          // Panned, the card names the hours on screen instead of claiming
+          // the live window: a chart showing 3am must not say "last 6 hours".
+          // `windowLabel` and `follow()` have been in Chart.qml since it was
+          // written and were referenced nowhere.
+          label: (glucoseChart.live
+                  ? "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
+                  : glucoseChart.windowLabel)
+            + (root.treatmentTotals !== "" ? " · " + root.treatmentTotals : "")
+            + (glucoseChart.live ? "" : " · tap to return")
+          headerClickable: !glucoseChart.live
+          onHeaderTapped: glucoseChart.follow()
+          visible: root.loadError === "" && root.view === "glucose"
+
+          Chart {
+            id: glucoseChart
+            width: parent.width
+            height: Style.space(130)
+            doc: root.doc
+            foreground: root.barForeground
+            // These were never passed. The chart defaulted to 6 hours and 72
+            // of scrollback while the settings rows above wrote values nobody
+            // read — so "Chart window: 3h" relabelled this card and drew six,
+            // and "Scroll back" moved a number and changed nothing.
+            viewHours: root.panelHours
+            scrollbackHours: root.scrollbackHours
+          }
+        }
+
         Card {
           label: root.stats
             ? "Last " + root.stats.window_h + (root.stats.window_h === 1 ? " hour" : " hours")
@@ -1516,10 +1622,9 @@ Panel {
             : ""
           id: statsCard
           visible: root.stats !== null && root.loadError === "" && root.view === "glucose"
-          width: root.halfOf(column.width)
-          height: root.wide && visible && nowCard.visible
-            ? Math.max(implicitHeight, nowCard.implicitHeight)
-            : implicitHeight
+          // Full width: four comparison rows of "now vs baseline vs change"
+          // need the room, and at half width the numbers wrapped away from
+          // the labels they belong to.
 
           TirBar {
             width: parent.width
@@ -1609,107 +1714,6 @@ Panel {
             suffix: "%"
             higherIsBetter: false
             nowColor: Qt.darker(root.barForeground, 1.1)
-          }
-        }
-
-        Card {
-          // Panned, the card names the hours on screen instead of claiming
-          // the live window: a chart showing 3am must not say "last 6 hours".
-          // `windowLabel` and `follow()` have been in Chart.qml since it was
-          // written and were referenced nowhere.
-          label: (glucoseChart.live
-                  ? "Last " + root.panelHours + (root.panelHours === 1 ? " hour" : " hours")
-                  : glucoseChart.windowLabel)
-            + (root.treatmentTotals !== "" ? " · " + root.treatmentTotals : "")
-            + (glucoseChart.live ? "" : " · tap to return")
-          headerClickable: !glucoseChart.live
-          onHeaderTapped: glucoseChart.follow()
-          visible: root.loadError === "" && root.view === "glucose"
-
-          Chart {
-            id: glucoseChart
-            width: parent.width
-            height: Style.space(130)
-            doc: root.doc
-            foreground: root.barForeground
-            // These were never passed. The chart defaulted to 6 hours and 72
-            // of scrollback while the settings rows above wrote values nobody
-            // read — so "Chart window: 3h" relabelled this card and drew six,
-            // and "Scroll back" moved a number and changed nothing.
-            viewHours: root.panelHours
-            scrollbackHours: root.scrollbackHours
-          }
-        }
-
-        // Nobody opens a CGM panel in the morning to browse six hours of
-        // chart. They open it to find out whether the night was fine.
-        Card {
-          label: {
-            if (!root.night) return "Last night"
-            var from = Qt.formatTime(new Date(root.night.from_ms), "HH:mm")
-            var to = Qt.formatTime(new Date(root.night.to_ms), "HH:mm")
-            return (root.night.in_progress ? "Tonight so far · " : "Last night · ")
-              + from + "–" + to
-          }
-          id: nightCard
-          visible: root.night !== null && root.loadError === "" && root.view === "glucose"
-
-          NightTrace {
-            width: parent.width
-            height: Style.space(54)
-            series: root.night ? root.night.series : []
-            range: root.doc && root.doc.range ? root.doc.range : null
-            themeColors: root.themeColors
-            foreground: root.barForeground
-          }
-
-          Item {
-            width: parent.width
-            implicitHeight: nightRange.implicitHeight
-
-            Text {
-              id: nightRange
-              anchors.left: parent.left
-              color: Qt.darker(root.barForeground, 1.2)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              text: root.night
-                ? root.night.tir.in_range.toFixed(0) + "% in range"
-                  + (root.night.lowest !== undefined
-                     ? " · low " + root.night.lowest.toFixed(1) : "")
-                : ""
-            }
-
-            Text {
-              anchors.right: parent.right
-              color: root.nightAlarms.length > 0
-                ? root.themed("urgent", "#cc241d")
-                : Qt.darker(root.barForeground, 1.5)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              // "no alarms" is the answer people are hoping for, and it
-              // should be printed rather than left as an absence.
-              text: root.nightAlarms.length === 0
-                ? "no alarms"
-                : root.nightAlarms.length + (root.nightAlarms.length === 1 ? " alarm" : " alarms")
-            }
-          }
-
-          Repeater {
-            model: root.nightAlarms.slice(0, 3)
-
-            Text {
-              required property var modelData
-              width: parent.width
-              color: Qt.darker(root.barForeground, 1.35)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              text: root.alarmWhen(modelData.at_ms) + " · " + modelData.state.toLowerCase()
-                + (modelData.value !== undefined ? " " + modelData.value.toFixed(1) : "")
-                + " · " + root.alarmLength(modelData)
-                + (modelData.failed && modelData.failed.length > 0
-                   ? " · " + modelData.failed.join(" and ") + " never arrived" : "")
-            }
           }
         }
 

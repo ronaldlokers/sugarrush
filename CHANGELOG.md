@@ -6,6 +6,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The panel answers the morning question first.** Last night sat fourth, under
+  the six-hour chart, while the README claimed the Glucose view led with it. The
+  reading and last night now share the top row — the two things anyone asks at
+  07:30 — and the 24-hour comparison takes a full row below the chart, which its
+  four rows of figures wanted anyway.
+
 ## [2026.8.3] - 2026-08-25
 
 This release is mostly about the Quickshell panel, which grew from three cards
