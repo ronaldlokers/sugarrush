@@ -95,6 +95,10 @@ Panel {
   // which is what someone who turns motion down is asking for.
   readonly property bool animate: setting("animations", true)
 
+  // What a view switch fades. Every Card binds its opacity to this; nothing
+  // else does.
+  property real cardsOpacity: 1
+
 
   // key -> value, as `sugarrush config` prints it.
   property var config: ({})
@@ -106,6 +110,19 @@ Panel {
   property string undoRole: ""
   property string undoWords: ""
   property real undoValue: 0
+
+  // The alert ladder from an episode's label, as `alert.rs` classifies it.
+  function alarmClass(state) {
+    var label = String(state || "").toUpperCase()
+    if (label.indexOf("URGENT") === 0) {
+      return label.indexOf("LOW") > 0 ? "urgent-low" : "urgent-high"
+    }
+    if (label.indexOf("LOW") >= 0) return "low"
+    if (label.indexOf("HIGH") >= 0) return "high"
+    // Everything else is the machinery failing rather than the glucose
+    // moving — a sensor gap, most of all — and reads as urgent.
+    return "urgent-low"
+  }
 
   function thresholdWords(role) {
     switch (role) {
@@ -398,6 +415,7 @@ Panel {
   property var health: null
 
   function alarmWords() {
+    var _ = clockTick
     if (!health) return ""
     if (health.watcher_alive !== true) return "not watching"
     if (health.alarm_configured !== true) return "no alarm set"
@@ -480,7 +498,14 @@ Panel {
   // Minutes left on a snooze, or 0. Read from the daemon's own health report
   // rather than from a timer started when the button was pressed: a snooze
   // set from the menu, the TUI or another machine counts just as much.
+  // Re-read every second while the panel is open. `Date.now()` inside a
+  // binding is not reactive, so the snooze countdown and the alarm chip sat
+  // frozen at whatever they read when health last loaded — beside a "next
+  // fetch in 42s" that ticked, which made the frozen ones look broken.
+  property int clockTick: 0
+
   readonly property int snoozedFor: {
+    var _ = clockTick
     if (!health) return 0
     var sites = health.sites || []
     var most = 0
@@ -636,6 +661,22 @@ Panel {
 
   Process {
     id: setProc
+    // stderr too, and the exit code: the CLI answers "key = value" on stdout
+    // when it works, but a command that is missing or dies before printing
+    // said nothing at all — `configError` became "" and the switch simply
+    // never moved, with no explanation anywhere.
+    stderr: StdioCollector {
+      id: setErr
+      waitForEnd: true
+    }
+    onExited: function (code) {
+      if (code !== 0 && root.configError === "") {
+        var complaint = setErr.text.trim()
+        root.configError = complaint !== ""
+          ? complaint
+          : "the write failed and said nothing — is `sugarrush` on PATH?"
+      }
+    }
     stdout: StdioCollector {
       id: setOut
       waitForEnd: true
@@ -687,6 +728,7 @@ Panel {
     running: root.opened
     onTriggered: {
       root.nextIn = root.nextIn - 1
+      root.clockTick = root.clockTick + 1
       if (root.nextIn <= 0) {
         root.nextIn = root.refreshSeconds
         root.refresh(true)
@@ -776,6 +818,7 @@ Panel {
 
     width: parent ? parent.width : 0
     implicitHeight: cardColumn.implicitHeight + Style.space(18)
+    opacity: root.cardsOpacity
     color: "transparent"
     radius: Style.cornerRadius
     border.width: 1
@@ -1044,6 +1087,11 @@ Panel {
       // resort, and every one of the panel's three views and dozen settings
       // rows needed a pointer to reach.
       Keys.onPressed: function (event) {
+        // Bare keys only. `Ctrl+R` is reload in every browser and terminal on
+        // this desktop, and it was refetching here; `Shift+D` was launching a
+        // terminal. A shortcut that fires under a modifier it never declared
+        // is one you trigger by accident.
+        if (event.modifiers !== Qt.NoModifier) return
         switch (event.key) {
         case Qt.Key_1: root.view = root.views[0]; break
         case Qt.Key_2: root.view = root.views[1]; break
@@ -1099,8 +1147,13 @@ Panel {
 
           NumberAnimation {
             id: viewFade
-            target: column
-            property: "opacity"
+            // The cards, not the column. The column also holds the wordmark,
+            // the reading, the two buttons, the view chips and the status
+            // strip — so the old target faded the chip you had just clicked
+            // to nothing and back, which is feedback contradicting the click,
+            // and dimmed the header the comment said would stay put.
+            target: root
+            property: "cardsOpacity"
             from: 0
             to: 1
             duration: 170
@@ -1236,11 +1289,24 @@ Panel {
         // took. Draw the cards that are about to be filled instead — it tells
         // the eye where to look when the numbers land, and the panel keeps a
         // shape of its own rather than being assembled on arrival.
+        // Sized like the cards they stand in for, including which of them
+        // share a row: they used to be full width while the real Now and
+        // Last night are halves, so the first open reflowed from one column
+        // into two — the exact jump a skeleton exists to prevent.
         Card {
           label: "Now"
           visible: root.loading && root.view === "glucose"
+          width: root.halfOf(column.width)
           Skeleton { width: Math.round(parent.width * 0.45); height: Style.space(30) }
           Skeleton { width: Math.round(parent.width * 0.3) }
+        }
+
+        Card {
+          label: "Last night"
+          visible: root.loading && root.view === "glucose"
+          width: root.halfOf(column.width)
+          Skeleton { width: parent.width; height: Style.space(54) }
+          Skeleton { width: Math.round(parent.width * 0.5) }
         }
 
         Card {
@@ -1943,10 +2009,10 @@ Panel {
                 anchors.right: alarmWhen.left
                 anchors.rightMargin: Style.space(8)
                 elide: Text.ElideRight
-                color: root.classColor(
-                  parent.modelData.state.indexOf("URGENT") === 0
-                    ? (parent.modelData.state.indexOf("LOW") > 0 ? "urgent-low" : "urgent-high")
-                    : (parent.modelData.state.indexOf("LOW") >= 0 ? "low" : "high"))
+                // A state with neither URGENT nor LOW in it used to fall
+                // through to "high", which painted "SENSOR GAP — no recent
+                // readings" in the high-glucose colour. A gap is not a high.
+                color: root.classColor(root.alarmClass(parent.modelData.state))
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
                 text: parent.modelData.state.toLowerCase()
@@ -2033,7 +2099,7 @@ Panel {
           label: "Alarm thresholds · " + (root.config["units"] === "mgdl" ? "mg/dL" : "mmol/L")
           visible: root.view === "settings"
           enabled: root.configLoaded
-          opacity: root.configLoaded ? 1 : 0.45
+          opacity: root.cardsOpacity * (root.configLoaded ? 1 : 0.45)
 
           // The band, and only the band. Four numbered stepper rows showed
           // four settings; this shows the one thing they actually are — a
@@ -2140,7 +2206,7 @@ Panel {
           label: "Alarm"
           visible: root.view === "settings"
           enabled: root.configLoaded
-          opacity: root.configLoaded ? 1 : 0.45
+          opacity: root.cardsOpacity * (root.configLoaded ? 1 : 0.45)
 
           SwitchRow {
             label: "Audible alarm"
@@ -2165,7 +2231,7 @@ Panel {
           label: "Status bar"
           visible: root.view === "settings"
           enabled: root.configLoaded
-          opacity: root.configLoaded ? 1 : 0.45
+          opacity: root.cardsOpacity * (root.configLoaded ? 1 : 0.45)
 
           SwitchRow {
             label: "Trend arrow"
