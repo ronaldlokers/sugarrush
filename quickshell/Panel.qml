@@ -99,6 +99,30 @@ Panel {
   // key -> value, as `sugarrush config` prints it.
   property var config: ({})
   property string configError: ""
+
+  // The last threshold write, and the value it replaced. Cleared on a timer
+  // and on the way out — an undo offered ten minutes later is not an undo,
+  // it is a trap.
+  property string undoRole: ""
+  property string undoWords: ""
+  property real undoValue: 0
+
+  function thresholdWords(role) {
+    switch (role) {
+    case "alerts.urgent_low": return "urgent low"
+    case "alerts.low": return "low"
+    case "alerts.high": return "high"
+    case "alerts.urgent_high": return "urgent high"
+    }
+    return role
+  }
+
+  function undoThreshold() {
+    if (undoRole === "") return
+    setConfig(undoRole, undoValue.toFixed(config["units"] === "mgdl" ? 0 : 1))
+    undoRole = ""
+    undoWords = ""
+  }
   // Until `sugarrush config` answers, the panel knows nothing about what is
   // switched on. Every switch reading "on" in the meantime is the panel
   // asserting a state it has not read — briefly, but wrongly, and the two
@@ -511,7 +535,8 @@ Panel {
   onOpenedChanged: if (opened) { refresh(false); loadHealth(); nextIn = refreshSeconds
                                      copyState = ""; actionState = ""
                                      logging = false; logCarbs = 0; logInsulin = 0
-                                     showKeys = false }
+                                     showKeys = false
+                                     undoRole = ""; undoWords = "" }
 
   // A cached document belongs to the command that produced it. When the
   // command changes the cache is about something else, so drop it rather than
@@ -668,6 +693,12 @@ Panel {
         root.loadHealth()
       }
     }
+  }
+
+  Timer {
+    id: undoClear
+    interval: 6000
+    onTriggered: { root.undoRole = ""; root.undoWords = "" }
   }
 
   Timer {
@@ -2051,8 +2082,41 @@ Panel {
             units: root.config["units"] === "mgdl" ? "mgdl" : "mmol"
             themeColors: root.themeColors
             foreground: root.barForeground
-            onChanged: function (role, value) {
-              root.setConfig(role, value.toFixed(root.config["units"] === "mgdl" ? 0 : 1))
+            onChanged: function (role, value, previous) {
+              var decimals = root.config["units"] === "mgdl" ? 0 : 1
+              root.setConfig(role, value.toFixed(decimals))
+              // What just changed, and the way back. These four numbers decide
+              // whether a sound happens at 3am, and until now a drag committed
+              // silently with nothing to undo it.
+              root.undoRole = role
+              root.undoValue = previous
+              root.undoWords = root.thresholdWords(role) + " → " + value.toFixed(decimals)
+              undoClear.restart()
+            }
+          }
+
+          Item {
+            visible: root.undoWords !== ""
+            width: parent.width
+            implicitHeight: undoText.implicitHeight
+
+            Text {
+              id: undoText
+              anchors.left: parent.left
+              color: Qt.darker(root.barForeground, 1.2)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: root.undoWords
+            }
+
+            Text {
+              anchors.right: parent.right
+              color: root.themed("prediction", "#b16286")
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              text: "undo"
+
+              TapHandler { onTapped: root.undoThreshold() }
             }
           }
 

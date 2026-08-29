@@ -16,6 +16,16 @@ All notable changes to sugarrush are documented here. The format is based on
   until the first answer arrives, so an unanswered check never accuses the alarm
   of being down.
 
+### Fixed
+
+- **A stray click can no longer move an alarm threshold.** Pressing anywhere on
+  the threshold band used to grab the nearest of the four handles, jump it to
+  the press point, and write it on release — so one mis-aimed click silently set
+  an alarm bound with no way back. A press now has to land within about 12
+  pixels of a handle, picks it up where it is, and a write that changed nothing
+  is not written at all. After a real change the card offers `low → 4.8 · undo`
+  for a few seconds.
+
 ### Changed
 
 - **The panel answers the morning question first.** Last night sat fourth, under

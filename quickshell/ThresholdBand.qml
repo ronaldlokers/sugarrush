@@ -24,7 +24,10 @@ Item {
   property color foreground: "white"
 
   // Emitted on release, not on every pixel: each one is a config write.
-  signal changed(string role, real value)
+  //
+  // `previous` is what the threshold was when the drag began, so a consumer
+  // can offer to put it back without having to remember the old value itself.
+  signal changed(string role, real value, real previous)
 
   readonly property bool mgdl: units === "mgdl"
   readonly property real scaleMin: mgdl ? 40 : 2
@@ -35,6 +38,9 @@ Item {
   readonly property real minGap: mgdl ? 5 : 0.3
 
   readonly property int handleWidth: 3
+  // How close a press has to land to pick a handle up. Wider than the handle
+  // it grabs, because a 3px target is not a target.
+  readonly property int grabRadius: 12
   readonly property int bandTop: 18
   readonly property int bandHeight: 16
 
@@ -125,13 +131,18 @@ Item {
     // Fine control belongs to the steppers below; this is for the shape.
     preventStealing: true
 
-    function nearest(x) {
+    // The handle under the press, or -1. Bounded on purpose: `nearest` used
+    // to pick the closest of four across the whole width, so a press anywhere
+    // on the band grabbed a threshold, moved it to the press point and wrote
+    // it on release. One stray click could set an alarm bound, silently, with
+    // no undo. These four numbers decide whether a sound happens at 3am.
+    function grabbed(x) {
       var list = root.handles()
-      var best = 0
-      var bestDistance = Infinity
+      var best = -1
+      var bestDistance = root.grabRadius
       for (var i = 0; i < list.length; i++) {
         var d = Math.abs(root.xOf(list[i].value) - x)
-        if (d < bestDistance) { bestDistance = d; best = i }
+        if (d <= bestDistance) { bestDistance = d; best = i }
       }
       return best
     }
@@ -149,9 +160,14 @@ Item {
       }
     }
 
+    property real startedAt: 0
+
     onPressed: function (mouse) {
-      root.dragging = nearest(mouse.x)
-      move(mouse.x)
+      root.dragging = grabbed(mouse.x)
+      if (root.dragging >= 0) startedAt = root.handles()[root.dragging].value
+      // No jump to the press point. Grabbing a handle and moving it are now
+      // separate things: the press picks it up where it already is, and only
+      // dragging moves it.
       band.requestPaint()
     }
 
@@ -166,7 +182,11 @@ Item {
       var list = root.handles()
       // One write, on release. Writing per pixel would be a config file
       // rewritten a hundred times to move one threshold.
-      root.changed(list[root.dragging].role, list[root.dragging].value)
+      // Nothing moved: a press that picked a handle up and put it down in the
+      // same place is not an edit, and should not be written or undoable.
+      if (list[root.dragging].value !== startedAt) {
+        root.changed(list[root.dragging].role, list[root.dragging].value, startedAt)
+      }
       root.dragging = -1
       band.requestPaint()
     }
