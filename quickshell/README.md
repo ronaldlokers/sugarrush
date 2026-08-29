@@ -385,6 +385,21 @@ and the two the command needs. A meal remembered three hours late wants
 terminal.
 A panel that dismisses when focus moves is the wrong place to type a token.
 
+## Being read aloud
+
+Every control carries an `Accessible.role` and a name, and every chart carries
+a description of what it shows rather than the fact that it exists — a Canvas
+is a blank rectangle to assistive technology, and the numbers behind these ones
+are already in the document. The time-in-range bar reads out its five bands;
+the night trace reads its percentage, its lowest reading and its alarm count.
+
+The panel itself announces the current reading and trend when it opens.
+
+Two honest gaps. Tab does not move focus between controls inside the panel:
+the shell binds Tab to switching between bar popouts, so taking it would break
+a shell-wide convention. And the shortcuts below reach the actions, not the
+settings rows.
+
 ## Keys
 
 | Key | What it does |
@@ -393,6 +408,7 @@ A panel that dismisses when focus moves is the wrong place to type a token.
 | `←` `→` | step between views |
 | `r` | fetch now |
 | `d` | open the dashboard |
+| `s` | snooze 15m, or wake a snoozed alarm |
 | `Esc` | close |
 | `?` | show or hide this list, in the panel |
 

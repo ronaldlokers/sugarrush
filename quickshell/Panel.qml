@@ -995,6 +995,10 @@ Panel {
 
     ToggleSwitch {
       id: switchToggle
+      Accessible.role: Accessible.CheckBox
+      Accessible.name: switchRow.label
+      // A switch announced without its state is half an announcement.
+      Accessible.description: switchRow.current ? "on" : "off"
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       checked: switchRow.current
@@ -1036,6 +1040,8 @@ Panel {
 
       PanelActionButton {
         id: minus
+        Accessible.role: Accessible.Button
+        Accessible.name: "Decrease " + row.label
         iconText: "−"
         tooltipText: "Less"
         foreground: root.barForeground
@@ -1056,6 +1062,8 @@ Panel {
 
       PanelActionButton {
         iconText: "+"
+        Accessible.role: Accessible.Button
+        Accessible.name: "Increase " + row.label
         tooltipText: "More"
         foreground: root.barForeground
         fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1067,6 +1075,17 @@ Panel {
 
   KeyboardPanel {
     id: surface
+    // Every control below is a Rectangle or a Text with a TapHandler on it,
+    // which is an unnamed shape to any assistive technology. Naming them is
+    // most of what an accessibility pass on a QML panel amounts to: there is
+    // no DOM to carry semantics implicitly.
+    Accessible.role: Accessible.Dialog
+    Accessible.name: "sugarrush"
+    Accessible.description: root.reading
+      ? "Glucose " + root.reading.value + " " + root.units
+        + ", " + root.trendWords(root.reading.direction)
+        + (root.readingStale ? ", no reading for " + root.reading.age_min + " minutes" : "")
+      : "Waiting for the first reading"
     anchorItem: root.anchorItem
     owner: root.barIdentity
     bar: root.bar
@@ -1099,6 +1118,13 @@ Panel {
         case Qt.Key_Left: root.stepView(-1); break
         case Qt.Key_Right: root.stepView(1); break
         case Qt.Key_R: root.refresh(true); break
+        // The action the 3am case is built around had no key at all. The
+        // panel could be opened, read and closed from the keyboard; to
+        // silence the alarm that woke you, you reached for the mouse.
+        case Qt.Key_S:
+          if (root.snoozedFor > 0) root.snooze("off")
+          else if (root.watching) root.snooze("15m")
+          break
         case Qt.Key_D:
           root.close()
           if (root.bar) {
@@ -1234,6 +1260,8 @@ Panel {
             PanelActionButton {
               iconText: ""
               tooltipText: "Fetch now"
+              Accessible.role: Accessible.Button
+              Accessible.name: "Fetch now"
               foreground: root.barForeground
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: { root.nextIn = root.refreshSeconds; root.refresh(true) }
@@ -1242,6 +1270,8 @@ Panel {
             PanelActionButton {
               iconText: ""
               tooltipText: "Open the dashboard"
+              Accessible.role: Accessible.Button
+              Accessible.name: "Open the dashboard"
               foreground: root.barForeground
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: {
@@ -1360,6 +1390,13 @@ Panel {
 
             Text {
               id: nowValue
+              Accessible.role: Accessible.StaticText
+              // The hero reads as bare digits otherwise: "7.3" says nothing
+              // about what it measures or which way it is going.
+              Accessible.name: root.reading
+                ? root.reading.value + " " + root.units + ", "
+                  + root.trendWords(root.reading.direction)
+                : "no reading"
               anchors.left: parent.left
               anchors.top: parent.top
               width: Math.max(implicitWidth, valueSizer.implicitWidth)
@@ -1483,6 +1520,8 @@ Panel {
             Button {
               visible: root.snoozedFor <= 0
               text: "Snooze 15m"
+              Accessible.role: Accessible.Button
+              Accessible.name: "Snooze the alarm for 15 minutes"
               bordered: true
               focusable: false
               enabled: root.watching
@@ -1495,6 +1534,8 @@ Panel {
             Button {
               visible: root.snoozedFor <= 0
               text: "1h"
+              Accessible.role: Accessible.Button
+              Accessible.name: "Snooze the alarm for one hour"
               bordered: true
               focusable: false
               enabled: root.watching
@@ -1509,6 +1550,8 @@ Panel {
             Button {
               visible: root.snoozedFor > 0
               text: "Wake now · " + root.snoozedFor + "m left"
+              Accessible.role: Accessible.Button
+              Accessible.name: "Wake the alarm now, " + root.snoozedFor + " minutes of snooze left"
               bordered: true
               focusable: false
               foreground: root.alarmColor()
@@ -1519,6 +1562,8 @@ Panel {
 
             Button {
               text: root.logging ? "Cancel" : "Log"
+              Accessible.role: Accessible.Button
+              Accessible.name: root.logging ? "Cancel logging" : "Log carbs or insulin"
               bordered: true
               focusable: false
               // Gone, not greyed. Logging needs a treatment write token, and
@@ -1569,6 +1614,8 @@ Panel {
 
             Button {
               text: "Review in terminal"
+              Accessible.role: Accessible.Button
+              Accessible.name: "Review this treatment in a terminal before it is written"
               bordered: true
               focusable: false
               // Zero of both would be a write with nothing in it.
@@ -1625,6 +1672,16 @@ Panel {
             : implicitHeight
 
           NightTrace {
+            Accessible.role: Accessible.Graphic
+            Accessible.name: root.night
+              ? (root.night.in_progress ? "Tonight so far" : "Last night")
+              : "Last night"
+            Accessible.description: root.night
+              ? root.night.tir.in_range.toFixed(0) + "% in range, lowest "
+                + (root.night.lowest !== undefined ? root.night.lowest.toFixed(1) : "unknown")
+                + ", " + (root.nightAlarms.length === 0
+                          ? "no alarms" : root.nightAlarms.length + " alarms")
+              : ""
             width: parent.width
             height: Style.space(54)
             series: root.night ? root.night.series : []
@@ -1699,6 +1756,17 @@ Panel {
 
           Chart {
             id: glucoseChart
+            // A Canvas is a blank rectangle to a screen reader. The figures
+            // behind this one are already in the document, so the description
+            // can say what the picture shows rather than that a picture exists.
+            Accessible.role: Accessible.Graphic
+            Accessible.name: glucoseChart.live
+              ? "Glucose over the last " + root.panelHours + " hours"
+              : "Glucose from " + glucoseChart.windowLabel
+            Accessible.description: root.stats
+              ? root.stats.tir.in_range.toFixed(0) + "% in range, mean "
+                + root.stats.mean.toFixed(1) + " " + root.units
+              : ""
             width: parent.width
             height: Style.space(130)
             doc: root.doc
@@ -1724,6 +1792,17 @@ Panel {
           // the labels they belong to.
 
           TirBar {
+            Accessible.role: Accessible.Graphic
+            Accessible.name: "Time in range"
+            // The five bands are colour and width only; this is the whole of
+            // their content, said once.
+            Accessible.description: root.stats
+              ? "very low " + root.stats.tir.very_low.toFixed(1)
+                + "%, low " + root.stats.tir.low.toFixed(1)
+                + "%, in range " + root.stats.tir.in_range.toFixed(1)
+                + "%, high " + root.stats.tir.high.toFixed(1)
+                + "%, very high " + root.stats.tir.very_high.toFixed(1) + "%"
+              : ""
             width: parent.width
             height: Style.space(12)
             stats: root.stats
@@ -1859,6 +1938,8 @@ Panel {
 
             Button {
               text: "Copy summary"
+              Accessible.role: Accessible.Button
+              Accessible.name: "Copy the clinical summary to the clipboard"
               bordered: true
               focusable: false
               foreground: root.barForeground
@@ -1885,6 +1966,9 @@ Panel {
           visible: root.dayList.length > 1 && root.loadError === "" && root.view === "profile"
 
           DayStrip {
+            Accessible.role: Accessible.Graphic
+            Accessible.name: "Time in range per day, " + root.dayList.length + " days"
+            Accessible.description: "average " + root.dayAverage.toFixed(0) + "% in range"
             width: parent.width
             height: Style.space(46)
             days: root.dayList
@@ -2140,6 +2224,12 @@ Panel {
           }
 
           ThresholdBand {
+            Accessible.role: Accessible.Slider
+            Accessible.name: "Alarm thresholds"
+            Accessible.description: "urgent low " + root.bound("urgent_low")
+              + ", low " + root.bound("low")
+              + ", high " + root.bound("high")
+              + ", urgent high " + root.bound("urgent_high")
             width: parent.width
             urgentLow: root.num("alerts.urgent_low", 3.5)
             low: root.num("alerts.low", 3.9)
@@ -2404,6 +2494,7 @@ Panel {
               { key: "1 · 2 · 3", what: "jump to a view" },
               { key: "← →", what: "step between views" },
               { key: "r", what: "fetch now" },
+              { key: "s", what: "snooze 15m, or wake a snoozed alarm" },
               { key: "d", what: "open the dashboard" },
               { key: "Esc", what: "close" },
               { key: "?", what: "hide this" }
