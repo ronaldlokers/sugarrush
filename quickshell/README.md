@@ -251,7 +251,15 @@ for the rest of the panel. Drag a handle to move a threshold; they clamp
 against their neighbours and cannot cross, which makes the crossed
 configuration `sugarrush config` refuses unreachable rather than rejected.
 
-One config write happens when a handle is released, not while it moves. There
+A press only picks up a handle it lands within about 12 pixels of, and picks it
+up where it already is rather than jumping it to the press point. Anywhere else
+on the band does nothing. Before that guard, a single stray click set an alarm
+threshold to wherever you clicked and wrote it — silently, with no way back.
+
+One config write happens when a handle is released, not while it moves, and
+only when the value actually changed. After a write the card offers the way
+back for a few seconds — `low → 4.8 · undo` — because these four numbers decide
+whether a sound happens at 3am. There
 are no stepper rows any more: a handle lands on a tenth of a mmol/L in about
 two pixels at panel width, so the card is now the shape it describes.
 
