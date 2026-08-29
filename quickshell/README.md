@@ -267,7 +267,7 @@ on any bar.
 
 ## Last night
 
-The Glucose view leads with the night just gone — 23:00 to 07:00 in the site's
+The Glucose view opens with the reading and the night just gone side by side — 23:00 to 07:00 in the site's
 timezone, since a night is a local thing. The trace is deliberately not the
 six-hour chart shrunk: no axes and no clock, because it answers one question.
 Underneath it, time in range, the lowest reading, and how many alarms fired,
