@@ -434,6 +434,14 @@ Item {
 
   MouseArea {
     id: pointer
+    // The pill is the whole widget as far as assistive technology is
+    // concerned, and it was an unnamed rectangle carrying a number.
+    Accessible.role: Accessible.Button
+    Accessible.name: root.value !== ""
+      ? "Glucose " + root.value + " " + root.units
+        + (root.alarmDown ? ", nothing is watching" : "")
+      : "sugarrush"
+    Accessible.description: "Opens the sugarrush panel"
     anchors.fill: parent
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
 

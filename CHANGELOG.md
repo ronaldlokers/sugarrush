@@ -8,6 +8,18 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The panel can be read aloud.** Every control now carries a role and a name,
+  and every chart a description of what it shows — a Canvas is a blank
+  rectangle to assistive technology, so the time-in-range bar reads out its five
+  bands, the night trace its percentage, lowest reading and alarm count, and the
+  panel announces the current reading and trend when it opens. Previously every
+  control was an unnamed shape.
+
+- **`s` snoozes.** The action the 3am case is built around had no key: the panel
+  could be opened, read and closed from the keyboard, but silencing the alarm
+  that woke you meant reaching for the mouse. `s` snoozes for 15 minutes, or
+  wakes an alarm that is already snoozed.
+
 - **The bar pill says when nothing is watching.** A ⚠ appears on the pill when
   the alarm daemon is not running, polled from `sugarrush health --json` on the
   pill's own interval. It was the only bad state that never reached the bar — a
