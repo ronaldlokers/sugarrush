@@ -195,6 +195,27 @@ Panel {
   readonly property var baselineStats: doc && doc.baseline ? doc.baseline : null
   readonly property var dayList: doc && doc.days ? doc.days : []
   readonly property var alertList: doc && doc.alerts ? doc.alerts : []
+
+  // The alarm that is happening now, if one is: the newest episode with no
+  // duration yet, which is how the document says "started and not recovered".
+  //
+  // Deliberately not "the reading is out of range" — someone who runs high for
+  // much of the day would get an urgent banner most of the day, and a banner
+  // that is always there is furniture. This is the daemon having decided the
+  // reading was worth waking someone for.
+  readonly property var liveAlarm: {
+    var list = alertList
+    if (list.length === 0) return null
+    var newest = list[0]
+    return newest.minutes === undefined ? newest : null
+  }
+
+  // How long it has been going, ticking with the panel's own second.
+  function alarmRunningFor(item) {
+    var _ = clockTick
+    if (!item) return 0
+    return Math.max(0, Math.round((Date.now() - item.at_ms) / 60000))
+  }
   readonly property var night: doc && doc.night ? doc.night : null
 
   // The alarms that fired inside the night window — the same episodes the
@@ -1298,6 +1319,107 @@ Panel {
           fontSize: Style.font.caption
           focusable: false
           onChanged: function (next) { root.view = next }
+        }
+
+        // What is happening right now, above everything, on every view.
+        //
+        // The panel opened the same way whether you clicked it at 3am with an
+        // alarm sounding or at 2pm out of habit: the reading, then a chart,
+        // then the statistics, with the running episode named several hundred
+        // pixels down inside a card. The thing you came for was the thing you
+        // had to go looking for.
+        //
+        // Only while an episode is open, so it is never furniture.
+        Rectangle {
+          id: liveAlarmRow
+          visible: root.liveAlarm !== null
+          width: parent.width
+          implicitHeight: liveAlarmContent.implicitHeight + Style.space(14)
+          radius: Style.cornerRadius
+          color: Qt.rgba(root.themed("urgent", "#cc241d").r,
+                         root.themed("urgent", "#cc241d").g,
+                         root.themed("urgent", "#cc241d").b, 0.12)
+          border.width: 1
+          border.color: root.themed("urgent", "#cc241d")
+          opacity: root.cardsOpacity
+
+          Accessible.role: Accessible.AlertMessage
+          Accessible.name: root.liveAlarm
+            ? root.liveAlarm.state + " "
+              + (root.liveAlarm.value !== undefined ? root.liveAlarm.value.toFixed(1) : "")
+              + ", running " + root.alarmRunningFor(root.liveAlarm) + " minutes"
+              + (root.snoozedFor > 0 ? ", snoozed " + root.snoozedFor + " minutes" : "")
+            : ""
+
+          Row {
+            id: liveAlarmContent
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: Style.space(11)
+            anchors.rightMargin: Style.space(11)
+            spacing: Style.space(8)
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              color: root.classColor(root.alarmClass(root.liveAlarm ? root.liveAlarm.state : ""))
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              text: root.liveAlarm
+                ? root.liveAlarm.state.toLowerCase()
+                  + (root.liveAlarm.value !== undefined
+                     ? " " + root.liveAlarm.value.toFixed(1) : "")
+                : ""
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              color: Qt.darker(root.barForeground, 1.25)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              // Snoozing silences it; it does not end it. Saying so is the
+              // difference between "dealt with" and "still happening", and
+              // hiding it is how you forget to look again.
+              text: root.snoozedFor > 0
+                ? "snoozed · " + root.snoozedFor + "m left"
+                : "running " + root.alarmRunningFor(root.liveAlarm) + "m"
+            }
+          }
+
+          Row {
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(11)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
+
+            Button {
+              visible: root.snoozedFor <= 0
+              text: "Snooze 15m"
+              bordered: true
+              focusable: false
+              enabled: root.watching
+              foreground: root.barForeground
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              fontSize: Style.font.caption
+              Accessible.role: Accessible.Button
+              Accessible.name: "Snooze this alarm for 15 minutes"
+              onClicked: root.snooze("15m")
+            }
+
+            Button {
+              visible: root.snoozedFor > 0
+              text: "Wake"
+              bordered: true
+              focusable: false
+              foreground: root.alarmColor()
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              fontSize: Style.font.caption
+              Accessible.role: Accessible.Button
+              Accessible.name: "Wake the alarm now"
+              onClicked: root.snooze("off")
+            }
+          }
         }
 
         // Whatever went wrong replaces the cards: there is nothing to put in
