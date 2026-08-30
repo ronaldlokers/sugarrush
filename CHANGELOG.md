@@ -8,6 +8,14 @@ All notable changes to sugarrush are documented here. The format is based on
 
 ### Added
 
+- **The panel leads with the alarm that is running.** It used to open the same
+  way whether you clicked it at 3am with an alarm sounding or at 2pm out of
+  habit — the reading, a chart, the statistics, and the running episode named
+  several hundred pixels down inside a card. A row now sits above everything,
+  on every view, naming the episode, how long it has been going, and offering
+  the snooze. It stays after you snooze, reading `snoozed · 14m left`, because
+  silencing an alarm is not the same as it being over.
+
 - **The panel can be read aloud.** Every control now carries a role and a name,
   and every chart a description of what it shows — a Canvas is a blank
   rectangle to assistive technology, so the time-in-range bar reads out its five

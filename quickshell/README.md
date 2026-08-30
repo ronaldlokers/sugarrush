@@ -290,6 +290,24 @@ A vertical bar keeps the single column, where it is the right answer, and
 `omarchy bar set sugarrush.glucose wideLayout false` returns the narrow panel
 on any bar.
 
+## While an alarm is running
+
+When an episode has fired and not yet recovered, a row appears above everything
+— on every view — naming it, saying how long it has been going, and carrying
+the snooze:
+
+```
+urgent low 3.1        running 12m        [ Snooze 15m ]
+```
+
+Snoozing does not remove it. It becomes `snoozed · 14m left` with a **Wake**
+button, because silencing an alarm is not the same as it being over, and a row
+that vanishes on snooze looks identical to a night with nothing wrong.
+
+It keys off an open episode in the alert log rather than an out-of-range
+reading. Someone who runs high for much of the day would otherwise see an
+urgent row for much of the day, and a row that is always there is furniture.
+
 ## Last night
 
 The Glucose view opens with the reading and the night just gone side by side — 23:00 to 07:00 in the site's
